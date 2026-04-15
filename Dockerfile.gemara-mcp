@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Bridges gemara-mcp (stdio-only) to HTTP/SSE via mcp-proxy.
+
+FROM ghcr.io/gemaraproj/gemara-mcp:latest AS gemara-mcp
+
+FROM ghcr.io/sparfenyuk/mcp-proxy:latest
+
+COPY --from=gemara-mcp /bin/gemara-mcp /usr/local/bin/gemara-mcp
+
+ENTRYPOINT ["catatonit", "--", "mcp-proxy"]

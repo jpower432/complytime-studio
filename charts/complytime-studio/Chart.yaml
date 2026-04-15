@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: complytime-studio
+description: >-
+  ComplyTime Studio — a multi-agent platform for authoring, validating,
+  and publishing Gemara GRC artifacts as OCI bundles. Deploys as a kagent
+  BYO agent with Go ADK runtime.
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+kubeVersion: ">=1.29.0-0"
+keywords:
+  - gemara
+  - grc
+  - threat-modeling
+  - oci
+  - kagent
+  - adk
+  - complytime
+home: https://github.com/complytime/complytime-studio
+sources:
+  - https://github.com/complytime/complytime-studio
+maintainers:
+  - name: complytime
+annotations:
+  studio.complytime.org/requires: "kagent >= 0.8.0"

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Bridges github-mcp-server (stdio) to HTTP/SSE via mcp-proxy.
+
+FROM ghcr.io/github/github-mcp-server:latest AS github-mcp
+
+FROM ghcr.io/sparfenyuk/mcp-proxy:latest
+
+COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-server
+
+ENTRYPOINT ["catatonit", "--", "mcp-proxy"]

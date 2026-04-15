@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Local development stack — gateway + MCP servers.
+# Agents are kagent Declarative CRDs; they run in Kubernetes, not here.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      GEMARA_MCP_URL: http://gemara-mcp:3000
+      ORAS_MCP_URL: http://oras-mcp:3000
+    depends_on:
+      - gemara-mcp
+      - oras-mcp
+
+  gemara-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.gemara-mcp
+    command: ["--host", "0.0.0.0", "--port", "3000", "--pass-environment", "gemara-mcp", "serve"]
+    expose:
+      - "3000"
+
+  oras-mcp:
+    image: ghcr.io/oras-project/oras-mcp:main
+    command: ["/bin/oras-mcp", "serve", "--transport", "sse", "--port", "3000"]
+    expose:
+      - "3000"
+
+  github-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.github-mcp
+    command: ["--host", "0.0.0.0", "--port", "3000", "--pass-environment", "--", "github-mcp-server", "stdio", "--toolsets=repos,code_security"]
+    environment:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
+    expose:
+      - "3000"

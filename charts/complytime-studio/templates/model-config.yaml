@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Shared ModelConfig CRD referenced by all Declarative agents.
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: studio-model
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  provider: {{ .Values.model.provider | quote }}
+  model: {{ .Values.model.name | quote }}
+  {{- with .Values.model.apiKeySecret }}
+  apiKeySecretRef:
+    name: {{ .name }}
+    key: {{ .key | default "api-key" }}
+  {{- end }}

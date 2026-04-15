@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.clickhouse.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: studio-clickhouse-schema
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+data:
+  low_resource_config.xml: |
+    <clickhouse>
+        <max_thread_pool_size>100</max_thread_pool_size>
+        <background_schedule_pool_size>8</background_schedule_pool_size>
+        <background_pool_size>8</background_pool_size>
+        <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
+        <merge_tree>
+            <number_of_free_entries_in_pool_to_execute_mutation>4</number_of_free_entries_in_pool_to_execute_mutation>
+            <number_of_free_entries_in_pool_to_lower_max_size_of_merge>4</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        </merge_tree>
+    </clickhouse>
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS evaluation_logs
+    (
+        log_id            String,
+        target_id         String,
+        target_env        String,
+        policy_id         String,
+        catalog_ref_id    String,
+        control_id        String,
+        control_name      String,
+        control_result    Enum8(
+                            'Not Run' = 0,
+                            'Passed' = 1,
+                            'Failed' = 2,
+                            'Needs Review' = 3,
+                            'Not Applicable' = 4,
+                            'Unknown' = 5
+                          ),
+        requirement_id    String,
+        plan_id           Nullable(String),
+        assessment_result Enum8(
+                            'Not Run' = 0,
+                            'Passed' = 1,
+                            'Failed' = 2,
+                            'Needs Review' = 3,
+                            'Not Applicable' = 4,
+                            'Unknown' = 5
+                          ),
+        message           String,
+        description       String,
+        applicability     Array(String),
+        steps_executed    UInt16,
+        confidence_level  Enum8(
+                            'Undetermined' = 0,
+                            'Low' = 1,
+                            'Medium' = 2,
+                            'High' = 3
+                          ),
+        recommendation    Nullable(String),
+        collected_at      DateTime64(3),
+        completed_at      Nullable(DateTime64(3)),
+        ingested_at       DateTime64(3) DEFAULT now64(3),
+
+        row_key           String MATERIALIZED concat(log_id, '/', control_id, '/', requirement_id)
+    )
+    ENGINE = ReplacingMergeTree(ingested_at)
+    PARTITION BY toYYYYMM(collected_at)
+    ORDER BY (target_id, policy_id, control_id, collected_at, row_key)
+    TTL toDateTime(collected_at) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
+
+    CREATE TABLE IF NOT EXISTS enforcement_actions
+    (
+        log_id            String,
+        target_id         String,
+        target_env        String,
+        policy_id         String,
+        catalog_ref_id    String,
+        control_id        String,
+        requirement_id    String,
+        disposition       Enum8(
+                            'Undetermined' = 0,
+                            'Enforced' = 1,
+                            'Tolerated' = 2,
+                            'Clear' = 3
+                          ),
+        method_id         String,
+        assessment_result Enum8(
+                            'Not Run' = 0,
+                            'Passed' = 1,
+                            'Failed' = 2,
+                            'Needs Review' = 3,
+                            'Not Applicable' = 4,
+                            'Unknown' = 5
+                          ),
+        eval_log_ref      String,
+        message           Nullable(String),
+        has_exception     Bool,
+        exception_refs    Array(String),
+        started_at        DateTime64(3),
+        completed_at      Nullable(DateTime64(3)),
+        ingested_at       DateTime64(3) DEFAULT now64(3),
+
+        row_key           String MATERIALIZED concat(log_id, '/', control_id, '/', requirement_id)
+    )
+    ENGINE = ReplacingMergeTree(ingested_at)
+    PARTITION BY toYYYYMM(started_at)
+    ORDER BY (target_id, policy_id, control_id, started_at, row_key)
+    TTL toDateTime(started_at) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
+{{- end }}

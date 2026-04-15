@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# MCP servers deployed via kagent MCPServer CRDs.
+# github-mcp uses streamablehttp for per-request token auth (OBO).
+# oras-mcp uses stdio — OBO handled via gateway proxy (/api/registry/*).
+# Platform servers (gemara, clickhouse) use stdio with static credentials.
+{{- if .Values.mcpServers.gemara.enabled }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-gemara-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.mcpServers.gemara.image }}
+    cmd: /bin/gemara-mcp
+    args:
+      - serve
+    port: 3000
+{{- end }}
+{{- if .Values.mcpServers.oras.enabled }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-oras-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.mcpServers.oras.image }}
+    cmd: /bin/oras-mcp
+    args:
+      - serve
+    port: 3000
+{{- end }}
+{{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-clickhouse-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.clickhouse.mcp.image.repository }}:{{ .Values.clickhouse.mcp.image.tag }}
+    cmd: mcp-clickhouse
+    port: 3000
+    env:
+      CLICKHOUSE_HOST: "studio-clickhouse.{{ .Release.Namespace }}"
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_USER: {{ .Values.clickhouse.auth.user | quote }}
+      CLICKHOUSE_PASSWORD: {{ .Values.clickhouse.auth.password | quote }}
+    secretRefs:
+      - name: studio-clickhouse-credentials
+{{- end }}
+{{- if .Values.mcpServers.github.enabled }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-github-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: http
+  httpTransport:
+    url: http://studio-github-mcp:8080/mcp
+  deployment:
+    image: {{ .Values.mcpServers.github.image }}
+    cmd: /server/github-mcp-server
+    args:
+      - http
+      - "--port=8080"
+      - "--toolsets=repos,code_security"
+    port: 8080
+{{- end }}

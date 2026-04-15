@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Canonical agent definition — framework-agnostic source of truth.
+# Helm renders this into a kagent Declarative Agent CRD.
+
+name: studio-policy-composer
+description: >-
+  RiskCatalog and Policy authoring from threat modeling outputs
+
+prompt: prompt.md
+
+skills:
+  - path: skills/gemara-layers
+  - path: skills/policy-risk-linkage
+  - repo: https://github.com/gemaraproj/gemara-skills.git
+    ref: main
+    path: skills/assessment-defaults
+
+model:
+  provider: AnthropicVertexAI
+  name: claude-sonnet-4-20250514
+
+mcp:
+  - server: studio-gemara-mcp
+    tools:
+      - validate_gemara_artifact
+      - migrate_gemara_artifact
+  - server: studio-github-mcp
+    allowedHeaders: [Authorization]
+    tools:
+      - get_file_contents
+      - search_code
+      - search_repositories
+
+a2a:
+  skills:
+    - id: policy-authoring
+      name: Policy Authoring
+      description: >-
+        Compose a RiskCatalog and Policy from ThreatCatalog and ControlCatalog
+        inputs through guided conversation.
+      tags: [policy, risk, compliance, layer-3]

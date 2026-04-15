@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AGENT_DIRECTORY
+              value: {{ .Values.agentDirectory | toJson | quote }}
+            {{- if .Values.mcpServers.gemara.enabled }}
+            - name: GEMARA_MCP_URL
+              value: "http://studio-gemara-mcp:3000/mcp"
+            {{- end }}
+            {{- if .Values.mcpServers.oras.enabled }}
+            - name: ORAS_MCP_URL
+              value: "http://studio-oras-mcp:3000/mcp"
+            {{- end }}
+            {{- if .Values.auth.github.clientId }}
+            - name: GITHUB_CLIENT_ID
+              value: {{ .Values.auth.github.clientId | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.github.secretName }}
+                  key: {{ .Values.auth.github.secretKey }}
+            - name: GITHUB_CALLBACK_URL
+              value: {{ .Values.auth.github.callbackURL | quote }}
+            {{- end }}
+            {{- if .Values.auth.github.cookieSignKeySecret }}
+            - name: COOKIE_SIGN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.github.cookieSignKeySecret }}
+                  key: sign-key
+            {{- end }}
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP

@@ -1,0 +1,146 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Default values for complytime-studio — targeting kind development clusters.
+# Override with values-openshift.yaml (or equivalent) for production.
+
+# -- Gateway configuration. User-facing entry point serving workbench SPA,
+# REST proxies, A2A reverse proxy, and OAuth authentication.
+gateway:
+  image:
+    repository: studio-gateway
+    tag: latest
+
+# -- GitHub OAuth App for user authentication.
+# Register at https://github.com/settings/applications/new
+auth:
+  github:
+    clientId: ""
+    secretName: studio-oauth-credentials
+    secretKey: client-secret
+    callbackURL: "http://localhost:8080/auth/callback"
+
+# -- Git URL of this repository, used for internal skill gitRefs.
+platformRepo: https://github.com/complytime/complytime-studio.git
+
+# -- External skill repositories. Disabled by default (placeholders).
+# Enable once the external repos exist.
+externalSkills:
+  stride:
+    enabled: false
+    repo: https://github.com/openssf/stride-skills.git
+    ref: main
+    path: skills/stride-analysis
+  auditClassification:
+    enabled: false
+    repo: https://github.com/gemaraproj/gemara-skills.git
+    ref: main
+    path: skills/audit-classification
+  assessmentDefaults:
+    enabled: false
+    repo: https://github.com/gemaraproj/gemara-skills.git
+    ref: main
+    path: skills/assessment-defaults
+
+# -- Shared model configuration for all Declarative agents.
+# Rendered as a kagent ModelConfig CRD.
+model:
+  provider: AnthropicVertexAI
+  name: claude-sonnet-4-20250514
+  # apiKeySecret:
+  #   name: studio-model-credentials
+  #   key: api-key
+
+# -- Agent directory entries exposed via GET /api/agents.
+# Each entry maps to a deployed Declarative agent's A2A endpoint.
+agentDirectory:
+  - name: studio-threat-modeler
+    description: "STRIDE-based threat analysis, ThreatCatalog and ControlCatalog authoring"
+    url: "http://studio-threat-modeler:8080"
+    skills:
+      - id: threat-assessment
+        name: STRIDE Threat Assessment
+        description: "Analyze threats using STRIDE. Produces CapabilityCatalog and ThreatCatalog."
+        tags: [stride, threats, capabilities, layer-2]
+      - id: control-authoring
+        name: Control Catalog Authoring
+        description: "Author a ControlCatalog that mitigates identified threats with assessment requirements."
+        tags: [controls, assessment-requirements, layer-2]
+  - name: studio-gap-analyst
+    description: "Evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts"
+    url: "http://studio-gap-analyst:8080"
+    skills:
+      - id: gap-analysis
+        name: Gap Analysis
+        description: "Classify coverage of each target reference entry. Produces AuditLog."
+        tags: [gap-analysis, audit, compliance, coverage, layer-7]
+  - name: studio-policy-composer
+    description: "RiskCatalog and Policy authoring from threat modeling outputs"
+    url: "http://studio-policy-composer:8080"
+    skills:
+      - id: policy-authoring
+        name: Policy Authoring
+        description: "Compose RiskCatalog and Policy from ThreatCatalog and ControlCatalog inputs."
+        tags: [policy, risk, compliance, layer-3]
+
+# -- MCP servers deployed via kagent MCPServer CRDs (transportType: stdio).
+# The KMCP controller injects an AgentGateway sidecar to bridge stdio → HTTP.
+# Each server is accessible at http://<name>:<port>/mcp within the cluster.
+mcpServers:
+  gemara:
+    enabled: true
+    image: ghcr.io/gemaraproj/gemara-mcp:latest
+  oras:
+    enabled: true
+    image: ghcr.io/oras-project/oras-mcp:main
+  github:
+    enabled: true
+    image: ghcr.io/github/github-mcp-server:latest
+    # Secret containing GITHUB_PERSONAL_ACCESS_TOKEN. Mounted as a volume
+    # by the MCPServer CRD. The server runs unauthenticated (rate-limited)
+    # when the env var is absent.
+    secretName: studio-github-token
+    secretKey: token
+
+# -- ClickHouse evidence store for L5/L6 evaluation and enforcement data.
+# Disabled by default. Enable with clickhouse.enabled=true.
+clickhouse:
+  enabled: false
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "24.8"
+  auth:
+    user: default
+    password: complytime-dev
+  storage:
+    size: 2Gi
+  retentionMonths: 24
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2"
+  mcp:
+    image:
+      repository: ghcr.io/clickhouse/mcp-clickhouse
+      tag: latest
+
+# -- Built-in OCI registry (dev only). Disable for production clusters
+# where an external registry (Quay, GHCR, etc.) is available.
+registry:
+  enabled: true
+  image: ghcr.io/project-zot/zot-linux-amd64:latest
+  service:
+    port: 5000
+    type: NodePort
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  seed:
+    enabled: true
+    image: ghcr.io/oras-project/oras:v1.2.2

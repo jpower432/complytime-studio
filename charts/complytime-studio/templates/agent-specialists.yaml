@@ -1,0 +1,210 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Declarative Agent CRDs rendered from canonical agent definitions.
+# kagent manages pod lifecycle, A2A server, sessions, and model wiring.
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: studio-threat-modeler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  description: "ComplyTime Studio Threat Modeler — STRIDE-based threat analysis, ThreatCatalog and ControlCatalog authoring"
+  type: Declarative
+  skills:
+    gitRefs:
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/gemara-layers
+      {{- if .Values.externalSkills.stride.enabled }}
+      - url: {{ .Values.externalSkills.stride.repo }}
+        ref: {{ .Values.externalSkills.stride.ref }}
+        path: {{ .Values.externalSkills.stride.path }}
+      {{- end }}
+  declarative:
+    runtime: go
+    modelConfig: studio-model
+    promptTemplate:
+      dataSources:
+        - kind: ConfigMap
+          name: studio-platform-prompts
+          alias: platform
+    systemMessage: |
+      {{`{{include "platform/platform"}}`}}
+
+      ---
+
+{{ .Files.Get "agents/threat-modeler/prompt.md" | indent 6 }}
+    tools:
+      {{- if .Values.mcpServers.gemara.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-gemara-mcp
+          kind: MCPServer
+        toolNames:
+          - validate_gemara_artifact
+          - migrate_gemara_artifact
+      {{- end }}
+      {{- if .Values.mcpServers.github.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-github-mcp
+          kind: MCPServer
+        toolNames:
+          - get_file_contents
+          - search_code
+          - search_repositories
+        allowedHeaders:
+          - Authorization
+      {{- end }}
+    a2aConfig:
+      skills:
+        - id: threat-assessment
+          name: STRIDE Threat Assessment
+          description: "Analyze threats using STRIDE. Produces CapabilityCatalog and ThreatCatalog."
+          tags: ["stride", "threats", "capabilities", "layer-2"]
+        - id: control-authoring
+          name: Control Catalog Authoring
+          description: "Author a ControlCatalog that mitigates identified threats with assessment requirements."
+          tags: ["controls", "assessment-requirements", "layer-2"]
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: studio-gap-analyst
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  description: "ComplyTime Studio Gap Analyst — evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts"
+  type: Declarative
+  skills:
+    gitRefs:
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/gemara-layers
+      {{- if .Values.externalSkills.auditClassification.enabled }}
+      - url: {{ .Values.externalSkills.auditClassification.repo }}
+        ref: {{ .Values.externalSkills.auditClassification.ref }}
+        path: {{ .Values.externalSkills.auditClassification.path }}
+      {{- end }}
+  declarative:
+    runtime: go
+    modelConfig: studio-model
+    promptTemplate:
+      dataSources:
+        - kind: ConfigMap
+          name: studio-platform-prompts
+          alias: platform
+    systemMessage: |
+      {{`{{include "platform/platform"}}`}}
+
+      ---
+
+{{ .Files.Get "agents/gap-analyst/prompt.md" | indent 6 }}
+    tools:
+      {{- if .Values.mcpServers.gemara.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-gemara-mcp
+          kind: MCPServer
+        toolNames:
+          - validate_gemara_artifact
+          - migrate_gemara_artifact
+      {{- end }}
+      {{- if .Values.mcpServers.github.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-github-mcp
+          kind: MCPServer
+        toolNames:
+          - get_file_contents
+          - search_code
+          - search_repositories
+        allowedHeaders:
+          - Authorization
+      {{- end }}
+      {{- if .Values.clickhouse.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-clickhouse-mcp
+          kind: MCPServer
+        toolNames:
+          - run_select_query
+          - list_databases
+          - list_tables
+      {{- end }}
+    a2aConfig:
+      skills:
+        - id: gap-analysis
+          name: Gap Analysis
+          description: "Analyze a MappingDocument to classify coverage of each target reference entry. Produces a Gemara AuditLog with Gap, Finding, Observation, and Strength results."
+          tags: ["gap-analysis", "audit", "compliance", "coverage", "layer-7"]
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: studio-policy-composer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  description: "ComplyTime Studio Policy Composer — RiskCatalog and Policy authoring from threat modeling outputs"
+  type: Declarative
+  skills:
+    gitRefs:
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/gemara-layers
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/policy-risk-linkage
+      {{- if .Values.externalSkills.assessmentDefaults.enabled }}
+      - url: {{ .Values.externalSkills.assessmentDefaults.repo }}
+        ref: {{ .Values.externalSkills.assessmentDefaults.ref }}
+        path: {{ .Values.externalSkills.assessmentDefaults.path }}
+      {{- end }}
+  declarative:
+    runtime: go
+    modelConfig: studio-model
+    promptTemplate:
+      dataSources:
+        - kind: ConfigMap
+          name: studio-platform-prompts
+          alias: platform
+    systemMessage: |
+      {{`{{include "platform/platform"}}`}}
+
+      ---
+
+{{ .Files.Get "agents/policy-composer/prompt.md" | indent 6 }}
+    tools:
+      {{- if .Values.mcpServers.gemara.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-gemara-mcp
+          kind: MCPServer
+        toolNames:
+          - validate_gemara_artifact
+          - migrate_gemara_artifact
+      {{- end }}
+      {{- if .Values.mcpServers.github.enabled }}
+      - type: McpServer
+        mcpServer:
+          name: studio-github-mcp
+          kind: MCPServer
+        toolNames:
+          - get_file_contents
+          - search_code
+          - search_repositories
+        allowedHeaders:
+          - Authorization
+      {{- end }}
+    a2aConfig:
+      skills:
+        - id: policy-authoring
+          name: Policy Authoring
+          description: "Compose a RiskCatalog and Policy from ThreatCatalog and ControlCatalog inputs through guided conversation."
+          tags: ["policy", "risk", "compliance", "layer-3"]

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Canonical agent definition — framework-agnostic source of truth.
+# Helm renders this into a kagent Declarative Agent CRD.
+
+name: studio-threat-modeler
+description: >-
+  STRIDE-based threat analysis, ThreatCatalog and ControlCatalog authoring
+
+prompt: prompt.md
+
+skills:
+  - path: skills/gemara-layers
+  - repo: https://github.com/openssf/stride-skills.git
+    ref: main
+    path: skills/stride-analysis
+
+model:
+  provider: AnthropicVertexAI
+  name: claude-sonnet-4-20250514
+
+mcp:
+  - server: studio-gemara-mcp
+    tools:
+      - validate_gemara_artifact
+      - migrate_gemara_artifact
+  - server: studio-github-mcp
+    allowedHeaders: [Authorization]
+    tools:
+      - get_file_contents
+      - search_code
+      - search_repositories
+
+a2a:
+  skills:
+    - id: threat-assessment
+      name: STRIDE Threat Assessment
+      description: >-
+        Analyze threats using STRIDE. Produces CapabilityCatalog and ThreatCatalog.
+      tags: [stride, threats, capabilities, layer-2]
+    - id: control-authoring
+      name: Control Catalog Authoring
+      description: >-
+        Author a ControlCatalog that mitigates identified threats with assessment requirements.
+      tags: [controls, assessment-requirements, layer-2]

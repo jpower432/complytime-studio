@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Shared platform prompt fragments referenced by agents via promptTemplate.
+# Agents compose their systemMessage using the kagent include function.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: studio-platform-prompts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+data:
+  platform: |
+{{ .Files.Get "agents/platform.md" | indent 4 }}

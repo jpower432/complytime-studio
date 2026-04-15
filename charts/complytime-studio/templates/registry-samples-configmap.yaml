@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- if and .Values.registry.enabled .Values.registry.seed.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: studio-registry-samples
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+data:
+  threat-catalog.yaml: |
+{{ .Files.Get "samples/threat-catalog.yaml" | indent 4 }}
+  control-catalog.yaml: |
+{{ .Files.Get "samples/control-catalog.yaml" | indent 4 }}
+  guidance-catalog.yaml: |
+{{ .Files.Get "samples/guidance-catalog.yaml" | indent 4 }}
+{{- end }}
