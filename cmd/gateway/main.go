@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -55,6 +56,7 @@ func main() {
 	registerGemaraProxy(mux, gemaraMCPURL)
 	registerRegistryProxy(mux, orasMCPURL)
 	registerPublishEndpoint(mux, signingEnabled, signingKeyRef)
+	registerWorkspaceSave(mux)
 	registerAgentDirectory(mux)
 	registerA2AProxy(mux)
 	registerWorkbench(mux)
@@ -107,63 +109,235 @@ func registerGemaraProxy(mux *http.ServeMux, mcpURL string) {
 }
 
 func registerRegistryProxy(mux *http.ServeMux, mcpURL string) {
-	if mcpURL == "" {
+	insecureRegistries := parseInsecureRegistries(os.Getenv("REGISTRY_INSECURE"))
+
+	var sess *mcp.ClientSession
+	if mcpURL != "" {
+		transport := &mcp.StreamableClientTransport{Endpoint: mcpURL}
+		orasClient := mcp.NewClient(
+			&mcp.Implementation{Name: "studio-oras-proxy", Version: "0.1.0"},
+			&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
+		)
+		connectCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		var err error
+		sess, err = orasClient.Connect(connectCtx, transport, nil)
+		if err != nil {
+			log.Printf("WARNING: oras-mcp connection failed: %v", err)
+		}
+	}
+
+	if sess == nil && len(insecureRegistries) == 0 {
 		mux.HandleFunc("/api/registry/", unavailableHandler("oras-mcp unavailable"))
 		log.Print("registry proxy: disabled (ORAS_MCP_URL not set)")
 		return
 	}
 
-	transport := &mcp.StreamableClientTransport{Endpoint: mcpURL}
-	orasClient := mcp.NewClient(
-		&mcp.Implementation{Name: "studio-oras-proxy", Version: "0.1.0"},
-		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
-	)
-	connectCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	sess, err := orasClient.Connect(connectCtx, transport, nil)
-	if err != nil {
-		log.Printf("WARNING: registry proxy disabled: %v", err)
-		mux.HandleFunc("/api/registry/", unavailableHandler("oras-mcp unavailable"))
-		return
-	}
+	rp := &registryProxy{sess: sess, insecure: insecureRegistries, client: &http.Client{Timeout: 15 * time.Second}}
 
-	mux.HandleFunc("/api/registry/repositories", registryToolHandler(sess, "list_repositories", func(r *http.Request) map[string]any {
-		return map[string]any{"registry": r.URL.Query().Get("registry")}
-	}))
-	mux.HandleFunc("/api/registry/tags", registryToolHandler(sess, "list_tags", func(r *http.Request) map[string]any {
-		return map[string]any{"reference": r.URL.Query().Get("ref")}
-	}))
-	mux.HandleFunc("/api/registry/manifest", registryToolHandler(sess, "fetch_manifest", func(r *http.Request) map[string]any {
-		return map[string]any{"reference": r.URL.Query().Get("ref")}
-	}))
-	mux.HandleFunc("/api/registry/layer", registryToolHandler(sess, "fetch_manifest", func(r *http.Request) map[string]any {
-		return map[string]any{"reference": r.URL.Query().Get("ref")}
-	}))
-	log.Print("registry proxy: /api/registry/*")
+	mux.HandleFunc("/api/registry/repositories", rp.handleListRepositories)
+	mux.HandleFunc("/api/registry/tags", rp.handleListTags)
+	mux.HandleFunc("/api/registry/manifest", rp.handleFetchManifest)
+	mux.HandleFunc("/api/registry/layer", rp.handleFetchLayer)
+	if len(insecureRegistries) > 0 {
+		log.Printf("registry proxy: /api/registry/* (insecure: %v)", insecureRegistries)
+	} else {
+		log.Print("registry proxy: /api/registry/*")
+	}
 }
 
-func registryToolHandler(sess *mcp.ClientSession, toolName string, argsBuilder func(*http.Request) map[string]any) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		args := argsBuilder(r)
-		res, err := sess.CallTool(r.Context(), &mcp.CallToolParams{
-			Name:      toolName,
-			Arguments: args,
-		})
+func parseInsecureRegistries(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, s := range strings.Split(raw, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+type registryProxy struct {
+	sess     *mcp.ClientSession
+	insecure []string
+	client   *http.Client
+}
+
+func (rp *registryProxy) isInsecure(host string) bool {
+	for _, h := range rp.insecure {
+		if h == host {
+			return true
+		}
+	}
+	return false
+}
+
+func (rp *registryProxy) directGet(ctx context.Context, host, path string) ([]byte, error) {
+	u := fmt.Sprintf("http://%s%s", host, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+	resp, err := rp.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("registry %s: %s", u, resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
+func (rp *registryProxy) handleListRepositories(w http.ResponseWriter, r *http.Request) {
+	registry := r.URL.Query().Get("registry")
+	if rp.isInsecure(registry) {
+		body, err := rp.directGet(r.Context(), registry, "/v2/_catalog")
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		var sb strings.Builder
-		for _, c := range res.Content {
-			if t, ok := c.(*mcp.TextContent); ok {
-				sb.WriteString(t.Text)
-			}
+		var catalog struct {
+			Repositories []string `json:"repositories"`
+		}
+		if err := json.Unmarshal(body, &catalog); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "parse catalog: " + err.Error()})
+			return
+		}
+		type repoEntry struct {
+			Name string `json:"name"`
+		}
+		out := make([]repoEntry, len(catalog.Repositories))
+		for i, name := range catalog.Repositories {
+			out[i] = repoEntry{Name: name}
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	rp.toolCall(w, r, "list_repositories", map[string]any{"registry": registry})
+}
+
+func (rp *registryProxy) handleListTags(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("ref")
+	host, repo := splitReference(ref)
+	if rp.isInsecure(host) {
+		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/tags/list", repo))
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		var tagList struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(body, &tagList); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "parse tags: " + err.Error()})
+			return
+		}
+		type tagEntry struct {
+			Name string `json:"name"`
+		}
+		out := make([]tagEntry, len(tagList.Tags))
+		for i, t := range tagList.Tags {
+			out[i] = tagEntry{Name: t}
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	rp.toolCall(w, r, "list_tags", map[string]any{"reference": ref})
+}
+
+func (rp *registryProxy) handleFetchManifest(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("ref")
+	host, repoAndTag := splitReference(ref)
+	if rp.isInsecure(host) {
+		repo, tag := splitRepoTag(repoAndTag)
+		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/manifests/%s", repo, tag))
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(sb.String()))
+		_, _ = w.Write(body)
+		return
 	}
+	rp.toolCall(w, r, "fetch_manifest", map[string]any{"reference": ref})
+}
+
+func (rp *registryProxy) handleFetchLayer(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("ref")
+	host, repoAndDigest := splitReference(ref)
+	if rp.isInsecure(host) {
+		repo, digest := splitRepoDigest(repoAndDigest)
+		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest))
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+		return
+	}
+	rp.toolCall(w, r, "fetch_layer", map[string]any{"reference": ref})
+}
+
+func (rp *registryProxy) toolCall(w http.ResponseWriter, r *http.Request, toolName string, args map[string]any) {
+	if rp.sess == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable"})
+		return
+	}
+	res, err := rp.sess.CallTool(r.Context(), &mcp.CallToolParams{
+		Name:      toolName,
+		Arguments: args,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	var sb strings.Builder
+	for _, c := range res.Content {
+		if t, ok := c.(*mcp.TextContent); ok {
+			sb.WriteString(t.Text)
+		}
+	}
+	body := sb.String()
+	w.Header().Set("Content-Type", "application/json")
+	if !json.Valid([]byte(body)) {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": body})
+		return
+	}
+	_, _ = w.Write([]byte(body))
+}
+
+// splitReference splits "host:port/repo/name:tag" into host ("host:port") and remainder ("repo/name:tag").
+func splitReference(ref string) (host, remainder string) {
+	idx := strings.Index(ref, "/")
+	if idx < 0 {
+		return ref, ""
+	}
+	return ref[:idx], ref[idx+1:]
+}
+
+// splitRepoTag splits "repo/name:tag" into ("repo/name", "tag").
+func splitRepoTag(s string) (repo, tag string) {
+	idx := strings.LastIndex(s, ":")
+	if idx < 0 {
+		return s, "latest"
+	}
+	return s[:idx], s[idx+1:]
+}
+
+// splitRepoDigest splits "repo/name@sha256:abc" into ("repo/name", "sha256:abc").
+func splitRepoDigest(s string) (repo, digest string) {
+	idx := strings.Index(s, "@")
+	if idx < 0 {
+		return s, ""
+	}
+	return s[:idx], s[idx+1:]
 }
 
 func registerPublishEndpoint(mux *http.ServeMux, signingEnabled bool, signingKeyRef string) {
@@ -212,6 +386,49 @@ func registerPublishEndpoint(mux *http.ServeMux, signingEnabled bool, signingKey
 		writeJSON(w, http.StatusOK, result)
 	})
 	log.Print("publish endpoint: /api/publish")
+}
+
+func registerWorkspaceSave(mux *http.ServeMux) {
+	const artifactsDir = ".complytime/artifacts"
+
+	mux.HandleFunc("/api/workspace/save", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Filename string `json:"filename"`
+			Content  string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.Filename == "" || req.Content == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "filename and content are required"})
+			return
+		}
+
+		cleaned := filepath.Clean(req.Filename)
+		if filepath.IsAbs(cleaned) || strings.Contains(cleaned, "..") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid filename"})
+			return
+		}
+
+		if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create directory: " + err.Error()})
+			return
+		}
+
+		dest := filepath.Join(artifactsDir, cleaned)
+		if err := os.WriteFile(dest, []byte(req.Content), 0o644); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write file: " + err.Error()})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"path": dest})
+	})
+	log.Print("workspace save: /api/workspace/save")
 }
 
 // AgentCard represents a specialist agent entry in the directory.
@@ -273,14 +490,23 @@ func registerA2AProxy(mux *http.ServeMux) {
 			Director: func(req *http.Request) {
 				req.URL.Scheme = target.Scheme
 				req.URL.Host = target.Host
-				req.URL.Path = "/"
+				req.URL.Path = "/invoke"
 				req.Host = target.Host
 
 				if sess, ok := auth.SessionFrom(req.Context()); ok {
 					req.Header.Set("Authorization", "Bearer "+sess.GitHubToken)
 				}
 			},
+			Transport: &http.Transport{
+				ResponseHeaderTimeout: 5 * time.Minute,
+			},
 			FlushInterval: -1,
+			ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+				log.Printf("a2a proxy error for %s: %v", agentName, err)
+				writeJSON(rw, http.StatusBadGateway, map[string]string{
+					"error": fmt.Sprintf("agent %s unreachable: %v", agentName, err),
+				})
+			},
 		}
 
 		rp.ServeHTTP(w, r)

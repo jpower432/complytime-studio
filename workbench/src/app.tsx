@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { signal, effect } from "@preact/signals";
+import { signal } from "@preact/signals";
 import { Header } from "./components/header";
 import { Sidebar } from "./components/sidebar";
 import { MissionsView } from "./components/missions-view";
-import { MissionDetail } from "./components/mission-detail";
-import { RegistryBrowser } from "./components/registry-browser";
+import { WorkspaceView } from "./components/workspace-view";
 import { fetchMe, redirectToLogin, type UserInfo } from "./api/auth";
 
-export type View = "missions" | "detail" | "registry";
+export type View = "workspace" | "missions";
 
-export const currentView = signal<View>("missions");
+export const currentView = signal<View>("workspace");
 export const currentMissionId = signal<string | null>(null);
 export const currentUser = signal<UserInfo | null>(null);
 export const authChecked = signal(false);
@@ -45,11 +44,8 @@ export function App() {
       <div class="app-body">
         <Sidebar />
         <main class="app-main">
+          {view === "workspace" && <WorkspaceView />}
           {view === "missions" && <MissionsView />}
-          {view === "detail" && currentMissionId.value && (
-            <MissionDetail missionId={currentMissionId.value} />
-          )}
-          {view === "registry" && <RegistryBrowser />}
         </main>
       </div>
     </div>

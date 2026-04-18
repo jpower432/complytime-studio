@@ -5,11 +5,11 @@ export function Sidebar() {
   return (
     <aside class="sidebar">
       <nav class="sidebar-nav">
-        <button class={`sidebar-item ${view === "missions" || view === "detail" ? "active" : ""}`} onClick={() => navigate("missions")}>
-          <span class="sidebar-icon">&#9776;</span>Missions
+        <button class={`sidebar-item ${view === "workspace" ? "active" : ""}`} onClick={() => navigate("workspace")}>
+          <span class="sidebar-icon">&#9998;</span>Workspace
         </button>
-        <button class={`sidebar-item ${view === "registry" ? "active" : ""}`} onClick={() => navigate("registry")}>
-          <span class="sidebar-icon">&#9881;</span>Registry
+        <button class={`sidebar-item ${view === "missions" ? "active" : ""}`} onClick={() => navigate("missions")}>
+          <span class="sidebar-icon">&#9776;</span>Missions
         </button>
       </nav>
     </aside>

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { apiFetch } from "./fetch";
+
 function a2aEndpoint(agentName?: string): string {
   if (agentName) return `/api/a2a/${agentName}`;
   return "/api/a2a/studio-threat-modeler";
@@ -7,7 +9,7 @@ function a2aEndpoint(agentName?: string): string {
 
 interface A2AMessage {
   role: string;
-  parts: Array<{ type: string; text: string }>;
+  parts: Array<{ kind?: string; type?: string; text: string }>;
 }
 
 interface A2AResponse {
@@ -22,13 +24,14 @@ export async function sendMessage(text: string, agentName?: string): Promise<A2A
     method: "message/send",
     params: {
       message: {
+        messageId: crypto.randomUUID(),
         role: "user",
-        parts: [{ type: "text", text }],
+        parts: [{ kind: "text", text }],
       },
     },
   };
 
-  const res = await fetch(a2aEndpoint(agentName), {
+  const res = await apiFetch(a2aEndpoint(agentName), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -44,11 +47,11 @@ export async function sendReply(taskId: string, text: string, agentName?: string
     id: crypto.randomUUID(),
     method: "message/send",
     params: {
-      message: { role: "user", parts: [{ type: "text", text }] },
+      message: { messageId: crypto.randomUUID(), role: "user", parts: [{ kind: "text", text }] },
       taskId,
     },
   };
-  const res = await fetch(a2aEndpoint(agentName), {
+  const res = await apiFetch(a2aEndpoint(agentName), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -102,16 +105,20 @@ export function streamTask(taskId: string, callbacks: StreamCallbacks, agentName
 }
 
 export async function validate(yaml: string, definition: string, version = "latest"): Promise<{ valid: boolean; errors?: string[] }> {
-  const res = await fetch("/api/validate", {
+  const res = await apiFetch("/api/validate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ yaml, definition, version }),
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Validation failed: ${res.status}`);
+  }
   return res.json();
 }
 
 export async function publishBundle(input: { artifacts: string[]; target: string; tag?: string; sign?: boolean }): Promise<{ reference: string; digest: string; tag: string }> {
-  const res = await fetch("/api/publish", {
+  const res = await apiFetch("/api/publish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

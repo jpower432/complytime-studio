@@ -13,16 +13,20 @@ metadata:
 spec:
   description: "ComplyTime Studio Threat Modeler — STRIDE-based threat analysis, ThreatCatalog and ControlCatalog authoring"
   type: Declarative
+  {{- if or .Values.internalSkills.enabled (and .Values.externalSkills.stride.enabled) }}
   skills:
     gitRefs:
+      {{- if .Values.internalSkills.enabled }}
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/gemara-layers
+      {{- end }}
       {{- if .Values.externalSkills.stride.enabled }}
       - url: {{ .Values.externalSkills.stride.repo }}
         ref: {{ .Values.externalSkills.stride.ref }}
         path: {{ .Values.externalSkills.stride.path }}
       {{- end }}
+  {{- end }}
   declarative:
     runtime: go
     modelConfig: studio-model
@@ -80,16 +84,20 @@ metadata:
 spec:
   description: "ComplyTime Studio Gap Analyst — evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts"
   type: Declarative
+  {{- if or .Values.internalSkills.enabled (and .Values.externalSkills.auditClassification.enabled) }}
   skills:
     gitRefs:
+      {{- if .Values.internalSkills.enabled }}
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/gemara-layers
+      {{- end }}
       {{- if .Values.externalSkills.auditClassification.enabled }}
       - url: {{ .Values.externalSkills.auditClassification.repo }}
         ref: {{ .Values.externalSkills.auditClassification.ref }}
         path: {{ .Values.externalSkills.auditClassification.path }}
       {{- end }}
+  {{- end }}
   declarative:
     runtime: go
     modelConfig: studio-model
@@ -153,19 +161,23 @@ metadata:
 spec:
   description: "ComplyTime Studio Policy Composer — RiskCatalog and Policy authoring from threat modeling outputs"
   type: Declarative
+  {{- if or .Values.internalSkills.enabled (and .Values.externalSkills.assessmentDefaults.enabled) }}
   skills:
     gitRefs:
+      {{- if .Values.internalSkills.enabled }}
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/gemara-layers
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/policy-risk-linkage
+      {{- end }}
       {{- if .Values.externalSkills.assessmentDefaults.enabled }}
       - url: {{ .Values.externalSkills.assessmentDefaults.repo }}
         ref: {{ .Values.externalSkills.assessmentDefaults.ref }}
         path: {{ .Values.externalSkills.assessmentDefaults.path }}
       {{- end }}
+  {{- end }}
   declarative:
     runtime: go
     modelConfig: studio-model

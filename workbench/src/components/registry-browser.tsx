@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from "preact/hooks";
 import { listRepositories, listTags, fetchManifest, fetchLayer, type Repository, type Tag, type Manifest } from "../api/registry";
+import { saveToWorkspace } from "../api/workspace";
 
-type RegistryState = { phase: "input" } | { phase: "repos"; registry: string; repos: Repository[] } | { phase: "tags"; registry: string; repo: string; tags: Tag[] } | { phase: "manifest"; registry: string; repo: string; tag: string; manifest: Manifest } | { phase: "layer"; content: string; mediaType: string };
+type RegistryState = { phase: "input" } | { phase: "repos"; registry: string; repos: Repository[] } | { phase: "tags"; registry: string; repo: string; tags: Tag[] } | { phase: "manifest"; registry: string; repo: string; tag: string; manifest: Manifest } | { phase: "layer"; content: string; mediaType: string; repo: string };
 
 export function RegistryBrowser() {
   const [state, setState] = useState<RegistryState>({ phase: "input" });
   const [registryUrl, setRegistryUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [saveStatus, setSaveStatus] = useState<{ ok: boolean; message: string } | null>(null);
   async function handleBrowse() {
     if (!registryUrl.trim()) return; setLoading(true); setError("");
     try { const repos = await listRepositories(registryUrl.trim()); setState({ phase: "repos", registry: registryUrl.trim(), repos }); }
@@ -26,10 +28,21 @@ export function RegistryBrowser() {
   }
   async function handleInspectLayer(digest: string, mediaType: string) {
     if (state.phase !== "manifest") return; setLoading(true); setError("");
-    try { const content = await fetchLayer(`${state.registry}/${state.repo}@${digest}`); setState({ phase: "layer", content, mediaType }); }
+    try { const content = await fetchLayer(`${state.registry}/${state.repo}@${digest}`); setState({ phase: "layer", content, mediaType, repo: state.repo }); }
     catch (e: unknown) { setError((e as Error).message); } finally { setLoading(false); }
   }
-  function goBack() { setState({ phase: "input" }); }
+  async function handleSaveLayer() {
+    if (state.phase !== "layer") return;
+    const ext = state.mediaType.includes("yaml") ? ".yaml" : ".json";
+    const basename = state.repo.replace(/\//g, "-");
+    const filename = `${basename}${ext}`;
+    setSaveStatus(null);
+    try {
+      const result = await saveToWorkspace(filename, state.content);
+      setSaveStatus({ ok: true, message: `Saved to ${result.path}` });
+    } catch (e: unknown) { setSaveStatus({ ok: false, message: (e as Error).message }); }
+  }
+  function goBack() { setState({ phase: "input" }); setSaveStatus(null); }
   return (
     <div class="registry-browser">
       <div class="registry-header"><h2>Registry Browser</h2>{state.phase !== "input" && (<button class="btn btn-secondary btn-sm" onClick={goBack}>&larr; Back</button>)}</div>
@@ -38,7 +51,7 @@ export function RegistryBrowser() {
       {state.phase === "repos" && (<div class="registry-list"><h3>Repositories in {state.registry}</h3>{state.repos.length === 0 ? <p class="text-muted">No repositories found.</p> : state.repos.map((r) => (<div key={r.name} class="registry-list-item" onClick={() => handleSelectRepo(r.name)}><span class="registry-item-icon">&#128230;</span>{r.name}</div>))}</div>)}
       {state.phase === "tags" && (<div class="registry-list"><h3>{state.registry}/{state.repo}</h3>{state.tags.length === 0 ? <p class="text-muted">No tags found.</p> : state.tags.map((t) => (<div key={t.name} class="registry-list-item" onClick={() => handleSelectTag(t.name)}><span class="registry-item-icon">&#127991;</span>{t.name}{t.digest && <span class="text-muted registry-digest">{t.digest.slice(0, 19)}</span>}</div>))}</div>)}
       {state.phase === "manifest" && (<div class="registry-manifest"><h3>{state.repo}:{state.tag}</h3><div class="manifest-section"><h4>Layers</h4>{state.manifest.layers.map((layer) => (<div key={layer.digest} class="manifest-layer"><div class="manifest-layer-header"><span class="manifest-media-type">{layer.mediaType}</span><span class="text-muted">{(layer.size / 1024).toFixed(1)} KB</span></div><div class="manifest-layer-actions"><button class="btn btn-secondary btn-sm" onClick={() => handleInspectLayer(layer.digest, layer.mediaType)} disabled={loading}>Inspect</button></div></div>))}</div></div>)}
-      {state.phase === "layer" && (<div class="registry-layer-view"><div class="manifest-media-type">{state.mediaType}</div><pre class="registry-layer-content">{state.content}</pre></div>)}
+      {state.phase === "layer" && (<div class="registry-layer-view"><div class="registry-layer-toolbar"><span class="manifest-media-type">{state.mediaType}</span><button class="btn btn-secondary btn-sm" onClick={handleSaveLayer}>Save to Workspace</button></div>{saveStatus && (<div class={`validation-result ${saveStatus.ok ? "valid" : "invalid"}`}>{saveStatus.ok ? "\u2713" : "\u2717"} {saveStatus.message}</div>)}<pre class="registry-layer-content">{state.content}</pre></div>)}
     </div>
   );
 }

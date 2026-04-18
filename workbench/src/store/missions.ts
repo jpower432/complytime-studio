@@ -10,6 +10,7 @@ export interface Mission {
   id: string; title: string; status: string;
   createdAt: string; updatedAt: string;
   artifacts: Artifact[]; messages: Message[];
+  agentName?: string;
 }
 
 function readStorage(): Mission[] {
@@ -26,12 +27,14 @@ export const missionsList = signal<Mission[]>(readStorage());
 
 export function loadMissions(): Mission[] { return missionsList.value; }
 
-export function createMission(taskId: string, title: string): Mission {
+const DEFAULT_AGENT = "studio-threat-modeler";
+
+export function createMission(taskId: string, title: string, agentName?: string): Mission {
   const missions = readStorage();
   const entry: Mission = {
     id: taskId, title: title.length > 80 ? title.slice(0, 77) + "..." : title,
     status: "submitted", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    artifacts: [], messages: [],
+    artifacts: [], messages: [], agentName: agentName || DEFAULT_AGENT,
   };
   missions.unshift(entry);
   writeStorage(missions);
@@ -57,6 +60,10 @@ export function hasActiveMission(): boolean {
 
 export function getActiveMission(): Mission | null {
   return missionsList.value.find((m) => ["submitted", "working", "input-required"].includes(m.status)) ?? null;
+}
+
+export function getMissionAgent(mission: Mission): string {
+  return mission.agentName || DEFAULT_AGENT;
 }
 
 export function addArtifact(taskId: string, name: string, yaml: string, definition: string) {

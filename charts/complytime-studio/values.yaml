@@ -20,7 +20,12 @@ auth:
     callbackURL: "http://localhost:8080/auth/callback"
 
 # -- Git URL of this repository, used for internal skill gitRefs.
-platformRepo: https://github.com/complytime/complytime-studio.git
+platformRepo: https://github.com/jpower432/complytime-studio.git
+
+# -- Internal skills from this repo (requires public repo or git credentials).
+# Disable when the platformRepo is private and kagent lacks git auth.
+internalSkills:
+  enabled: false
 
 # -- External skill repositories. Disabled by default (placeholders).
 # Enable once the external repos exist.
@@ -49,6 +54,12 @@ model:
   # apiKeySecret:
   #   name: studio-model-credentials
   #   key: api-key
+  anthropicVertexAI:
+    projectID: ""
+    location: us-east5
+    # Secret containing application_default_credentials.json for GCP auth.
+    # Required when running outside GKE (e.g. kind) without workload identity.
+    credentialsSecret: studio-gcp-credentials
 
 # -- Agent directory entries exposed via GET /api/agents.
 # Each entry maps to a deployed Declarative agent's A2A endpoint.

@@ -76,15 +76,18 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 spec:
-  transportType: http
-  httpTransport:
-    url: http://studio-github-mcp:8080/mcp
+  transportType: stdio
+  stdioTransport: {}
   deployment:
     image: {{ .Values.mcpServers.github.image }}
     cmd: /server/github-mcp-server
     args:
-      - http
-      - "--port=8080"
+      - stdio
       - "--toolsets=repos,code_security"
-    port: 8080
+    port: 3000
+    {{- $ghSecret := lookup "v1" "Secret" .Release.Namespace (.Values.mcpServers.github.secretName | default "studio-github-token") }}
+    {{- if $ghSecret }}
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: {{ index $ghSecret.data (.Values.mcpServers.github.secretKey | default "token") | b64dec | quote }}
+    {{- end }}
 {{- end }}

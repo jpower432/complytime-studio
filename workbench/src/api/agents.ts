@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { apiFetch } from "./fetch";
+
 export interface AgentSkill {
   id: string;
   name: string;
@@ -15,7 +17,7 @@ export interface AgentCard {
 }
 
 export async function fetchAgents(): Promise<AgentCard[]> {
-  const res = await fetch("/api/agents");
+  const res = await apiFetch("/api/agents");
   if (!res.ok) throw new Error(`Failed to fetch agents: ${res.status}`);
   return res.json();
 }

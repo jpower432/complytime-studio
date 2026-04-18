@@ -1,6 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
+const METADATA_TYPE_RE = /^\s*type:\s*["']?(\w+)["']?\s*$/m;
+const METADATA_BLOCK_RE = /^metadata:\s*\n((?:\s+.*\n)*)/m;
+
+const TYPE_TO_DEFINITION: Record<string, string> = {
+  ThreatCatalog: "#ThreatCatalog",
+  ControlCatalog: "#ControlCatalog",
+  GuidanceCatalog: "#GuidanceCatalog",
+  CapabilityCatalog: "#CapabilityCatalog",
+  AuditLog: "#AuditLog",
+  EvaluationLog: "#EvaluationLog",
+  Policy: "#Policy",
+  RiskCatalog: "#RiskCatalog",
+  MappingDocument: "#MappingDocument",
+};
+
+export const ALL_DEFINITIONS = Object.values(TYPE_TO_DEFINITION);
+
 export function detectDefinition(yaml: string): string {
+  const metaBlock = METADATA_BLOCK_RE.exec(yaml);
+  if (metaBlock) {
+    const typeMatch = METADATA_TYPE_RE.exec(metaBlock[1]);
+    if (typeMatch && TYPE_TO_DEFINITION[typeMatch[1]]) {
+      return TYPE_TO_DEFINITION[typeMatch[1]];
+    }
+  }
+
   if (/^threats:/m.test(yaml) || /^\s+threats:/m.test(yaml)) return "#ThreatCatalog";
   if (/^controls:/m.test(yaml) || /^\s+controls:/m.test(yaml)) return "#ControlCatalog";
   if (/^guidances:/m.test(yaml) || /^\s+guidances:/m.test(yaml)) return "#GuidanceCatalog";

@@ -37,6 +37,10 @@ spec:
             - name: ORAS_MCP_URL
               value: "http://studio-oras-mcp:3000/mcp"
             {{- end }}
+            {{- if .Values.registry.enabled }}
+            - name: REGISTRY_INSECURE
+              value: "studio-registry:{{ .Values.registry.service.port }}"
+            {{- end }}
             {{- if .Values.auth.github.clientId }}
             - name: GITHUB_CLIENT_ID
               value: {{ .Values.auth.github.clientId | quote }}

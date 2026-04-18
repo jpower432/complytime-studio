@@ -12,8 +12,15 @@ metadata:
 spec:
   provider: {{ .Values.model.provider | quote }}
   model: {{ .Values.model.name | quote }}
-  {{- with .Values.model.apiKeySecret }}
-  apiKeySecretRef:
-    name: {{ .name }}
-    key: {{ .key | default "api-key" }}
+  {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+  apiKeySecret: {{ .Values.model.anthropicVertexAI.credentialsSecret | quote }}
+  apiKeySecretKey: application_default_credentials.json
+  {{- else if .Values.model.apiKeySecret }}
+  apiKeySecretRef: {{ .Values.model.apiKeySecret.name | quote }}
+  apiKeySecretKey: {{ .Values.model.apiKeySecret.key | default "api-key" | quote }}
+  {{- end }}
+  {{- if and .Values.model.anthropicVertexAI .Values.model.anthropicVertexAI.projectID }}
+  anthropicVertexAI:
+    projectID: {{ .Values.model.anthropicVertexAI.projectID | quote }}
+    location: {{ .Values.model.anthropicVertexAI.location | default "us-east5" | quote }}
   {{- end }}

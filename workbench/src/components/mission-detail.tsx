@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState } from "preact/hooks";
 import { navigate } from "../app";
-import { getMission, updateMission, addArtifact, addMessage, missionsList } from "../store/missions";
+import { getMission, updateMission, addArtifact, addMessage, missionsList, getMissionAgent } from "../store/missions";
 import { streamTask, sendReply } from "../api/a2a";
 import { extractArtifacts, detectDefinition } from "../lib/artifact-detect";
 import { StatusBadge } from "./status-badge";
@@ -16,6 +16,7 @@ export function MissionDetail({ missionId }: { missionId: string }) {
   useEffect(() => {
     if (!mission) return;
     if (["completed", "failed", "disconnected"].includes(mission.status)) return;
+    const agentName = getMissionAgent(mission);
     const cleanup = streamTask(missionId, {
       onStatus(state) { updateMission(missionId, { status: state }); forceUpdate((n) => n + 1); },
       onMessage(message) {
@@ -36,14 +37,15 @@ export function MissionDetail({ missionId }: { missionId: string }) {
       },
       onError() { updateMission(missionId, { status: "disconnected" }); forceUpdate((n) => n + 1); },
       onDone(state) { updateMission(missionId, { status: state }); forceUpdate((n) => n + 1); streamRef.current = null; },
-    });
+    }, agentName);
     streamRef.current = cleanup;
     return () => { cleanup(); streamRef.current = null; };
   }, [missionId]);
   if (!mission) { navigate("missions"); return null; }
+  const replyAgent = getMissionAgent(mission);
   async function handleReply(text: string) {
     addMessage(missionId, "user", text); forceUpdate((n) => n + 1);
-    try { await sendReply(missionId, text); }
+    try { await sendReply(missionId, text, replyAgent); }
     catch (err) { addMessage(missionId, "system", `Error: ${(err as Error).message}`); forceUpdate((n) => n + 1); }
   }
   return (

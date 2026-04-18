@@ -77,6 +77,12 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .dialog-label input, .dialog-label .dialog-input { margin-top: 4px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .dialog-error { color: var(--error); font-size: 12px; margin-top: 6px; }
+.agent-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.agent-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.15s; }
+.agent-card:hover { border-color: var(--accent); }
+.agent-card.selected { border-color: var(--accent); background: rgba(78,168,222,0.08); }
+.agent-card-name { font-size: 13px; font-weight: 600; color: var(--text-heading); font-family: var(--font-mono); }
+.agent-card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
 .detail-view { display: flex; flex-direction: column; height: 100%; }
 .detail-back { padding: 8px 16px; background: var(--bg-surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .detail-back .mission-title { font-size: 14px; font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -138,6 +144,23 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .manifest-media-type { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .manifest-layer-actions { display: flex; gap: 6px; }
 .registry-layer-content { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text); overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-all; margin-top: 12px; }
+.workspace-layout { display: flex; height: 100%; min-height: 0; }
+.workspace-editor-area { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.workspace-editor-area.with-drawer { flex: 1 1 60%; max-width: 60%; }
+.workspace-filename { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.definition-select { padding: 3px 8px; font-size: 12px; font-family: var(--font-mono); background: var(--bg-input); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.definition-select:focus { outline: none; border-color: var(--accent); }
+.workspace-chat-toggle { margin-left: 4px; }
+.chat-drawer { display: flex; flex-direction: column; width: 40%; min-width: 300px; border-left: 1px solid var(--border); background: var(--bg-surface); }
+.chat-drawer-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.chat-drawer-title { font-size: 14px; font-weight: 600; color: var(--text-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.chat-drawer-close { margin-left: auto; font-size: 16px; line-height: 1; }
+.copy-toast { font-size: 12px; color: var(--success); margin-left: 4px; animation: fadeout 1.5s forwards; }
+@keyframes fadeout { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+.import-dialog { max-height: 80vh; overflow-y: auto; }
+.registry-input-section { margin-bottom: 12px; }
+.registry-layer-view { display: flex; flex-direction: column; }
+.registry-layer-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .text-muted { color: var(--text-muted); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
