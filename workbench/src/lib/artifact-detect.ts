@@ -48,7 +48,9 @@ export interface ExtractedArtifact { name: string; yaml: string; definition: str
 
 export function extractArtifacts(text: string): { text: string; artifacts: ExtractedArtifact[] } {
   const artifacts: ExtractedArtifact[] = [];
-  const cleaned = text.replace(/```ya?ml\n([\s\S]*?)```/g, (match, yamlContent: string) => {
+
+  // 1. Fenced code blocks (```yaml or ```)
+  const cleaned = text.replace(/```(?:ya?ml)?\n([\s\S]*?)```/g, (match, yamlContent: string) => {
     if (isGemaraArtifact(yamlContent)) {
       const name = inferArtifactName(yamlContent);
       const definition = detectDefinition(yamlContent);
@@ -57,5 +59,24 @@ export function extractArtifacts(text: string): { text: string; artifacts: Extra
     }
     return match;
   });
+
+  // 2. Raw YAML: if no fenced artifacts found, scan for inline Gemara YAML
+  //    starting at a top-level key (e.g., "metadata:" or "threats:")
+  if (artifacts.length === 0) {
+    const rawMatch = cleaned.match(
+      /^(metadata:|threats:|controls:|capabilities:|guidances:|policy:|results:|risks:|mappings:).*(?:\n(?:[ \t].*|[-#].*|$))*/m
+    );
+    if (rawMatch && rawMatch[0].split("\n").length >= 3) {
+      const rawYaml = rawMatch[0].trim();
+      if (isGemaraArtifact(rawYaml)) {
+        const name = inferArtifactName(rawYaml);
+        const definition = detectDefinition(rawYaml);
+        artifacts.push({ name, yaml: rawYaml, definition });
+        const remaining = cleaned.replace(rawMatch[0], `_[Artifact: ${name}]_`);
+        return { text: remaining, artifacts };
+      }
+    }
+  }
+
   return { text: cleaned, artifacts };
 }

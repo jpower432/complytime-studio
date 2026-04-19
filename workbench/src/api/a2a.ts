@@ -78,7 +78,6 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
 
   (async () => {
     try {
-      console.log("[a2a] POST", url, JSON.stringify(body).slice(0, 200));
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
@@ -87,8 +86,6 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
         credentials: "same-origin",
       });
 
-      console.log("[a2a] response", res.status, res.headers.get("content-type"));
-
       if (res.status === 401) {
         window.location.href = "/auth/login";
         return;
@@ -96,7 +93,6 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.error("[a2a] non-ok response", res.status, text.slice(0, 500));
         callbacks.onError?.(new Error(`A2A stream failed: ${res.status} — ${text.slice(0, 200)}`));
         callbacks.onDone?.("failed");
         return;
@@ -105,12 +101,10 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("application/json")) {
         const json = await res.json();
-        console.log("[a2a] sync JSON response", JSON.stringify(json).slice(0, 500));
         handleSyncResponse(json, callbacks);
         return;
       }
 
-      console.log("[a2a] reading SSE stream…");
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -120,7 +114,6 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        if (eventCount === 0) console.log("[a2a] first chunk", chunk.slice(0, 300));
         buffer += chunk;
 
         const result = parseSSEBuffer(buffer);
@@ -130,10 +123,9 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
           eventCount++;
           try {
             const parsed = JSON.parse(eventData);
-            if (eventCount <= 3) console.log("[a2a] event", eventCount, JSON.stringify(parsed).slice(0, 300));
             processEvent(parsed, callbacks);
           } catch {
-            console.warn("[a2a] malformed SSE data", eventData.slice(0, 200));
+            // skip malformed SSE data
           }
         }
       }
@@ -151,10 +143,8 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
           }
         }
       }
-      console.log("[a2a] stream ended, total events:", eventCount);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
-      console.error("[a2a] stream error", err);
       callbacks.onError?.(err as Error);
       callbacks.onDone?.("failed");
     }
@@ -191,8 +181,6 @@ function handleSyncResponse(json: Record<string, unknown>, callbacks: StreamCall
   const state = ((result.status as Record<string, unknown>)?.state as string) || "completed";
   if (TERMINAL_STATES.has(state)) {
     callbacks.onDone?.(state);
-  } else {
-    console.log("[a2a] sync response with non-terminal state:", state, "— caller should retry/poll");
   }
 }
 
@@ -223,20 +211,29 @@ function processEvent(data: Record<string, unknown>, callbacks: StreamCallbacks)
 
   if (result.id) callbacks.onTaskId?.(result.id as string);
 
+  let statusMessageHandled = false;
   if (result.status) {
     const status = result.status as Record<string, unknown>;
     const state = status.state as string;
     callbacks.onStatus?.(state, status);
 
-    if (status.message) callbacks.onMessage?.(status.message as A2AMessage);
+    if (status.message) {
+      callbacks.onMessage?.(status.message as A2AMessage);
+      statusMessageHandled = true;
+    }
 
     if (state === "completed" || state === "failed") {
       callbacks.onDone?.(state);
     }
   }
 
-  if (result.message) callbacks.onMessage?.(result.message as A2AMessage);
+  if (result.message && !statusMessageHandled) {
+    callbacks.onMessage?.(result.message as A2AMessage);
+  }
 
+  if (result.artifact) {
+    callbacks.onArtifact?.(result.artifact as Record<string, unknown>);
+  }
   if (result.artifacts) {
     for (const artifact of result.artifacts as Array<Record<string, unknown>>) {
       callbacks.onArtifact?.(artifact);

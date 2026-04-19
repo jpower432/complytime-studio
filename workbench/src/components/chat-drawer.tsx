@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState, useCallback } from "preact/hooks";
 import {
   getJobAgent, updateJob, addArtifact, addMessage, cancelJob,
   updateLastAgentMessage, finalizeLastAgentMessage,
@@ -43,6 +43,19 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     return state === "completed" ? "ready" : state;
   }
 
+  function finalizeStreamedContent() {
+    if (!streamingBuffer.current) return;
+    const content = streamingBuffer.current;
+    streamingBuffer.current = "";
+    finalizeLastAgentMessage(job.id);
+
+    const extracted = extractArtifacts(content);
+    for (const artifact of extracted.artifacts) {
+      addArtifact(job.id, artifact.name, artifact.yaml, artifact.definition ?? undefined);
+      proposeArtifact(artifact.name, artifact.yaml, artifact.definition ?? undefined);
+    }
+  }
+
   function buildCallbacks(): StreamCallbacks {
     return {
       onTaskId(taskId) {
@@ -52,14 +65,12 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
       onStatus(state) {
         const mapped = mapState(state);
         updateJob(job.id, { status: mapped });
-        if (mapped === "ready" && streamingBuffer.current) {
-          finalizeLastAgentMessage(job.id);
-          streamingBuffer.current = "";
-        }
+        if (mapped === "ready") finalizeStreamedContent();
         forceUpdate((n) => n + 1);
       },
       onMessage(message) {
         if (!message?.parts) return;
+        if (message.role === "user") return;
         for (const part of message.parts as Array<{
           kind?: string; type?: string; text?: string;
           data?: Record<string, unknown>;
@@ -70,10 +81,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
           const isPartial = getMetaKey(meta, PARTIAL_KEY) === true;
 
           if (partType === "function_call" && part.data) {
-            if (streamingBuffer.current) {
-              finalizeLastAgentMessage(job.id);
-              streamingBuffer.current = "";
-            }
+            finalizeStreamedContent();
             const toolId = (part.data.id as string) || crypto.randomUUID();
             const isLongRunning = getMetaKey(meta, LONG_RUNNING_KEY) === true;
             addToolCallMessage(job.id, {
@@ -96,7 +104,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
             continue;
           }
 
-          if ((part.kind || part.type) === "text" && part.text) {
+          if (part.text && (!part.kind && !part.type || (part.kind || part.type) === "text")) {
             if (isPartial) {
               streamingBuffer.current += part.text;
               updateLastAgentMessage(job.id, streamingBuffer.current);
@@ -105,8 +113,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
               if (streamingBuffer.current) {
                 streamingBuffer.current += part.text;
                 updateLastAgentMessage(job.id, streamingBuffer.current);
-                finalizeLastAgentMessage(job.id);
-                streamingBuffer.current = "";
+                finalizeStreamedContent();
               } else {
                 const extracted = extractArtifacts(part.text);
                 if (extracted.text.trim()) addMessage(job.id, "agent", extracted.text);
@@ -124,7 +131,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
         const parts = (artifact as { parts?: Array<{ kind?: string; type?: string; text: string }>; name?: string }).parts;
         if (parts) {
           for (const part of parts) {
-            if ((part.kind || part.type) === "text") {
+            if (part.text && (!part.kind && !part.type || (part.kind || part.type) === "text")) {
               const name = (artifact as { name?: string }).name || "artifact.yaml";
               const definition = detectDefinition(part.text) ?? undefined;
               addArtifact(job.id, name, part.text, definition);
@@ -141,10 +148,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
       },
       onDone(state) {
         const mapped = mapState(state);
-        if (streamingBuffer.current) {
-          finalizeLastAgentMessage(job.id);
-          streamingBuffer.current = "";
-        }
+        finalizeStreamedContent();
         updateJob(job.id, { status: mapped });
         if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
         forceUpdate((n) => n + 1);
@@ -198,7 +202,6 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
       ...buildCallbacks(),
       onDone(state) {
         buildCallbacks().onDone?.(state);
-        if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
       },
     };
 
@@ -232,6 +235,31 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     };
   }, [job.id]);
 
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const [drawerWidth, setDrawerWidth] = useState<number | null>(null);
+
+  const handleResizeStart = useCallback((e: MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = drawerRef.current?.offsetWidth ?? 400;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      const newWidth = Math.max(280, Math.min(startWidth + delta, window.innerWidth * 0.8));
+      setDrawerWidth(newWidth);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
   const currentJob = jobsList.value.find((j) => j.id === job.id) ?? job;
   const replyAgent = getJobAgent(currentJob);
 
@@ -249,6 +277,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
   }
 
   function handleCancel() {
+    if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
     if (streamRef.current) { streamRef.current(); streamRef.current = null; }
     cancelJob(job.id);
     forceUpdate((n) => n + 1);
@@ -279,7 +308,8 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
   }
 
   return (
-    <div class="chat-drawer">
+    <div class="chat-drawer" ref={drawerRef} style={drawerWidth ? { width: `${drawerWidth}px` } : undefined}>
+      <div class="chat-drawer-resize" onMouseDown={handleResizeStart} />
       <div class="chat-drawer-header">
         <span class="chat-drawer-title">{currentJob.title}</span>
         <StatusBadge status={currentJob.status} />
