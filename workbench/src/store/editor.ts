@@ -9,6 +9,7 @@ import {
   addArtifact as wsAdd,
   updateActiveContent,
   updateActiveDefinition,
+  updateActiveGemaraVersion,
 } from "./workspace";
 import { injectMappingRef, type MappingReference } from "../lib/yaml-inject";
 import { detectDefinition, inferArtifactName } from "../lib/artifact-detect";
@@ -18,6 +19,7 @@ export type { MappingReference } from "../lib/yaml-inject";
 export const editorContent = computed(() => activeArtifact.value?.yaml ?? "");
 export const editorFilename = computed(() => activeArtifact.value?.name ?? "artifact.yaml");
 export const editorDefinition = computed(() => activeArtifact.value?.definition ?? "#ThreatCatalog");
+export const editorGemaraVersion = computed(() => activeArtifact.value?.gemaraVersion ?? "latest");
 
 export interface Proposal {
   name: string;
@@ -62,6 +64,10 @@ export function setEditorContent(yaml: string) {
 
 export function setEditorDefinition(def: string) {
   updateActiveDefinition(def);
+}
+
+export function setEditorGemaraVersion(version: string) {
+  updateActiveGemaraVersion(version);
 }
 
 export function injectMappingReference(ref: MappingReference) {

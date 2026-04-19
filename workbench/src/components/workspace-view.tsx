@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useRef, useEffect } from "preact/hooks";
-import { editorContent, editorFilename, editorDefinition, pendingProposal, applyProposal, dismissProposal, setEditorContent, setEditorDefinition } from "../store/editor";
+import { editorContent, editorFilename, editorDefinition, editorGemaraVersion, pendingProposal, applyProposal, dismissProposal, setEditorContent, setEditorDefinition, setEditorGemaraVersion } from "../store/editor";
 import { allArtifacts, capacityWarning } from "../store/workspace";
 import { getJob, type Artifact } from "../store/jobs";
 import { currentJobId } from "../app";
@@ -54,13 +54,14 @@ export function WorkspaceView() {
   }
 
   const definition = editorDefinition.value;
+  const gemaraVersion = editorGemaraVersion.value;
 
   async function handleValidate() {
     if (!content.trim()) return;
     setValidationResult({ valid: true, message: "Validating..." });
     try {
-      const result = await validate(content, definition);
-      if (result.valid) setValidationResult({ valid: true, message: `Valid ${definition}` });
+      const result = await validate(content, definition, gemaraVersion);
+      if (result.valid) setValidationResult({ valid: true, message: `Valid ${definition} @ ${gemaraVersion}` });
       else setValidationResult({ valid: false, message: `Invalid: ${result.errors?.join(", ") || "unknown error"}` });
     } catch (e: unknown) { setValidationResult({ valid: false, message: `Error: ${(e as Error).message}` }); }
   }
@@ -90,6 +91,14 @@ export function WorkspaceView() {
           >
             {ALL_DEFINITIONS.map((d) => <option key={d} value={d}>{d.replace("#", "")}</option>)}
           </select>
+          <input
+            class="version-input"
+            type="text"
+            value={gemaraVersion}
+            title="Gemara schema version"
+            placeholder="latest"
+            onInput={(e) => setEditorGemaraVersion((e.target as HTMLInputElement).value || "latest")}
+          />
           <button class="btn btn-primary btn-sm" onClick={handleValidate} disabled={!content.trim()}>Validate</button>
           <button class="btn btn-accent btn-sm" onClick={() => setShowPublish(true)} disabled={publishArtifacts.length === 0}>Publish</button>
           {currentJob && !chatOpen && (

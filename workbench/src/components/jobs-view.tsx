@@ -31,7 +31,6 @@ export function JobsView() {
           <div class="empty-state">
             <h3>No active jobs</h3>
             <p>Start a job to analyze threats, author controls, or manage Gemara artifacts.</p>
-            <button class="btn btn-primary" disabled={active} onClick={() => (showNewDialog.value = true)}>+ New Job</button>
           </div>
         ) : (
           activeJobs.map((j) => (

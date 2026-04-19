@@ -79,7 +79,8 @@ The jobs view SHALL display two sections: Active and Recent.
 
 #### Scenario: Empty active state
 - **WHEN** no active jobs exist
-- **THEN** the Active section SHALL display "No active jobs" with a prominent New Job button
+- **THEN** the Active section SHALL display "No active jobs" with descriptive copy
+- **THEN** the Active section SHALL NOT render a duplicate New Job button (the header button is the single entry point)
 
 #### Scenario: Empty history state
 - **WHEN** no history jobs exist

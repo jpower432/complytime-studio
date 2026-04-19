@@ -11,6 +11,7 @@ export interface WorkspaceArtifact {
   name: string;
   yaml: string;
   definition: string;
+  gemaraVersion: string;
 }
 
 interface WorkspaceState {
@@ -22,7 +23,11 @@ function readStorage(): WorkspaceState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { artifacts: {}, activeName: null };
-    return JSON.parse(raw) as WorkspaceState;
+    const state = JSON.parse(raw) as WorkspaceState;
+    for (const a of Object.values(state.artifacts)) {
+      if (!a.gemaraVersion) a.gemaraVersion = "latest";
+    }
+    return state;
   } catch {
     return { artifacts: {}, activeName: null };
   }
@@ -69,11 +74,11 @@ export const activeArtifact = computed<WorkspaceArtifact | null>(() => {
   return _state.value.artifacts[name] ?? null;
 });
 
-export function addArtifact(name: string, yaml: string, definition?: string) {
+export function addArtifact(name: string, yaml: string, definition?: string, gemaraVersion?: string) {
   const def = definition || detectDefinition(yaml) || "#ThreatCatalog";
   const resolved = name || inferArtifactName(yaml);
   mutate((s) => {
-    s.artifacts[resolved] = { name: resolved, yaml, definition: def };
+    s.artifacts[resolved] = { name: resolved, yaml, definition: def, gemaraVersion: gemaraVersion || "latest" };
     s.activeName = resolved;
     return s;
   });
@@ -112,6 +117,15 @@ export function updateActiveDefinition(def: string) {
   if (!name || !_state.value.artifacts[name]) return;
   mutate((s) => {
     s.artifacts[name] = { ...s.artifacts[name], definition: def };
+    return s;
+  });
+}
+
+export function updateActiveGemaraVersion(version: string) {
+  const name = _state.value.activeName;
+  if (!name || !_state.value.artifacts[name]) return;
+  mutate((s) => {
+    s.artifacts[name] = { ...s.artifacts[name], gemaraVersion: version };
     return s;
   });
 }

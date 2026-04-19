@@ -358,6 +358,12 @@ html, body, #root {
   border-radius: var(--radius); cursor: pointer;
 }
 .definition-select:focus { outline: none; border-color: var(--accent); }
+.version-input {
+  width: 80px; padding: 4px 8px; font-size: 12px; font-family: var(--font-mono);
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); text-align: center;
+}
+.version-input:focus { outline: none; border-color: var(--accent); }
 .workspace-chat-toggle { margin-left: 4px; }
 
 /* ── Toolbar overflow menu ── */
