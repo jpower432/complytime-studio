@@ -12,16 +12,7 @@ import { ArtifactTabs } from "./artifact-tabs";
 import { PublishDialog } from "./publish-dialog";
 import { ImportDialog } from "./import-dialog";
 import { ChatDrawer } from "./chat-drawer";
-
-function downloadYaml(filename: string, content: string) {
-  const blob = new Blob([content], { type: "application/x-yaml" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+import { downloadYaml } from "../lib/download";
 
 export function WorkspaceView() {
   const content = editorContent.value;
@@ -32,6 +23,7 @@ export function WorkspaceView() {
   const [chatOpen, setChatOpen] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -126,12 +118,20 @@ export function WorkspaceView() {
           <div class="validation-result invalid">{capacityWarning.value}</div>
         )}
         {pendingProposal.value && (
-          <div class="proposal-banner">
-            <span class="proposal-banner-text">Agent suggests: <strong>{pendingProposal.value.name}</strong></span>
-            <div class="proposal-banner-actions">
-              <button class="btn btn-primary btn-sm" onClick={applyProposal}>Apply</button>
-              <button class="btn btn-secondary btn-sm" onClick={dismissProposal}>Dismiss</button>
+          <div class="proposal-banner-wrap">
+            <div class="proposal-banner">
+              <span class="proposal-banner-text">Agent suggests: <strong>{pendingProposal.value.name}</strong></span>
+              <div class="proposal-banner-actions">
+                <button class="btn btn-ghost btn-sm" onClick={() => setPreviewOpen(!previewOpen)}>
+                  {previewOpen ? "Hide" : "Preview"}
+                </button>
+                <button class="btn btn-primary btn-sm" onClick={applyProposal}>Apply</button>
+                <button class="btn btn-secondary btn-sm" onClick={dismissProposal}>Dismiss</button>
+              </div>
             </div>
+            {previewOpen && (
+              <pre class="proposal-preview">{pendingProposal.value.yaml}</pre>
+            )}
           </div>
         )}
         <YamlEditor content={content} onChange={handleEditorChange} />

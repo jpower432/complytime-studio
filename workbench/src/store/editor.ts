@@ -12,7 +12,7 @@ import {
   updateActiveGemaraVersion,
 } from "./workspace";
 import { injectMappingRef, type MappingReference } from "../lib/yaml-inject";
-import { detectDefinition, inferArtifactName } from "../lib/artifact-detect";
+import { detectDefinition, inferArtifactName, isGemaraArtifact } from "../lib/artifact-detect";
 
 export type { MappingReference } from "../lib/yaml-inject";
 
@@ -30,6 +30,7 @@ export interface Proposal {
 export const pendingProposal = signal<Proposal | null>(null);
 
 export function proposeArtifact(name: string, yaml: string, definition?: string) {
+  if (!yaml.trim() || !isGemaraArtifact(yaml)) return;
   pendingProposal.value = { name, yaml, definition };
 }
 
