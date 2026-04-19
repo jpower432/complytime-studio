@@ -9,7 +9,7 @@ import {
 import { proposeArtifact } from "../store/editor";
 import { getArtifactByName } from "../store/workspace";
 import { streamMessage, streamReply, type StreamCallbacks, type ContextArtifact } from "../api/a2a";
-import { extractArtifacts, detectDefinition } from "../lib/artifact-detect";
+import { extractArtifacts, detectDefinition, stripFences } from "../lib/artifact-detect";
 import { ChatPanel } from "./chat-panel";
 import { StatusBadge } from "./status-badge";
 
@@ -132,10 +132,19 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
         if (parts) {
           for (const part of parts) {
             if (part.text && (!part.kind && !part.type || (part.kind || part.type) === "text")) {
-              const name = (artifact as { name?: string }).name || "artifact.yaml";
-              const definition = detectDefinition(part.text) ?? undefined;
-              addArtifact(job.id, name, part.text, definition);
-              proposeArtifact(name, part.text, definition);
+              const extracted = extractArtifacts(part.text);
+              if (extracted.artifacts.length > 0) {
+                for (const a of extracted.artifacts) {
+                  addArtifact(job.id, a.name, a.yaml, a.definition ?? undefined);
+                  proposeArtifact(a.name, a.yaml, a.definition ?? undefined);
+                }
+              } else {
+                const name = (artifact as { name?: string }).name || "artifact.yaml";
+                const definition = detectDefinition(part.text) ?? undefined;
+                const yaml = stripFences(part.text);
+                addArtifact(job.id, name, yaml, definition);
+                proposeArtifact(name, yaml, definition);
+              }
               forceUpdate((n) => n + 1);
             }
           }

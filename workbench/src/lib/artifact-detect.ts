@@ -44,6 +44,10 @@ export function isGemaraArtifact(yaml: string): boolean {
   return /^(threats|controls|capabilities|guidances|policy|metadata|results|risks|mappings):/m.test(yaml);
 }
 
+export function stripFences(text: string): string {
+  return text.replace(/^```(?:ya?ml)?\n?/, "").replace(/\n?```\s*$/, "").trim();
+}
+
 export interface ExtractedArtifact { name: string; yaml: string; definition: string | null }
 
 export function extractArtifacts(text: string): { text: string; artifacts: ExtractedArtifact[] } {
