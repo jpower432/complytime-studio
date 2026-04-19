@@ -17,7 +17,7 @@ const TYPE_TO_DEFINITION: Record<string, string> = {
 
 export const ALL_DEFINITIONS = Object.values(TYPE_TO_DEFINITION);
 
-export function detectDefinition(yaml: string): string {
+export function detectDefinition(yaml: string): string | null {
   const metaBlock = METADATA_BLOCK_RE.exec(yaml);
   if (metaBlock) {
     const typeMatch = METADATA_TYPE_RE.exec(metaBlock[1]);
@@ -25,16 +25,7 @@ export function detectDefinition(yaml: string): string {
       return TYPE_TO_DEFINITION[typeMatch[1]];
     }
   }
-
-  if (/^threats:/m.test(yaml) || /^\s+threats:/m.test(yaml)) return "#ThreatCatalog";
-  if (/^controls:/m.test(yaml) || /^\s+controls:/m.test(yaml)) return "#ControlCatalog";
-  if (/^guidances:/m.test(yaml) || /^\s+guidances:/m.test(yaml)) return "#GuidanceCatalog";
-  if (/^capabilities:/m.test(yaml) || /^\s+capabilities:/m.test(yaml)) return "#CapabilityCatalog";
-  if (/^results:/m.test(yaml) || /^\s+results:/m.test(yaml)) return "#AuditLog";
-  if (/^policy:/m.test(yaml) || /^\s+policy:/m.test(yaml)) return "#Policy";
-  if (/^risks:/m.test(yaml) || /^\s+risks:/m.test(yaml)) return "#RiskCatalog";
-  if (/^mappings:/m.test(yaml) || /^\s+mappings:/m.test(yaml)) return "#MappingDocument";
-  return "#ThreatCatalog";
+  return null;
 }
 
 export function inferArtifactName(yaml: string): string {
@@ -53,7 +44,7 @@ export function isGemaraArtifact(yaml: string): boolean {
   return /^(threats|controls|capabilities|guidances|policy|metadata|results|risks|mappings):/m.test(yaml);
 }
 
-export interface ExtractedArtifact { name: string; yaml: string; definition: string }
+export interface ExtractedArtifact { name: string; yaml: string; definition: string | null }
 
 export function extractArtifacts(text: string): { text: string; artifacts: ExtractedArtifact[] } {
   const artifacts: ExtractedArtifact[] = [];

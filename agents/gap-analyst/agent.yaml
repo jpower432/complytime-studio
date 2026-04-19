@@ -5,7 +5,8 @@
 
 name: studio-gap-analyst
 description: >-
-  Evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts
+  Combined audit preparation — multi-target evidence synthesis, cross-framework
+  coverage analysis via MappingDocuments, produces AuditLog artifacts
 
 prompt: prompt.md
 
@@ -39,9 +40,10 @@ mcp:
 a2a:
   skills:
     - id: gap-analysis
-      name: Gap Analysis
+      name: Combined Audit Preparation
       description: >-
-        Analyze a MappingDocument to classify coverage of each target reference
-        entry. Produces a Gemara AuditLog with Gap, Finding, Observation, and
-        Strength results.
-      tags: [gap-analysis, audit, compliance, coverage, layer-7]
+        Prepare for combined audits — derive target inventory from evidence,
+        assess criteria coverage per target, translate coverage to external
+        frameworks via MappingDocuments using strength and confidence scores.
+        Produces multi-target AuditLogs with cross-framework coverage analysis.
+      tags: [gap-analysis, audit, compliance, coverage, combined-audit, layer-7]

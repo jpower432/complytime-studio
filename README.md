@@ -4,39 +4,86 @@ Multi-agent platform for authoring, validating, and publishing [Gemara](https://
 
 ## Quick Start
 
-### Prerequisites
+### 1. Install prerequisites
 
-- Kind cluster with kagent >= 0.8.0 and KMCP controller
-- GCP Application Default Credentials (for AnthropicVertexAI)
-- GitHub personal access token (optional, for github-mcp)
+| Tool | Purpose | Install |
+|:-----|:--------|:--------|
+| `docker` or `podman` | Container runtime | [docker.com](https://docs.docker.com/get-docker/) / `dnf install podman` |
+| `kind` | Local Kubernetes cluster | [kind.sigs.k8s.io](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) |
+| `kubectl` | Kubernetes CLI | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
+| `helm` | Chart management | [helm.sh](https://helm.sh/docs/intro/install/) |
+| `go` (>= 1.22) | Build the gateway | [go.dev](https://go.dev/dl/) |
+| `node` / `npm` | Build the workbench SPA | [nodejs.org](https://nodejs.org/) |
+| `gcloud` | GCP credentials for Vertex AI | [cloud.google.com](https://cloud.google.com/sdk/docs/install) |
 
-### Kubernetes (kagent)
+### 2. Configure credentials
+
+The agents use Anthropic Claude via GCP Vertex AI. Both values are **required**.
 
 ```bash
-make cluster-up       # Kind cluster + kagent operator
-make deploy           # Build, load image, install Helm chart, restart gateway
-make port-forward     # Forward localhost:8080 → gateway
+# Authenticate with GCP (creates ~/.config/gcloud/application_default_credentials.json)
+gcloud auth application-default login
+
+# Export your GCP project ID (required — cluster setup will fail without it)
+export VERTEX_PROJECT_ID=my-gcp-project
 ```
 
-**With model and auth configuration:**
+**GitHub OAuth (required for agent GitHub access):**
+
+Agents access GitHub repositories using the logged-in user's OAuth token. No static GitHub token is needed.
 
 ```bash
-# Refresh GCP credentials
-gcloud auth application-default login
-kubectl create secret generic studio-gcp-credentials -n kagent \
-  --from-file=application_default_credentials.json=$HOME/.config/gcloud/application_default_credentials.json \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Register an OAuth app at https://github.com/settings/applications/new
+# Set the callback URL to http://localhost:8080/auth/callback
+export GITHUB_CLIENT_ID=Ov23li...
+export GITHUB_CLIENT_SECRET=abc123...
+```
 
-# Set Vertex AI project and optional GitHub OAuth
-VERTEX_PROJECT_ID=my-gcp-project \
-GITHUB_CLIENT_ID=Ov23li... \
-GITHUB_CLIENT_SECRET=abc123 \
+> **Note:** The OAuth app must request `repo` scope (configured automatically by the gateway) for agents to access private repositories.
+
+### 3. Create the cluster
+
+Creates a Kind cluster, installs kagent CRDs and operator, and configures GCP + GitHub secrets.
+
+```bash
+make cluster-up
+```
+
+> **Podman users:** The setup script auto-detects podman and patches CoreDNS for rootless networking. No manual steps needed.
+
+### 4. Build and deploy
+
+Builds the gateway image (Go binary + workbench SPA), loads it into Kind, installs the Helm chart, and restarts the gateway pod.
+
+```bash
+make deploy
+```
+
+With GitHub OAuth (enables login):
+
+```bash
+GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID \
+GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET \
   make deploy
+```
+
+### 5. Access the workbench
+
+```bash
+kubectl port-forward -n kagent svc/studio-gateway 8080:8080
+```
+
+Open [http://localhost:8080](http://localhost:8080).
+
+### Tear down
+
+```bash
+make cluster-down
 ```
 
 ### Local (Docker Compose)
 
-Runs the gateway and MCP servers. Agents require Kubernetes.
+Runs the gateway and MCP servers without Kubernetes. Agents are not available in this mode.
 
 ```bash
 cp .env.example .env
@@ -55,7 +102,7 @@ Gateway (:8080)
 ├── /api/migrate         → gemara-mcp proxy
 ├── /api/registry/*      → oras-mcp proxy (or direct OCI API for insecure registries)
 ├── /api/publish         → OCI bundle assembly + push
-├── /api/workspace/save  → Save artifacts to .complytime/artifacts/
+├── /api/config          → Platform configuration (GitHub org/repo)
 ├── /auth/*              → GitHub OAuth flow (optional)
 
 kagent Declarative Agents (Go runtime)
@@ -69,7 +116,7 @@ kagent Declarative Agents (Go runtime)
 MCP Servers (kagent MCPServer CRDs via KMCP)
 ├── studio-gemara-mcp      — Gemara schema validation + migration (stdio)
 ├── studio-oras-mcp        — OCI registry operations (stdio)
-├── studio-github-mcp      — Repository context (stdio)
+├── studio-github-mcp      — Repository context (http, OBO)
 └── studio-clickhouse-mcp  — ClickHouse evidence queries (optional, stdio)
 ```
 
@@ -77,13 +124,14 @@ MCP Servers (kagent MCPServer CRDs via KMCP)
 
 The workbench is a unified editor-first workspace:
 
-- **Workspace Editor**: CodeMirror YAML editor as the primary view, with toolbar for validate, save, copy, publish, and definition selection
-- **Chat Drawer**: Slide-out panel for agent conversations; mission artifacts stream into the editor
+- **Workspace Editor**: CodeMirror YAML editor as the primary view, with toolbar for validate, download, copy, publish, and definition selection
+- **Chat Drawer**: Slide-out panel for agent conversations; job artifacts stream into the editor
 - **Validation**: Artifact validation via gemara-mcp with user-selectable definition override
 - **Registry Import**: Browse OCI registries, inspect layers, import mapping references into the active editor
-- **Agent Picker**: Select specialist agents when starting missions
-- **Save to Workspace**: Persist artifacts to `.complytime/artifacts/`
+- **Agent Picker**: Select specialist agents when starting jobs
+- **Download YAML**: Export artifacts as YAML files for local Git workflows
 - **Publishing**: Push OCI bundles to registries
+- **Theme Toggle**: Dark/light mode with system preference detection
 
 ## Agent Definitions
 
@@ -109,7 +157,45 @@ Key values in `charts/complytime-studio/values.yaml`:
 | `model.anthropicVertexAI.credentialsSecret` | Secret with `application_default_credentials.json` |
 | `internalSkills.enabled` | Enable skills from this repo via gitRefs (default: `false`) |
 | `auth.github.clientId` | GitHub OAuth client ID (enables auth middleware) |
+| `github.org` | GitHub organization/user for platform links |
+| `github.repo` | GitHub repository name |
+| `clickhouse.enabled` | Deploy ClickHouse evidence store (default: `false`) |
 | `registry.enabled` | Deploy in-cluster OCI registry |
+
+## Evidence Pipeline
+
+The evidence pipeline ingests compliance assessment data into ClickHouse for the gap-analyst. Two intake paths feed a single `evidence` table.
+
+### Table Schema
+
+All evidence — evaluations and remediations — is stored in a single `evidence` table. Remediation columns are nullable for evaluation-only records. Schema defined in `charts/complytime-studio/templates/clickhouse-schema-configmap.yaml`.
+
+### Ingestion Paths
+
+| Path | Source | How | Enrichment |
+|:-----|:-------|:----|:-----------|
+| A — Gemara-native | `complyctl` via ProofWatch | Emits OTLP with full compliance context | `enrichment_status = Success` |
+| B — Raw policy engine | OPA, Kyverno, etc. | Emits raw OTLP; `truthbeam` processor enriches | `enrichment_status` varies |
+| Local | `cmd/ingest` | Direct ClickHouse insert from YAML files | `enrichment_status = Success` |
+
+### Collector Topologies
+
+The OTel Collector is **environment infrastructure**, not an application component. Studio does not deploy or manage a collector — the cluster operator provisions it alongside other observability tooling. See `docs/decisions/otel-collector-out-of-chart.md` for rationale.
+
+Common topologies:
+
+- **Central gateway:** A shared OTel Collector receives OTLP from all producers and exports to ClickHouse.
+- **Agent sidecar:** Co-located collector in the same pod as the policy engine. Exporter points at the central ClickHouse instance.
+- **Direct (local development):** Use `cmd/ingest` to insert evidence directly from Gemara YAML files without any collector:
+
+```bash
+CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=9000 \
+  go run ./cmd/ingest path/to/evaluation-log.yaml
+```
+
+### Semantic Convention Alignment
+
+Evidence attributes follow the `beacon.evidence` OTel semantic convention from [complytime-collector-components](https://github.com/complytime/complytime-collector-components). The full attribute-to-column mapping is in `docs/design/evidence-semconv-alignment.md`.
 
 ## Build Targets
 
@@ -122,7 +208,6 @@ Key values in `charts/complytime-studio/values.yaml`:
 | `make sync-prompts` | Copy `agents/*/prompt.md` into Helm chart |
 | `make studio-up` | Install/upgrade Helm chart |
 | `make studio-down` | Uninstall Helm chart |
-| `make port-forward` | Port-forward gateway to localhost:8080 |
 | `make oauth-secret` | Create GitHub OAuth credentials secret |
 | `make cluster-up` | Create Kind cluster with kagent |
 | `make cluster-down` | Delete Kind cluster |

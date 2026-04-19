@@ -2,7 +2,6 @@
 
 import { useState } from "preact/hooks";
 import { listRepositories, listTags, fetchManifest, fetchLayer, type Repository, type Tag, type Manifest } from "../api/registry";
-import { saveToWorkspace } from "../api/workspace";
 import { isGemaraArtifact } from "../lib/artifact-detect";
 import { extractMappingRefFromYaml } from "../lib/yaml-inject";
 import { injectMappingReference } from "../store/editor";
@@ -74,17 +73,6 @@ export function ImportDialog({ onClose }: ImportDialogProps) {
     onClose();
   }
 
-  async function handleSaveLayer() {
-    if (state.phase !== "layer") return;
-    const ext = state.mediaType.includes("yaml") ? ".yaml" : ".json";
-    const basename = state.repo.replace(/\//g, "-");
-    setFeedback(null);
-    try {
-      const result = await saveToWorkspace(`${basename}${ext}`, state.content);
-      setFeedback({ ok: true, message: `Saved to ${result.path}` });
-    } catch (e: unknown) { setFeedback({ ok: false, message: (e as Error).message }); }
-  }
-
   function goBack() {
     if (state.phase === "layer" && "registry" in state) {
       setState({ phase: "input" });
@@ -109,7 +97,7 @@ export function ImportDialog({ onClose }: ImportDialogProps) {
           <div class="registry-input-section">
             <p class="registry-hint">Enter an OCI registry URL to browse for artifacts to import.</p>
             <div class="registry-input-row">
-              <input type="text" class="dialog-input" placeholder="ghcr.io/complytime" value={registryUrl}
+              <input type="text" class="dialog-input" placeholder="ghcr.io/jpower432" value={registryUrl}
                 onInput={(e) => setRegistryUrl((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => e.key === "Enter" && handleBrowse()} />
               <button class="btn btn-primary" onClick={handleBrowse} disabled={loading}>
@@ -172,7 +160,6 @@ export function ImportDialog({ onClose }: ImportDialogProps) {
           <div class="registry-layer-view">
             <div class="registry-layer-toolbar">
               <span class="manifest-media-type">{state.mediaType}</span>
-              <button class="btn btn-secondary btn-sm" onClick={handleSaveLayer}>Save to Workspace</button>
               {layerIsGemara && (
                 <button class="btn btn-primary btn-sm" onClick={handleImportReference}>Import Reference</button>
               )}

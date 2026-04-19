@@ -19,6 +19,12 @@ auth:
     secretKey: client-secret
     callbackURL: "http://localhost:8080/auth/callback"
 
+# -- GitHub organization/user and repository name. Single source of truth
+# for platformRepo URL, Chart.yaml home/sources, and workbench links.
+github:
+  org: jpower432
+  repo: complytime-studio
+
 # -- Git URL of this repository, used for internal skill gitRefs.
 platformRepo: https://github.com/jpower432/complytime-studio.git
 
@@ -45,6 +51,14 @@ externalSkills:
     repo: https://github.com/gemaraproj/gemara-skills.git
     ref: main
     path: skills/assessment-defaults
+
+# -- kagent controller settings.
+# The gateway proxies A2A requests through the controller (port 8083).
+kagent:
+  # Base URL for the kagent controller A2A endpoint.
+  # When set, all A2A traffic routes through the controller.
+  # When empty, falls back to direct per-agent URLs from agentDirectory.
+  a2aURL: "http://kagent-controller.kagent:8083"
 
 # -- Shared model configuration for all Declarative agents.
 # Rendered as a kagent ModelConfig CRD.
@@ -77,13 +91,13 @@ agentDirectory:
         description: "Author a ControlCatalog that mitigates identified threats with assessment requirements."
         tags: [controls, assessment-requirements, layer-2]
   - name: studio-gap-analyst
-    description: "Evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts"
+    description: "Combined audit preparation — multi-target evidence synthesis, cross-framework coverage analysis via MappingDocuments"
     url: "http://studio-gap-analyst:8080"
     skills:
       - id: gap-analysis
-        name: Gap Analysis
-        description: "Classify coverage of each target reference entry. Produces AuditLog."
-        tags: [gap-analysis, audit, compliance, coverage, layer-7]
+        name: Combined Audit Preparation
+        description: "Prepare for combined audits — derive target inventory from evidence, assess criteria coverage per target, translate to external frameworks via MappingDocuments."
+        tags: [gap-analysis, audit, compliance, coverage, combined-audit, layer-7]
   - name: studio-policy-composer
     description: "RiskCatalog and Policy authoring from threat modeling outputs"
     url: "http://studio-policy-composer:8080"
@@ -93,24 +107,24 @@ agentDirectory:
         description: "Compose RiskCatalog and Policy from ThreatCatalog and ControlCatalog inputs."
         tags: [policy, risk, compliance, layer-3]
 
-# -- MCP servers deployed via kagent MCPServer CRDs (transportType: stdio).
-# The KMCP controller injects an AgentGateway sidecar to bridge stdio → HTTP.
-# Each server is accessible at http://<name>:<port>/mcp within the cluster.
+# -- MCP servers deployed via kagent MCPServer CRDs.
+# github-mcp uses http transport for per-request OBO token auth.
+# Platform servers (gemara, oras, clickhouse) use stdio with static credentials.
 mcpServers:
   gemara:
     enabled: true
     image: ghcr.io/gemaraproj/gemara-mcp:latest
   oras:
     enabled: true
-    image: ghcr.io/oras-project/oras-mcp:main
+    image: ghcr.io/oras-project/oras-mcp:v0.2.1
   github:
     enabled: true
     image: ghcr.io/github/github-mcp-server:latest
-    # Secret containing GITHUB_PERSONAL_ACCESS_TOKEN. Mounted as a volume
-    # by the MCPServer CRD. The server runs unauthenticated (rate-limited)
-    # when the env var is absent.
-    secretName: studio-github-token
-    secretKey: token
+    # Kubernetes Secret name containing GITHUB_PERSONAL_ACCESS_TOKEN.
+    # Required until kagent supports per-request OBO header propagation.
+    # Create with: kubectl create secret generic studio-github-token -n kagent \
+    #   --from-literal=GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+    tokenSecret: ""
 
 # -- ClickHouse evidence store for L5/L6 evaluation and enforcement data.
 # Disabled by default. Enable with clickhouse.enabled=true.
@@ -134,7 +148,7 @@ clickhouse:
       cpu: "2"
   mcp:
     image:
-      repository: ghcr.io/clickhouse/mcp-clickhouse
+      repository: docker.io/mcp/clickhouse
       tag: latest
 
 # -- Built-in OCI registry (dev only). Disable for production clusters

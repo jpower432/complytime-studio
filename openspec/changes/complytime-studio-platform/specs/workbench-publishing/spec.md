@@ -4,11 +4,11 @@
 The workbench SHALL provide a "Publish" button in the artifact panel toolbar that initiates the OCI bundle publishing workflow.
 
 #### Scenario: User clicks Publish with valid artifacts
-- **WHEN** a mission has one or more validated artifacts and the user clicks "Publish"
+- **WHEN** a job has one or more validated artifacts and the user clicks "Publish"
 - **THEN** the workbench SHALL display a publish dialog requesting the target registry reference
 
 #### Scenario: Publish button disabled without artifacts
-- **WHEN** a mission has no artifacts
+- **WHEN** a job has no artifacts
 - **THEN** the "Publish" button SHALL be disabled
 
 ### Requirement: Publish dialog with registry target

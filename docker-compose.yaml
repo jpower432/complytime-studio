@@ -33,11 +33,7 @@ services:
       - "3000"
 
   github-mcp:
-    build:
-      context: .
-      dockerfile: Dockerfile.github-mcp
-    command: ["--host", "0.0.0.0", "--port", "3000", "--pass-environment", "--", "github-mcp-server", "stdio", "--toolsets=repos,code_security"]
-    environment:
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN:-}
+    image: ghcr.io/github/github-mcp-server:latest
+    command: ["http", "--port", "3000", "--toolsets=repos,code_security"]
     expose:
       - "3000"

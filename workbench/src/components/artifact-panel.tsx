@@ -1,25 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 import { signal } from "@preact/signals";
 import { useState } from "preact/hooks";
-import type { Artifact } from "../store/missions";
+import type { Artifact } from "../store/jobs";
 import { validate } from "../api/a2a";
-import { saveToWorkspace } from "../api/workspace";
 import { detectDefinition } from "../lib/artifact-detect";
 import { YamlEditor } from "./yaml-editor";
 import { PublishDialog } from "./publish-dialog";
 
-interface ArtifactPanelProps { artifacts: Artifact[]; missionId: string }
+function downloadYaml(filename: string, content: string) {
+  const blob = new Blob([content], { type: "application/x-yaml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-export function ArtifactPanel({ artifacts, missionId }: ArtifactPanelProps) {
+interface ArtifactPanelProps { artifacts: Artifact[]; jobId: string }
+
+export function ArtifactPanel({ artifacts, jobId }: ArtifactPanelProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [validationResult, setValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [showPublish, setShowPublish] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const editorContent = signal(artifacts[activeTab]?.yaml ?? "");
   if (artifacts.length === 0) return (<div class="artifact-panel"><div class="artifact-empty">Artifacts will appear here as the agent produces them.</div></div>);
   function getCurrentContent(): string { return editorContent.value || artifacts[activeTab]?.yaml || ""; }
   async function handleValidate() {
-    const content = getCurrentContent(); const definition = detectDefinition(content);
+    const content = getCurrentContent(); const definition = detectDefinition(content) || "#ThreatCatalog";
     setValidationResult({ valid: true, message: "Validating..." });
     try {
       const result = await validate(content, definition);
@@ -28,28 +36,23 @@ export function ArtifactPanel({ artifacts, missionId }: ArtifactPanelProps) {
     } catch (e: unknown) { setValidationResult({ valid: false, message: `Error: ${(e as Error).message}` }); }
   }
   async function handleCopy() { const content = getCurrentContent(); try { await navigator.clipboard.writeText(content); } catch { const ta = document.createElement("textarea"); ta.value = content; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } }
-  async function handleSave() {
+  function handleDownload() {
     const content = getCurrentContent();
     const name = artifacts[activeTab]?.name || "artifact.yaml";
-    setSaveStatus(null);
-    try {
-      const result = await saveToWorkspace(name, content);
-      setSaveStatus({ ok: true, message: `Saved to ${result.path}` });
-    } catch (e: unknown) { setSaveStatus({ ok: false, message: (e as Error).message }); }
+    downloadYaml(name, content);
   }
-  function switchTab(index: number) { setActiveTab(index); editorContent.value = artifacts[index]?.yaml ?? ""; setValidationResult(null); setSaveStatus(null); }
+  function switchTab(index: number) { setActiveTab(index); editorContent.value = artifacts[index]?.yaml ?? ""; setValidationResult(null); }
   return (
     <div class="artifact-panel">
       <div class="artifact-tabs">{artifacts.map((a, i) => (<button key={a.name} class={`artifact-tab ${i === activeTab ? "active" : ""}`} onClick={() => switchTab(i)}>{a.name}</button>))}</div>
       <div class="artifact-toolbar">
         <button class="btn btn-primary btn-sm" onClick={handleValidate}>Validate</button>
         <button class="btn btn-secondary btn-sm" onClick={handleCopy}>Copy YAML</button>
-        <button class="btn btn-secondary btn-sm" onClick={handleSave}>Save</button>
+        <button class="btn btn-secondary btn-sm" onClick={handleDownload}>Download YAML</button>
         <button class="btn btn-accent btn-sm" onClick={() => setShowPublish(true)}>Publish</button>
       </div>
       <YamlEditor content={artifacts[activeTab]?.yaml ?? ""} onChange={(val) => (editorContent.value = val)} />
       {validationResult && (<div class={`validation-result ${validationResult.valid ? "valid" : "invalid"}`}>{validationResult.valid ? "\u2713" : "\u2717"} {validationResult.message}</div>)}
-      {saveStatus && (<div class={`validation-result ${saveStatus.ok ? "valid" : "invalid"}`}>{saveStatus.ok ? "\u2713" : "\u2717"} {saveStatus.message}</div>)}
       {showPublish && <PublishDialog artifacts={artifacts} onClose={() => setShowPublish(false)} />}
     </div>
   );

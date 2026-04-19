@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Gateway proxies A2A requests to agent pods
-The gateway SHALL expose `POST /api/a2a/{agent-name}` which reverse-proxies the request body to the agent's A2A endpoint at `http://{agent-name}:8080`.
+The gateway SHALL expose `POST /api/a2a/{agent-name}` which reverse-proxies the request body to the agent's A2A endpoint at `http://{agent-name}:8080`. Route registration SHALL be performed by `internal/agents.Register(mux, opts)` instead of inline closures in `main.go`.
 
 #### Scenario: Proxied chat message
 - **WHEN** the frontend sends `POST /api/a2a/studio-threat-modeler` with an A2A SendMessage payload
@@ -13,11 +13,11 @@ The gateway SHALL expose `POST /api/a2a/{agent-name}` which reverse-proxies the 
 - **THEN** the gateway returns HTTP 502 (Bad Gateway) if the upstream is unreachable
 
 ### Requirement: A2A proxy injects auth headers
-The gateway SHALL inject the `Authorization: Bearer <token>` header (from the session cookie) on all proxied A2A requests before forwarding to the agent pod.
+The gateway SHALL inject the `Authorization: Bearer <token>` header on all proxied A2A requests before forwarding to the agent pod. The token SHALL be obtained via a `TokenProvider` interface, not by directly importing `internal/auth`.
 
 #### Scenario: Header injection
 - **WHEN** a proxied A2A request is forwarded
-- **THEN** the `Authorization` header is set to the user's GitHub token from the JWT cookie
+- **THEN** the `Authorization` header is set to the user's GitHub token obtained from `TokenProvider.TokenFromRequest(r)`
 - **THEN** any pre-existing `Authorization` header from the frontend is overwritten
 
 ### Requirement: A2A proxy supports streaming

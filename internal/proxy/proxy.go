@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -182,9 +183,7 @@ type migrateHTTPResponse struct {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	httputil.WriteJSON(w, status, v)
 }
 
 type gemaraUnavailableResponse struct {

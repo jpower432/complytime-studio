@@ -24,11 +24,37 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/config
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 10
           env:
             - name: PORT
               value: "8080"
+            - name: GITHUB_ORG
+              value: {{ .Values.github.org | quote }}
+            - name: GITHUB_REPO
+              value: {{ .Values.github.repo | quote }}
             - name: AGENT_DIRECTORY
               value: {{ .Values.agentDirectory | toJson | quote }}
+            - name: KAGENT_A2A_URL
+              value: {{ .Values.kagent.a2aURL | quote }}
+            - name: KAGENT_AGENT_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             {{- if .Values.mcpServers.gemara.enabled }}
             - name: GEMARA_MCP_URL
               value: "http://studio-gemara-mcp:3000/mcp"
@@ -52,12 +78,12 @@ spec:
             - name: GITHUB_CALLBACK_URL
               value: {{ .Values.auth.github.callbackURL | quote }}
             {{- end }}
-            {{- if .Values.auth.github.cookieSignKeySecret }}
-            - name: COOKIE_SIGN_KEY
+            {{- if .Values.auth.github.cookieSecretName }}
+            - name: COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.github.cookieSignKeySecret }}
-                  key: sign-key
+                  name: {{ .Values.auth.github.cookieSecretName }}
+                  key: cookie-secret
             {{- end }}
           resources:
             requests:

@@ -71,7 +71,7 @@ No LLM routing layer. The gateway exposes an `/api/agents` endpoint that returns
 | kagent Go runtime missing a feature we need later (e.g., custom callbacks) | Canonical agent format allows pivot to BYO or tRPC-Agent-Go; Go runtime covers prompt + tools today |
 | Local dev requires kind/minikube + kagent operator | Acceptable for now; a non-k8s local runner is a separable future change |
 | Prompt changes require ConfigMap update + pod restart | kagent watches ConfigMap changes and rolls pods; standard k8s pattern |
-| Loss of orchestrator for multi-step missions | UI-driven chaining (user passes output from one specialist to another); kagent agent-as-tool for future automation |
+| Loss of orchestrator for multi-step jobs | UI-driven chaining (user passes output from one specialist to another); kagent agent-as-tool for future automation |
 | `externalize-agent-skills` change becomes stale | Cancel it — this change supersedes its scope |
 
 ## Migration Plan

@@ -17,94 +17,110 @@ data:
         <merge_tree>
             <number_of_free_entries_in_pool_to_execute_mutation>4</number_of_free_entries_in_pool_to_execute_mutation>
             <number_of_free_entries_in_pool_to_lower_max_size_of_merge>4</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+            <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>4</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
         </merge_tree>
     </clickhouse>
   init.sql: |
-    CREATE TABLE IF NOT EXISTS evaluation_logs
+    -- Unified evidence table aligned to beacon.evidence OTel entity.
+    -- Co-locates evaluation and remediation data in a single row.
+    -- Remediation columns are nullable for evaluation-only records.
+    CREATE TABLE IF NOT EXISTS evidence
     (
-        log_id            String,
-        target_id         String,
-        target_env        String,
-        policy_id         String,
-        catalog_ref_id    String,
-        control_id        String,
-        control_name      String,
-        control_result    Enum8(
-                            'Not Run' = 0,
-                            'Passed' = 1,
-                            'Failed' = 2,
-                            'Needs Review' = 3,
-                            'Not Applicable' = 4,
-                            'Unknown' = 5
-                          ),
-        requirement_id    String,
-        plan_id           Nullable(String),
-        assessment_result Enum8(
-                            'Not Run' = 0,
-                            'Passed' = 1,
-                            'Failed' = 2,
-                            'Needs Review' = 3,
-                            'Not Applicable' = 4,
-                            'Unknown' = 5
-                          ),
-        message           String,
-        description       String,
-        applicability     Array(String),
-        steps_executed    UInt16,
-        confidence_level  Enum8(
-                            'Undetermined' = 0,
-                            'Low' = 1,
-                            'Medium' = 2,
-                            'High' = 3
-                          ),
-        recommendation    Nullable(String),
-        collected_at      DateTime64(3),
-        completed_at      Nullable(DateTime64(3)),
-        ingested_at       DateTime64(3) DEFAULT now64(3),
+        -- Identity
+        evidence_id           String,
 
-        row_key           String MATERIALIZED concat(log_id, '/', control_id, '/', requirement_id)
+        -- Target (OTel Resource: policy.target.*)
+        target_id             String,
+        target_name           Nullable(String),
+        target_type           Nullable(String),
+        target_env            Nullable(String),
+
+        -- Policy engine (policy.engine.*, policy.rule.*)
+        engine_name           Nullable(String),
+        engine_version        Nullable(String),
+        rule_id               String,
+        rule_name             Nullable(String),
+        rule_uri              Nullable(String),
+
+        -- Evaluation result (policy.evaluation.*)
+        eval_result           Enum8(
+                                'Not Run' = 0,
+                                'Passed' = 1,
+                                'Failed' = 2,
+                                'Needs Review' = 3,
+                                'Not Applicable' = 4,
+                                'Unknown' = 5
+                              ),
+        eval_message          Nullable(String),
+
+        -- Compliance context (compliance.*)
+        policy_id             Nullable(String),
+        control_id            Nullable(String),
+        control_catalog_id    Nullable(String),
+        control_category      Nullable(String),
+        control_applicability Array(String),
+        requirement_id        Nullable(String),
+        plan_id               Nullable(String),
+        confidence            Nullable(Enum8(
+                                'Undetermined' = 0,
+                                'Low' = 1,
+                                'Medium' = 2,
+                                'High' = 3
+                              )),
+        steps_executed        Nullable(UInt16),
+        compliance_status     Enum8(
+                                'Compliant' = 0,
+                                'Non-Compliant' = 1,
+                                'Exempt' = 2,
+                                'Not Applicable' = 3,
+                                'Unknown' = 4
+                              ),
+        risk_level            Nullable(Enum8(
+                                'Critical' = 0,
+                                'High' = 1,
+                                'Medium' = 2,
+                                'Low' = 3,
+                                'Informational' = 4
+                              )),
+        frameworks            Array(String),
+        requirements          Array(String),
+
+        -- Remediation / enforcement (nullable for eval-only records)
+        remediation_action    Nullable(Enum8(
+                                'Block' = 0,
+                                'Allow' = 1,
+                                'Remediate' = 2,
+                                'Waive' = 3,
+                                'Notify' = 4,
+                                'Unknown' = 5
+                              )),
+        remediation_status    Nullable(Enum8(
+                                'Success' = 0,
+                                'Fail' = 1,
+                                'Skipped' = 2,
+                                'Unknown' = 3
+                              )),
+        remediation_desc      Nullable(String),
+        exception_id          Nullable(String),
+        exception_active      Nullable(Bool),
+
+        -- Enrichment provenance
+        enrichment_status     Enum8(
+                                'Success' = 0,
+                                'Unmapped' = 1,
+                                'Partial' = 2,
+                                'Unknown' = 3,
+                                'Skipped' = 4
+                              ),
+
+        -- Timestamps
+        collected_at          DateTime64(3),
+        ingested_at           DateTime64(3) DEFAULT now64(3),
+
+        row_key               String MATERIALIZED concat(evidence_id, '/', control_id, '/', requirement_id)
     )
     ENGINE = ReplacingMergeTree(ingested_at)
     PARTITION BY toYYYYMM(collected_at)
     ORDER BY (target_id, policy_id, control_id, collected_at, row_key)
     TTL toDateTime(collected_at) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
-
-    CREATE TABLE IF NOT EXISTS enforcement_actions
-    (
-        log_id            String,
-        target_id         String,
-        target_env        String,
-        policy_id         String,
-        catalog_ref_id    String,
-        control_id        String,
-        requirement_id    String,
-        disposition       Enum8(
-                            'Undetermined' = 0,
-                            'Enforced' = 1,
-                            'Tolerated' = 2,
-                            'Clear' = 3
-                          ),
-        method_id         String,
-        assessment_result Enum8(
-                            'Not Run' = 0,
-                            'Passed' = 1,
-                            'Failed' = 2,
-                            'Needs Review' = 3,
-                            'Not Applicable' = 4,
-                            'Unknown' = 5
-                          ),
-        eval_log_ref      String,
-        message           Nullable(String),
-        has_exception     Bool,
-        exception_refs    Array(String),
-        started_at        DateTime64(3),
-        completed_at      Nullable(DateTime64(3)),
-        ingested_at       DateTime64(3) DEFAULT now64(3),
-
-        row_key           String MATERIALIZED concat(log_id, '/', control_id, '/', requirement_id)
-    )
-    ENGINE = ReplacingMergeTree(ingested_at)
-    PARTITION BY toYYYYMM(started_at)
-    ORDER BY (target_id, policy_id, control_id, started_at, row_key)
-    TTL toDateTime(started_at) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
 {{- end }}

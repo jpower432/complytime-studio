@@ -65,11 +65,11 @@ func ingestEvaluationLog(ctx context.Context, f gemara.Fetcher, source string, w
 		return err
 	}
 
-	if err := w.InsertEvalRows(ctx, rows); err != nil {
+	if err := w.InsertEvidenceRows(ctx, rows); err != nil {
 		return err
 	}
 
-	log.Printf("ingested %d evaluation rows from %s", len(rows), evalLog.Metadata.Id)
+	log.Printf("ingested %d evidence rows from %s", len(rows), evalLog.Metadata.Id)
 	return nil
 }
 
@@ -86,11 +86,11 @@ func ingestEnforcementLog(ctx context.Context, f gemara.Fetcher, source string, 
 		return err
 	}
 
-	if err := w.InsertEnforcementRows(ctx, rows); err != nil {
+	if err := w.InsertEvidenceRows(ctx, rows); err != nil {
 		return err
 	}
 
-	log.Printf("ingested %d enforcement rows from %s", len(rows), enfLog.Metadata.Id)
+	log.Printf("ingested %d evidence rows from %s", len(rows), enfLog.Metadata.Id)
 	return nil
 }
 

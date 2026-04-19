@@ -48,20 +48,26 @@ func (w *Writer) Close() error {
 	return w.conn.Close()
 }
 
-// InsertEvalRows inserts flattened evaluation rows.
+// InsertEvidenceRows inserts flattened evidence rows into the unified table.
 // ReplacingMergeTree deduplicates on row_key during merges.
-func (w *Writer) InsertEvalRows(ctx context.Context, rows []EvalRow) error {
+func (w *Writer) InsertEvidenceRows(ctx context.Context, rows []EvidenceRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	batch, err := w.conn.PrepareBatch(ctx, `INSERT INTO evaluation_logs (
-		log_id, target_id, target_env, policy_id, catalog_ref_id,
-		control_id, control_name, control_result,
-		requirement_id, plan_id, assessment_result,
-		message, description, applicability,
-		steps_executed, confidence_level, recommendation,
-		collected_at, completed_at
+	batch, err := w.conn.PrepareBatch(ctx, `INSERT INTO evidence (
+		evidence_id,
+		target_id, target_name, target_type, target_env,
+		engine_name, engine_version, rule_id, rule_name, rule_uri,
+		eval_result, eval_message,
+		policy_id, control_id, control_catalog_id, control_category,
+		control_applicability, requirement_id, plan_id,
+		confidence, steps_executed, compliance_status,
+		risk_level, frameworks, requirements,
+		remediation_action, remediation_status, remediation_desc,
+		exception_id, exception_active,
+		enrichment_status,
+		collected_at
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare batch: %w", err)
@@ -69,46 +75,20 @@ func (w *Writer) InsertEvalRows(ctx context.Context, rows []EvalRow) error {
 
 	for _, r := range rows {
 		if err := batch.Append(
-			r.LogID, r.TargetID, r.TargetEnv, r.PolicyID, r.CatalogRefID,
-			r.ControlID, r.ControlName, r.ControlResult,
-			r.RequirementID, r.PlanID, r.AssessmentResult,
-			r.Message, r.Description, r.Applicability,
-			r.StepsExecuted, r.ConfidenceLevel, r.Recommendation,
-			r.CollectedAt, r.CompletedAt,
+			r.EvidenceID,
+			r.TargetID, r.TargetName, r.TargetType, r.TargetEnv,
+			r.EngineName, r.EngineVersion, r.RuleID, r.RuleName, r.RuleURI,
+			r.EvalResult, r.EvalMessage,
+			r.PolicyID, r.ControlID, r.ControlCatalogID, r.ControlCategory,
+			r.ControlApplicability, r.RequirementID, r.PlanID,
+			r.Confidence, r.StepsExecuted, r.ComplianceStatus,
+			r.RiskLevel, r.Frameworks, r.Requirements,
+			r.RemediationAction, r.RemediationStatus, r.RemediationDesc,
+			r.ExceptionID, r.ExceptionActive,
+			r.EnrichmentStatus,
+			r.CollectedAt,
 		); err != nil {
-			return fmt.Errorf("append eval row: %w", err)
-		}
-	}
-	return batch.Send()
-}
-
-// InsertEnforcementRows inserts flattened enforcement action rows.
-// ReplacingMergeTree deduplicates on row_key during merges.
-func (w *Writer) InsertEnforcementRows(ctx context.Context, rows []EnforcementRow) error {
-	if len(rows) == 0 {
-		return nil
-	}
-
-	batch, err := w.conn.PrepareBatch(ctx, `INSERT INTO enforcement_actions (
-		log_id, target_id, target_env, policy_id, catalog_ref_id,
-		control_id, requirement_id,
-		disposition, method_id, assessment_result, eval_log_ref,
-		message, has_exception, exception_refs,
-		started_at, completed_at
-	)`)
-	if err != nil {
-		return fmt.Errorf("prepare batch: %w", err)
-	}
-
-	for _, r := range rows {
-		if err := batch.Append(
-			r.LogID, r.TargetID, r.TargetEnv, r.PolicyID, r.CatalogRefID,
-			r.ControlID, r.RequirementID,
-			r.Disposition, r.MethodID, r.AssessmentResult, r.EvalLogRef,
-			r.Message, r.HasException, r.ExceptionRefs,
-			r.StartedAt, r.CompletedAt,
-		); err != nil {
-			return fmt.Errorf("append enforcement row: %w", err)
+			return fmt.Errorf("append evidence row: %w", err)
 		}
 	}
 	return batch.Send()

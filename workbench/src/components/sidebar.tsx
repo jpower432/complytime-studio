@@ -8,8 +8,8 @@ export function Sidebar() {
         <button class={`sidebar-item ${view === "workspace" ? "active" : ""}`} onClick={() => navigate("workspace")}>
           <span class="sidebar-icon">&#9998;</span>Workspace
         </button>
-        <button class={`sidebar-item ${view === "missions" ? "active" : ""}`} onClick={() => navigate("missions")}>
-          <span class="sidebar-icon">&#9776;</span>Missions
+        <button class={`sidebar-item ${view === "jobs" ? "active" : ""}`} onClick={() => navigate("jobs")}>
+          <span class="sidebar-icon">&#9776;</span>Jobs
         </button>
       </nav>
     </aside>

@@ -4,9 +4,9 @@ package auth
 
 import (
 	"context"
-	"crypto/hmac"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +22,8 @@ const (
 	stateCookieName   = "studio_oauth_state"
 	sessionMaxAge     = 8 * time.Hour
 )
+
+var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 // Config holds GitHub OAuth application credentials.
 type Config struct {
@@ -61,14 +63,22 @@ func SessionFrom(ctx context.Context) (*Session, bool) {
 // Handler manages OAuth login, callback, and session endpoints.
 type Handler struct {
 	cfg       Config
-	signKey   []byte
-	mux       *http.ServeMux
+	secretKey []byte
+	gcm       cipher.AEAD
 }
 
-// NewHandler creates auth handlers and registers them on the provided mux.
-func NewHandler(cfg Config, signKey []byte) *Handler {
-	h := &Handler{cfg: cfg, signKey: signKey}
-	return h
+// NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
+// (AES-256). Session cookies are encrypted with AES-GCM.
+func NewHandler(cfg Config, secretKey []byte) *Handler {
+	block, err := aes.NewCipher(secretKey)
+	if err != nil {
+		panic(fmt.Sprintf("auth: invalid secret key: %v", err))
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(fmt.Sprintf("auth: GCM init: %v", err))
+	}
+	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm}
 }
 
 // Register mounts auth endpoints on the mux.
@@ -79,11 +89,24 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/logout", h.handleLogout)
 }
 
+// TokenFromRequest extracts the user's GitHub token from the session cookie.
+// It satisfies the httputil.TokenProvider interface.
+func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
+	sess, err := h.sessionFromCookie(r)
+	if err != nil {
+		return "", false
+	}
+	if sess.GitHubToken == "" {
+		return "", false
+	}
+	return sess.GitHubToken, true
+}
+
 // Middleware returns an http.Handler that requires a valid session cookie
 // on all /api/* paths. It injects the Session into request context.
 func (h *Handler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -181,13 +204,17 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sess *Session) error {
-	data, err := json.Marshal(sess)
+	plaintext, err := json.Marshal(sess)
 	if err != nil {
 		return err
 	}
-	payload := base64.RawURLEncoding.EncodeToString(data)
-	sig := h.sign(payload)
-	value := payload + "." + sig
+
+	nonce := make([]byte, h.gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("generate nonce: %w", err)
+	}
+	ciphertext := h.gcm.Seal(nonce, nonce, plaintext, nil)
+	value := base64.RawURLEncoding.EncodeToString(ciphertext)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -207,32 +234,27 @@ func (h *Handler) sessionFromCookie(r *http.Request) (*Session, error) {
 		return nil, err
 	}
 
-	parts := strings.SplitN(cookie.Value, ".", 2)
-	if len(parts) != 2 {
+	ciphertext, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		return nil, fmt.Errorf("decode cookie: %w", err)
+	}
+
+	nonceSize := h.gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
 		return nil, fmt.Errorf("malformed session cookie")
 	}
-	payload, sig := parts[0], parts[1]
+	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
 
-	if !hmac.Equal([]byte(h.sign(payload)), []byte(sig)) {
-		return nil, fmt.Errorf("invalid signature")
-	}
-
-	data, err := base64.RawURLEncoding.DecodeString(payload)
+	plaintext, err := h.gcm.Open(nil, nonce, sealed, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decrypt session: %w", err)
 	}
 
 	var sess Session
-	if err := json.Unmarshal(data, &sess); err != nil {
+	if err := json.Unmarshal(plaintext, &sess); err != nil {
 		return nil, err
 	}
 	return &sess, nil
-}
-
-func (h *Handler) sign(payload string) string {
-	mac := hmac.New(sha256.New, h.signKey)
-	mac.Write([]byte(payload))
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) {
@@ -244,7 +266,7 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -278,7 +300,7 @@ func fetchGitHubUser(ctx context.Context, token string) (*ghUser, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

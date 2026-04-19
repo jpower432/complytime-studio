@@ -28,8 +28,9 @@ spec:
       {{- end }}
   {{- end }}
   declarative:
-    runtime: go
+    runtime: python
     modelConfig: studio-model
+    stream: true
     promptTemplate:
       dataSources:
         - kind: ConfigMap
@@ -47,21 +48,21 @@ spec:
         mcpServer:
           name: studio-gemara-mcp
           kind: MCPServer
-        toolNames:
-          - validate_gemara_artifact
-          - migrate_gemara_artifact
+          toolNames:
+            - validate_gemara_artifact
+            - migrate_gemara_artifact
       {{- end }}
       {{- if .Values.mcpServers.github.enabled }}
       - type: McpServer
         mcpServer:
           name: studio-github-mcp
           kind: MCPServer
-        toolNames:
-          - get_file_contents
-          - search_code
-          - search_repositories
-        allowedHeaders:
-          - Authorization
+          toolNames:
+            - get_file_contents
+            - search_code
+            - search_repositories
+          allowedHeaders:
+            - Authorization
       {{- end }}
     a2aConfig:
       skills:
@@ -82,7 +83,7 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 spec:
-  description: "ComplyTime Studio Gap Analyst — evidence synthesis from pre-evaluated L5/L6 data, produces AuditLog artifacts"
+  description: "ComplyTime Studio Gap Analyst — combined audit preparation, multi-target evidence synthesis, cross-framework coverage analysis via MappingDocuments, produces AuditLog artifacts"
   type: Declarative
   {{- if or .Values.internalSkills.enabled (and .Values.externalSkills.auditClassification.enabled) }}
   skills:
@@ -99,8 +100,9 @@ spec:
       {{- end }}
   {{- end }}
   declarative:
-    runtime: go
+    runtime: python
     modelConfig: studio-model
+    stream: true
     promptTemplate:
       dataSources:
         - kind: ConfigMap
@@ -118,38 +120,38 @@ spec:
         mcpServer:
           name: studio-gemara-mcp
           kind: MCPServer
-        toolNames:
-          - validate_gemara_artifact
-          - migrate_gemara_artifact
+          toolNames:
+            - validate_gemara_artifact
+            - migrate_gemara_artifact
       {{- end }}
       {{- if .Values.mcpServers.github.enabled }}
       - type: McpServer
         mcpServer:
           name: studio-github-mcp
           kind: MCPServer
-        toolNames:
-          - get_file_contents
-          - search_code
-          - search_repositories
-        allowedHeaders:
-          - Authorization
+          toolNames:
+            - get_file_contents
+            - search_code
+            - search_repositories
+          allowedHeaders:
+            - Authorization
       {{- end }}
       {{- if .Values.clickhouse.enabled }}
       - type: McpServer
         mcpServer:
           name: studio-clickhouse-mcp
           kind: MCPServer
-        toolNames:
-          - run_select_query
-          - list_databases
-          - list_tables
+          toolNames:
+            - run_select_query
+            - list_databases
+            - list_tables
       {{- end }}
     a2aConfig:
       skills:
         - id: gap-analysis
-          name: Gap Analysis
-          description: "Analyze a MappingDocument to classify coverage of each target reference entry. Produces a Gemara AuditLog with Gap, Finding, Observation, and Strength results."
-          tags: ["gap-analysis", "audit", "compliance", "coverage", "layer-7"]
+          name: Combined Audit Preparation
+          description: "Prepare for combined audits — derive target inventory from evidence, assess criteria coverage per target, translate coverage to external frameworks via MappingDocuments using strength and confidence scores. Produces multi-target AuditLogs with cross-framework coverage analysis."
+          tags: ["gap-analysis", "audit", "compliance", "coverage", "combined-audit", "layer-7"]
 ---
 apiVersion: kagent.dev/v1alpha2
 kind: Agent
@@ -179,8 +181,9 @@ spec:
       {{- end }}
   {{- end }}
   declarative:
-    runtime: go
+    runtime: python
     modelConfig: studio-model
+    stream: true
     promptTemplate:
       dataSources:
         - kind: ConfigMap
@@ -198,21 +201,21 @@ spec:
         mcpServer:
           name: studio-gemara-mcp
           kind: MCPServer
-        toolNames:
-          - validate_gemara_artifact
-          - migrate_gemara_artifact
+          toolNames:
+            - validate_gemara_artifact
+            - migrate_gemara_artifact
       {{- end }}
       {{- if .Values.mcpServers.github.enabled }}
       - type: McpServer
         mcpServer:
           name: studio-github-mcp
           kind: MCPServer
-        toolNames:
-          - get_file_contents
-          - search_code
-          - search_repositories
-        allowedHeaders:
-          - Authorization
+          toolNames:
+            - get_file_contents
+            - search_code
+            - search_repositories
+          allowedHeaders:
+            - Authorization
       {{- end }}
     a2aConfig:
       skills:

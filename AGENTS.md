@@ -181,10 +181,10 @@ The final system prompt is assembled by kagent at runtime:
 |:--|:--|:--|
 | studio-gemara-mcp | stdio | Static (no user auth) |
 | studio-clickhouse-mcp | stdio | Static credentials via Secret |
-| studio-github-mcp | streamablehttp | Per-request Bearer token (OBO) |
+| studio-github-mcp | http | Per-request Bearer token (OBO) |
 | studio-oras-mcp | stdio | Gateway proxy handles auth |
 
-Servers using `streamablehttp` accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
+Servers using `http` transport accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
 
 ### On-Behalf-Of (OBO) flow
 
@@ -218,3 +218,52 @@ The gateway extracts the user's GitHub token from the session cookie and injects
 - [ ] Agent added to `agent-specialists.yaml` Helm template
 - [ ] `make sync-prompts` copies prompt to chart
 - [ ] `allowedHeaders: [Authorization]` on github-mcp tool ref (for OBO)
+
+---
+
+## QE Instructions
+
+When archiving a change that modifies an agent, generate test instructions covering the happy path and edge cases. This ensures changes are verifiable before merge.
+
+### Happy Path
+
+Test the agent's primary workflow end-to-end through the workbench.
+
+| Step | Action | Expected Result |
+|:-----|:-------|:----------------|
+| 1 | Open workbench, click "+ New Job" | Agent picker displays the agent with updated description |
+| 2 | Select the agent, provide valid inputs per `prompt.md` Required Inputs | Job created, SSE stream connects, agent responds |
+| 3 | Follow the guided conversation through each phase | Agent proposes defaults, presents tables, waits for confirmation at each phase boundary |
+| 4 | Confirm/adjust at each decision point | Agent proceeds to next phase without re-asking resolved questions |
+| 5 | Verify artifact appears in editor | `detectDefinition()` identifies correct type, YAML renders in editor pane |
+| 6 | Click Validate | `validate_gemara_artifact` returns valid for the expected definition |
+| 7 | Click Download YAML | YAML file downloaded with correct filename |
+| 8 | Click Publish (if applicable) | OCI bundle pushed, reference and digest returned |
+
+### Edge Cases
+
+Test boundary conditions and error handling.
+
+| Case | Action | Expected Result |
+|:-----|:-------|:----------------|
+| Missing required input | Start job without one or more required inputs | Agent responds with the specific guidance message defined in `prompt.md` (not a generic error) |
+| Invalid input | Provide malformed YAML or wrong artifact type | Agent identifies the issue, requests correction |
+| MCP server unavailable | Start job when a required MCP server is down | Agent reports the specific unavailability (not a hang or generic failure) |
+| Multi-turn interruption | Close browser mid-conversation, reopen | Job resumes from last status; SSE reconnects or reports disconnected |
+| Validation failure | Manually edit artifact YAML to be invalid, click Validate | Validation returns specific errors referencing the CUE definition |
+| Empty evidence (gap-analyst) | Query a policy_id/timeline with no ClickHouse data | Agent classifies all criteria as Gap, does not fabricate evidence |
+| Cadence gap (gap-analyst) | Evidence exists but with missing assessment cycles | Agent produces Findings (not Observations) for each missing cycle with specific dates |
+| No MappingDocuments (gap-analyst) | Start audit without MappingDocuments | Agent offers internal-only analysis, skips cross-framework phase |
+| Partial mapping strength (gap-analyst) | MappingDocument has targets with low strength scores | Coverage matrix shows Partially/Weakly Covered with correct strength values |
+| Concurrent job | Attempt to start a second job while one is active | "+ New Job" button disabled with tooltip explaining why |
+
+### Helm Verification
+
+After any agent change, verify the Kubernetes deployment renders correctly.
+
+| Check | Command | Expected Result |
+|:------|:--------|:----------------|
+| CRD renders | `helm template studio charts/complytime-studio/` | Agent CRD contains updated description, prompt, A2A skills |
+| Prompt content | Inspect rendered `systemMessage` field | Full prompt.md content embedded, no truncation |
+| Values match | Compare `values.yaml` agent directory entry | Description and skills match `agent.yaml` |
+| No stale refs | Search chart templates for old descriptions | Zero matches |

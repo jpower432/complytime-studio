@@ -17,10 +17,10 @@ keywords:
   - kagent
   - adk
   - complytime
-home: https://github.com/complytime/complytime-studio
+home: https://github.com/jpower432/complytime-studio
 sources:
-  - https://github.com/complytime/complytime-studio
+  - https://github.com/jpower432/complytime-studio
 maintainers:
-  - name: complytime
+  - name: jpower432
 annotations:
   studio.complytime.org/requires: "kagent >= 0.8.0"

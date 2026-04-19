@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # MCP servers deployed via kagent MCPServer CRDs.
-# github-mcp uses streamablehttp for per-request token auth (OBO).
+# github-mcp uses http transport — per-request Authorization header from user OAuth (OBO).
 # oras-mcp uses stdio — OBO handled via gateway proxy (/api/registry/*).
 # Platform servers (gemara, clickhouse) use stdio with static credentials.
 {{- if .Values.mcpServers.gemara.enabled }}
@@ -56,7 +56,10 @@ spec:
   stdioTransport: {}
   deployment:
     image: {{ .Values.clickhouse.mcp.image.repository }}:{{ .Values.clickhouse.mcp.image.tag }}
-    cmd: mcp-clickhouse
+    cmd: python
+    args:
+      - "-m"
+      - "mcp_clickhouse.main"
     port: 3000
     env:
       CLICKHOUSE_HOST: "studio-clickhouse.{{ .Release.Namespace }}"
@@ -76,18 +79,20 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 spec:
-  transportType: stdio
-  stdioTransport: {}
+  transportType: http
+  httpTransport:
+    targetPort: 3000
   deployment:
     image: {{ .Values.mcpServers.github.image }}
     cmd: /server/github-mcp-server
     args:
-      - stdio
+      - http
+      - "--port"
+      - "3000"
       - "--toolsets=repos,code_security"
     port: 3000
-    {{- $ghSecret := lookup "v1" "Secret" .Release.Namespace (.Values.mcpServers.github.secretName | default "studio-github-token") }}
-    {{- if $ghSecret }}
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: {{ index $ghSecret.data (.Values.mcpServers.github.secretKey | default "token") | b64dec | quote }}
+    {{- if .Values.mcpServers.github.tokenSecret }}
+    secretRefs:
+      - name: {{ .Values.mcpServers.github.tokenSecret }}
     {{- end }}
 {{- end }}

@@ -8,7 +8,6 @@ NAMESPACE="${NAMESPACE:-kagent}"
 
 VERTEX_PROJECT_ID="${VERTEX_PROJECT_ID:-}"
 VERTEX_LOCATION="${VERTEX_LOCATION:-us-east5}"
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 GCP_ADC_PATH="${GCP_ADC_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}"
 
 info()  { echo "==> $*"; }
@@ -138,14 +137,6 @@ create_secrets() {
         --from-file=application_default_credentials.json="${GCP_ADC_PATH}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    if [[ -n "$GITHUB_TOKEN" ]]; then
-        kubectl create secret generic studio-github-token \
-            --namespace "${NAMESPACE}" \
-            --from-literal=GITHUB_PERSONAL_ACCESS_TOKEN="${GITHUB_TOKEN}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-    else
-        warn "GITHUB_TOKEN not set. GitHub MCP Server will use unauthenticated mode with rate limits."
-    fi
 }
 
 wait_for_ready() {
@@ -177,14 +168,11 @@ print_access() {
     info ""
     info "Cluster ready. Next steps:"
     info ""
-    info "  Install Studio:    make studio-up"
-    info "  Local dev:       docker compose up"
+    info "  Deploy Studio:   make deploy"
+    info "  Port forward:    kubectl port-forward -n ${NAMESPACE} svc/studio-gateway 8080:8080"
+    info "  Open:            http://localhost:8080"
     info ""
-    info "After install, interact via kagent:"
-    info "  kagent UI:       kubectl port-forward -n ${NAMESPACE} svc/kagent-ui 8001:8080"
-    info "  kagent CLI:      kagent invoke --agent studio-orchestrator --task '...'"
-    info ""
-    info "Tear down: make cluster-down"
+    info "  Tear down:       make cluster-down"
 }
 
 main() {

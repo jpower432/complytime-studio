@@ -6,6 +6,8 @@ NAMESPACE ?= kagent
 GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
 
+CLICKHOUSE ?= true
+
 HELM_AUTH_FLAGS :=
 ifdef GITHUB_CLIENT_ID
 HELM_AUTH_FLAGS += --set auth.github.clientId=$(GITHUB_CLIENT_ID)
@@ -14,13 +16,15 @@ ifdef VERTEX_PROJECT_ID
 HELM_AUTH_FLAGS += --set model.anthropicVertexAI.projectID=$(VERTEX_PROJECT_ID)
 endif
 
+HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE)
+
 .PHONY: test lint clean \
 	gateway-build gateway-image \
 	ingest-build ingest-image \
 	compose-up sync-prompts \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
-	deploy oauth-secret port-forward
+	deploy oauth-secret
 
 test:
 	go test -v -race -cover ./...
@@ -71,6 +75,7 @@ studio-up: sync-prompts
 		--set "model.provider=$${MODEL_PROVIDER:-AnthropicVertexAI}" \
 		--set "model.name=$${MODEL_NAME:-claude-sonnet-4-20250514}" \
 		$(HELM_AUTH_FLAGS) \
+		$(HELM_FEATURE_FLAGS) \
 		--timeout 5m
 	@echo "Chart installed. Access: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
 
@@ -79,7 +84,8 @@ studio-down:
 
 studio-template: sync-prompts
 	helm template complytime-studio ./charts/complytime-studio \
-		--namespace $(NAMESPACE)
+		--namespace $(NAMESPACE) \
+		$(HELM_FEATURE_FLAGS)
 
 # Create the Kubernetes secret for GitHub OAuth credentials.
 # Usage: GITHUB_CLIENT_SECRET=<secret> make oauth-secret
@@ -108,9 +114,5 @@ deploy: gateway-image
 	$(MAKE) studio-up
 	kubectl rollout restart deployment/studio-gateway -n $(NAMESPACE)
 	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=60s
-	@echo "Gateway deployed. Run: make port-forward"
+	@echo "Gateway deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
 
-port-forward:
-	@pkill -f "port-forward.*studio-gateway" 2>/dev/null || true
-	@sleep 1
-	kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080
