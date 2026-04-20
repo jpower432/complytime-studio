@@ -12,13 +12,15 @@ prompt: prompt.md
 
 skills:
   - path: skills/gemara-layers
+  - path: skills/gemara-authoring
   - repo: https://github.com/gemaraproj/gemara-skills.git
     ref: main
     path: skills/audit-classification
 
+# Default model preference. Helm values (agents.gap-analyst.model.*) take precedence.
 model:
   provider: AnthropicVertexAI
-  name: claude-sonnet-4-20250514
+  name: claude-sonnet-4
 
 mcp:
   - server: studio-gemara-mcp

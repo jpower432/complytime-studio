@@ -4,6 +4,26 @@ import type { Message } from "../store/jobs";
 import { acceptJob } from "../store/jobs";
 import { renderMarkdown } from "../lib/markdown";
 
+interface MessageGroup {
+  role: "user" | "agent";
+  items: Message[];
+}
+
+/** Collapse consecutive messages of the same side; tool calls stay with the agent side. */
+function groupMessages(messages: Message[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  for (const msg of messages) {
+    const role: "user" | "agent" = msg.toolCall || msg.role !== "user" ? "agent" : "user";
+    const last = groups[groups.length - 1];
+    if (last?.role === role) {
+      last.items.push(msg);
+    } else {
+      groups.push({ role, items: [msg] });
+    }
+  }
+  return groups;
+}
+
 interface ChatPanelProps {
   messages: Message[];
   status: string;
@@ -42,21 +62,30 @@ export function ChatPanel({ messages, status, onReply, onCancel, onApprove, onRe
     setAcceptNote("");
   }
 
+  const grouped = groupMessages(messages);
+
   return (
     <div class="chat-panel">
       <div class="chat-messages" ref={messagesRef}>
-        {messages.map((msg, i) => {
-          if (msg.toolCall) {
-            return <ToolCallBlock key={i} msg={msg} onApprove={onApprove} onReject={onReject} />;
-          }
-          return (
-            <div key={i} class={`chat-message ${msg.partial ? "chat-message-streaming" : ""}`}>
-              <div class={`chat-message-role ${msg.role}`}>{msg.role === "user" ? "You" : "Agent"}</div>
-              <div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
-              {msg.partial && <span class="typing-cursor" />}
+        {grouped.map((group, gi) => (
+          <div key={gi} class="chat-message-group">
+            <div class={`chat-message-role ${group.role}`}>{group.role === "user" ? "You" : "Agent"}</div>
+            <div class="chat-message-group-stack">
+              {group.items.map((msg, ii) => {
+                const key = `${gi}-${ii}-${msg.timestamp}`;
+                if (msg.toolCall) {
+                  return <ToolCallBlock key={key} msg={msg} onApprove={onApprove} onReject={onReject} />;
+                }
+                return (
+                  <div key={key} class={`chat-message ${msg.partial ? "chat-message-streaming" : ""}`}>
+                    <div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                    {msg.partial && <span class="typing-cursor" />}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
         {["submitted", "working"].includes(status) && !messages.some((m) => m.partial) && (
           <div class="chat-thinking"><span class="spinner" /> Agent is working...</div>
         )}

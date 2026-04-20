@@ -27,4 +27,20 @@ spec:
               name: registry
           resources:
             {{- toYaml .Values.registry.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
 {{- end }}

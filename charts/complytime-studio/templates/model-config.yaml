@@ -1,26 +1,50 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Shared ModelConfig CRD referenced by all Declarative agents.
+# Per-agent ModelConfig CRDs. Each agent in agentDirectory gets its own
+# ModelConfig, inheriting from global model.* unless overridden in
+# agents.<short-name>.model.
+{{- range .Values.agentDirectory }}
+{{- $agentName := .name }}
+{{- $shortName := trimPrefix "studio-" $agentName }}
+{{- $agentOverride := dict }}
+{{- if hasKey $.Values.agents $shortName }}
+{{- $agentOverride = index $.Values.agents $shortName }}
+{{- end }}
+{{- $agentModel := dict }}
+{{- if hasKey $agentOverride "model" }}
+{{- $agentModel = $agentOverride.model }}
+{{- end }}
+{{- $provider := default $.Values.model.provider (index $agentModel "provider" | default "") }}
+{{- $modelName := default $.Values.model.name (index $agentModel "name" | default "") }}
 ---
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
 metadata:
-  name: studio-model
-  namespace: {{ .Release.Namespace }}
+  name: studio-model-{{ $shortName }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.labels" $ | nindent 4 }}
+    studio.complytime.dev/agent: {{ $agentName }}
 spec:
-  provider: {{ .Values.model.provider | quote }}
-  model: {{ .Values.model.name | quote }}
-  {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
-  apiKeySecret: {{ .Values.model.anthropicVertexAI.credentialsSecret | quote }}
+  provider: {{ $provider | quote }}
+  model: {{ $modelName | quote }}
+  {{- if $.Values.model.anthropicVertexAI.credentialsSecret }}
+  apiKeySecret: {{ $.Values.model.anthropicVertexAI.credentialsSecret | quote }}
   apiKeySecretKey: application_default_credentials.json
-  {{- else if .Values.model.apiKeySecret }}
-  apiKeySecretRef: {{ .Values.model.apiKeySecret.name | quote }}
-  apiKeySecretKey: {{ .Values.model.apiKeySecret.key | default "api-key" | quote }}
+  {{- else if $.Values.model.apiKeySecret }}
+  apiKeySecretRef: {{ $.Values.model.apiKeySecret.name | quote }}
+  apiKeySecretKey: {{ $.Values.model.apiKeySecret.key | default "api-key" | quote }}
   {{- end }}
-  {{- if and .Values.model.anthropicVertexAI .Values.model.anthropicVertexAI.projectID }}
+  {{- if eq $provider "AnthropicVertexAI" }}
+  {{- if $.Values.model.anthropicVertexAI.projectID }}
   anthropicVertexAI:
-    projectID: {{ .Values.model.anthropicVertexAI.projectID | quote }}
-    location: {{ .Values.model.anthropicVertexAI.location | default "us-east5" | quote }}
+    projectID: {{ $.Values.model.anthropicVertexAI.projectID | quote }}
+    location: {{ $.Values.model.anthropicVertexAI.location | default "us-east5" | quote }}
   {{- end }}
+  {{- end }}
+  {{- if eq $provider "GeminiVertexAI" }}
+  geminiVertexAI:
+    projectID: {{ $.Values.model.geminiVertexAI.projectID | default $.Values.model.anthropicVertexAI.projectID | quote }}
+    location: {{ $.Values.model.geminiVertexAI.location | default "us-central1" | quote }}
+  {{- end }}
+{{- end }}

@@ -26,30 +26,14 @@ type Options struct {
 func Register(mux *http.ServeMux, opts Options) {
 	insecure := parseInsecureRegistries(opts.InsecureRegistries)
 
-	var sess *mcp.ClientSession
-	if opts.MCPURL != "" {
-		transport := &mcp.StreamableClientTransport{Endpoint: opts.MCPURL}
-		orasClient := mcp.NewClient(
-			&mcp.Implementation{Name: "studio-oras-proxy", Version: "0.1.0"},
-			&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
-		)
-		connectCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		var err error
-		sess, err = orasClient.Connect(connectCtx, transport, nil)
-		if err != nil {
-			slog.Warn("oras-mcp connection failed", "error", err)
-		}
-	}
-
-	if sess == nil && len(insecure) == 0 {
+	if opts.MCPURL == "" && len(insecure) == 0 {
 		mux.HandleFunc("/api/registry/", httputil.UnavailableHandler("oras-mcp unavailable"))
 		slog.Info("registry proxy disabled", "reason", "ORAS_MCP_URL not set")
 		return
 	}
 
 	rp := &proxy{
-		sess:     sess,
+		mcpURL:   opts.MCPURL,
 		insecure: insecure,
 		client:   &http.Client{Timeout: 15 * time.Second},
 	}
@@ -66,9 +50,23 @@ func Register(mux *http.ServeMux, opts Options) {
 }
 
 type proxy struct {
-	sess     *mcp.ClientSession
+	mcpURL   string
 	insecure []string
 	client   *http.Client
+}
+
+func (rp *proxy) connectMCP(ctx context.Context) (*mcp.ClientSession, error) {
+	if rp.mcpURL == "" {
+		return nil, fmt.Errorf("oras-mcp URL not configured")
+	}
+	transport := &mcp.StreamableClientTransport{Endpoint: rp.mcpURL}
+	orasClient := mcp.NewClient(
+		&mcp.Implementation{Name: "studio-oras-proxy", Version: "0.1.0"},
+		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
+	)
+	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return orasClient.Connect(connectCtx, transport, nil)
 }
 
 func (rp *proxy) isInsecure(host string) bool {
@@ -190,11 +188,13 @@ func (rp *proxy) handleFetchLayer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rp *proxy) toolCall(w http.ResponseWriter, r *http.Request, toolName string, args map[string]any) {
-	if rp.sess == nil {
-		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable"})
+	sess, err := rp.connectMCP(r.Context())
+	if err != nil {
+		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable: " + err.Error()})
 		return
 	}
-	res, err := rp.sess.CallTool(r.Context(), &mcp.CallToolParams{
+	defer sess.Close()
+	res, err := sess.CallTool(r.Context(), &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
 	})

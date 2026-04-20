@@ -4,11 +4,13 @@ import { useEffect, useRef, useState, useCallback } from "preact/hooks";
 import {
   getJobAgent, updateJob, addArtifact, addMessage, cancelJob,
   updateLastAgentMessage, finalizeLastAgentMessage,
-  addToolCallMessage, updateToolCall, jobsList, type Job,
+  addToolCallMessage, updateToolCall, jobsList, type Job, type Message,
 } from "../store/jobs";
 import { proposeArtifact } from "../store/editor";
 import { getArtifactByName } from "../store/workspace";
-import { streamMessage, streamReply, type StreamCallbacks, type ContextArtifact } from "../api/a2a";
+import {
+  streamMessage, streamReply, type StreamCallbacks, type ContextArtifact, type StreamReplyOptions,
+} from "../api/a2a";
 import { extractArtifacts, detectDefinition, stripFences } from "../lib/artifact-detect";
 import { ChatPanel } from "./chat-panel";
 import { StatusBadge } from "./status-badge";
@@ -30,6 +32,60 @@ interface ChatDrawerProps {
 
 const MAX_POLL_RETRIES = 60;
 const POLL_INTERVAL_MS = 5000;
+
+const MAX_REPLAY_HISTORY_CHARS = 100_000;
+const PRESERVE_LAST_MESSAGE_LINES = 4;
+
+/** Drop oldest serialized lines until under the cap; keep the last four lines when trimming. */
+function truncateHistory(serializedLines: string[]): { inner: string; truncated: boolean } {
+  let lines = [...serializedLines];
+  let truncatedFromCount = false;
+  while (lines.join("\n\n").length > MAX_REPLAY_HISTORY_CHARS && lines.length > PRESERVE_LAST_MESSAGE_LINES) {
+    lines.shift();
+    truncatedFromCount = true;
+  }
+  let inner = lines.join("\n\n");
+  const marker = "[Earlier conversation truncated]\n\n";
+  if (inner.length > MAX_REPLAY_HISTORY_CHARS) {
+    inner = marker + inner.slice(-(MAX_REPLAY_HISTORY_CHARS - marker.length));
+    return { inner, truncated: true };
+  }
+  if (truncatedFromCount) {
+    inner = marker + inner;
+    return { inner, truncated: true };
+  }
+  return { inner, truncated: false };
+}
+
+function messageLineForReplay(msg: Message): string | null {
+  if (msg.partial) return null;
+  if (msg.toolCall) {
+    return `[Agent]: [Tool: ${msg.toolCall.name}]`;
+  }
+  if (msg.role === "user") {
+    return `[User]: ${msg.content}`;
+  }
+  return `[Agent]: ${msg.content}`;
+}
+
+function buildReplayHistoryBlock(messages: Message[]): string | undefined {
+  const lines = messages.map(messageLineForReplay).filter((l): l is string => Boolean(l?.trim()));
+  if (!lines.length) return undefined;
+  const { inner } = truncateHistory(lines);
+  if (!inner.trim()) return undefined;
+  return `<conversation-history>\n${inner}\n</conversation-history>`;
+}
+
+function buildContextArtifactsForJob(job: Job): ContextArtifact[] | undefined {
+  if (!job.contextArtifacts?.length) return undefined;
+  const ctx = job.contextArtifacts
+    .map((name) => {
+      const a = getArtifactByName(name);
+      return a ? { name: a.name, yaml: a.yaml } : null;
+    })
+    .filter((a): a is ContextArtifact => a !== null);
+  return ctx.length ? ctx : undefined;
+}
 
 export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
   const _trigger = jobsList.value;
@@ -217,15 +273,7 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     if (!currentJob.taskId) {
       const userMsg = currentJob.messages.find((m) => m.role === "user");
       if (!userMsg) return;
-      let context: ContextArtifact[] | undefined;
-      if (currentJob.contextArtifacts?.length) {
-        context = currentJob.contextArtifacts
-          .map((name) => {
-            const a = getArtifactByName(name);
-            return a ? { name: a.name, yaml: a.yaml } : null;
-          })
-          .filter((a): a is ContextArtifact => a !== null);
-      }
+      const context = buildContextArtifactsForJob(currentJob);
       const cleanup = streamMessage(userMsg.content, callbacks, agentName, context);
       streamRef.current = cleanup;
       startPollRetry();
@@ -280,8 +328,17 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     if (streamRef.current) { streamRef.current(); streamRef.current = null; }
     streamingBuffer.current = "";
 
-    const taskId = currentJob.taskId || job.id;
-    const cleanup = streamReply(taskId, text, buildCallbacks(), replyAgent);
+    const after = jobsList.value.find((j) => j.id === job.id) ?? currentJob;
+    const prior = after.messages.slice(0, -1);
+    const history = buildReplayHistoryBlock(prior);
+    const context = buildContextArtifactsForJob(after);
+    const replyOpts: StreamReplyOptions = {};
+    if (history) replyOpts.history = history;
+    if (context) replyOpts.context = context;
+
+    const taskId = after.taskId || job.id;
+    const cleanup = streamReply(taskId, text, buildCallbacks(), replyAgent,
+      Object.keys(replyOpts).length ? replyOpts : undefined);
     streamRef.current = cleanup;
   }
 
@@ -299,8 +356,16 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     if (streamRef.current) { streamRef.current(); streamRef.current = null; }
     streamingBuffer.current = "";
 
-    const taskId = currentJob.taskId || job.id;
-    const cleanup = streamReply(taskId, "", buildCallbacks(), replyAgent);
+    const after = jobsList.value.find((j) => j.id === job.id) ?? currentJob;
+    const history = buildReplayHistoryBlock(after.messages);
+    const context = buildContextArtifactsForJob(after);
+    const replyOpts: StreamReplyOptions = {};
+    if (history) replyOpts.history = history;
+    if (context) replyOpts.context = context;
+
+    const taskId = after.taskId || job.id;
+    const cleanup = streamReply(taskId, "", buildCallbacks(), replyAgent,
+      Object.keys(replyOpts).length ? replyOpts : undefined);
     streamRef.current = cleanup;
   }
 
@@ -311,8 +376,16 @@ export function ChatDrawer({ job, onClose }: ChatDrawerProps) {
     if (streamRef.current) { streamRef.current(); streamRef.current = null; }
     streamingBuffer.current = "";
 
-    const taskId = currentJob.taskId || job.id;
-    const cleanup = streamReply(taskId, "rejected", buildCallbacks(), replyAgent);
+    const after = jobsList.value.find((j) => j.id === job.id) ?? currentJob;
+    const history = buildReplayHistoryBlock(after.messages);
+    const context = buildContextArtifactsForJob(after);
+    const replyOpts: StreamReplyOptions = {};
+    if (history) replyOpts.history = history;
+    if (context) replyOpts.context = context;
+
+    const taskId = after.taskId || job.id;
+    const cleanup = streamReply(taskId, "rejected", buildCallbacks(), replyAgent,
+      Object.keys(replyOpts).length ? replyOpts : undefined);
     streamRef.current = cleanup;
   }
 

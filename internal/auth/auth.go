@@ -12,9 +12,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/complytime/complytime-studio/internal/httputil"
 )
 
 const (
@@ -69,16 +72,16 @@ type Handler struct {
 
 // NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
 // (AES-256). Session cookies are encrypted with AES-GCM.
-func NewHandler(cfg Config, secretKey []byte) *Handler {
+func NewHandler(cfg Config, secretKey []byte) (*Handler, error) {
 	block, err := aes.NewCipher(secretKey)
 	if err != nil {
-		panic(fmt.Sprintf("auth: invalid secret key: %v", err))
+		return nil, fmt.Errorf("auth: invalid secret key: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		panic(fmt.Sprintf("auth: GCM init: %v", err))
+		return nil, fmt.Errorf("auth: GCM init: %w", err)
 	}
-	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm}
+	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm}, nil
 }
 
 // Register mounts auth endpoints on the mux.
@@ -131,7 +134,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   600,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 	})
 
 	url := fmt.Sprintf(
@@ -147,7 +150,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid state parameter", http.StatusForbidden)
 		return
 	}
-	clearCookie(w, stateCookieName, "/auth", r.TLS != nil)
+	clearCookie(w, stateCookieName, "/auth", isSecureRequest(r))
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -157,13 +160,15 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := exchangeCode(r.Context(), h.cfg, code)
 	if err != nil {
-		http.Error(w, "token exchange failed: "+err.Error(), http.StatusBadGateway)
+		slog.Error("oauth token exchange failed", "error", err)
+		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
 		return
 	}
 
 	user, err := fetchGitHubUser(r.Context(), token)
 	if err != nil {
-		http.Error(w, "user fetch failed: "+err.Error(), http.StatusBadGateway)
+		slog.Error("oauth user fetch failed", "error", err)
+		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
 		return
 	}
 
@@ -199,7 +204,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	clearCookie(w, sessionCookieName, "/", r.TLS != nil)
+	clearCookie(w, sessionCookieName, "/", isSecureRequest(r))
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -223,7 +228,7 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sess 
 		MaxAge:   int(sessionMaxAge.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 	})
 	return nil
 }
@@ -271,6 +276,11 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) 
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("github token endpoint %d: %s", resp.StatusCode, string(b))
+	}
 
 	var result struct {
 		AccessToken string `json:"access_token"`
@@ -337,7 +347,14 @@ func clearCookie(w http.ResponseWriter, name, path string, secure bool) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	httputil.WriteJSON(w, status, v)
+}
+
+// isSecureRequest returns true when the original client connection used TLS,
+// honoring X-Forwarded-Proto set by reverse proxies that terminate TLS.
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }

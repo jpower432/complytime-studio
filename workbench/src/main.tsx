@@ -2,6 +2,12 @@
 
 import { render } from "preact";
 import { App } from "./app";
+import { ErrorBoundary } from "./components/error-boundary";
 import "./global.css";
 
-render(<App />, document.getElementById("root")!);
+render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
+  document.getElementById("root")!,
+);

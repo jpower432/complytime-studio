@@ -14,6 +14,27 @@ HELM_AUTH_FLAGS += --set auth.github.clientId=$(GITHUB_CLIENT_ID)
 endif
 ifdef VERTEX_PROJECT_ID
 HELM_AUTH_FLAGS += --set model.anthropicVertexAI.projectID=$(VERTEX_PROJECT_ID)
+HELM_AUTH_FLAGS += --set model.geminiVertexAI.projectID=$(VERTEX_PROJECT_ID)
+endif
+
+HELM_AGENT_FLAGS :=
+ifdef THREAT_MODELER_MODEL_PROVIDER
+HELM_AGENT_FLAGS += --set agents.threat-modeler.model.provider=$(THREAT_MODELER_MODEL_PROVIDER)
+endif
+ifdef THREAT_MODELER_MODEL_NAME
+HELM_AGENT_FLAGS += --set agents.threat-modeler.model.name=$(THREAT_MODELER_MODEL_NAME)
+endif
+ifdef GAP_ANALYST_MODEL_PROVIDER
+HELM_AGENT_FLAGS += --set agents.gap-analyst.model.provider=$(GAP_ANALYST_MODEL_PROVIDER)
+endif
+ifdef GAP_ANALYST_MODEL_NAME
+HELM_AGENT_FLAGS += --set agents.gap-analyst.model.name=$(GAP_ANALYST_MODEL_NAME)
+endif
+ifdef POLICY_COMPOSER_MODEL_PROVIDER
+HELM_AGENT_FLAGS += --set agents.policy-composer.model.provider=$(POLICY_COMPOSER_MODEL_PROVIDER)
+endif
+ifdef POLICY_COMPOSER_MODEL_NAME
+HELM_AGENT_FLAGS += --set agents.policy-composer.model.name=$(POLICY_COMPOSER_MODEL_NAME)
 endif
 
 HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE)
@@ -72,9 +93,10 @@ studio-up: sync-prompts
 		--namespace $(NAMESPACE) \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
-		--set "model.provider=$${MODEL_PROVIDER:-AnthropicVertexAI}" \
-		--set "model.name=$${MODEL_NAME:-claude-sonnet-4-20250514}" \
+		--set "model.provider=$${MODEL_PROVIDER:-GeminiVertexAI}" \
+		--set "model.name=$${MODEL_NAME:-gemini-2.5-pro}" \
 		$(HELM_AUTH_FLAGS) \
+		$(HELM_AGENT_FLAGS) \
 		$(HELM_FEATURE_FLAGS) \
 		--timeout 5m
 	@echo "Chart installed. Access: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"

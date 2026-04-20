@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# NetworkPolicies for Helm-managed studio pods.
+# Scope: gateway, registry, clickhouse (pods with part-of: complytime-studio).
+# Out of scope: agents and MCP servers — managed by kagent/kmcp with their own
+# label scheme (part-of: kagent / managed-by: kmcp). Configure those at the
+# kagent level if needed.
+#
+# Requires a CNI that supports NetworkPolicy (Calico, Cilium, etc.).
+# Kind's default kindnet does NOT enforce policies.
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default deny ingress for all Helm-managed studio pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: complytime-studio
+  policyTypes:
+    - Ingress
+
+---
+# Gateway: accept ingress from anywhere on port 8080 (user-facing service).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+
+{{- if .Values.registry.enabled }}
+---
+# Registry: accept ingress from namespace peers (gateway, seed job, oras-mcp).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-registry
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5000
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.clickhouse.enabled }}
+---
+# ClickHouse: accept ingress from namespace peers (clickhouse-mcp, ingest).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-clickhouse
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-clickhouse
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8123
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+{{- end }}
+{{- end }}

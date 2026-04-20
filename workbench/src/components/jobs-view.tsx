@@ -7,7 +7,7 @@ import {
   isActiveStatus, isHistoryStatus, timeAgo,
 } from "../store/jobs";
 import { allArtifacts } from "../store/workspace";
-import { fetchAgents, type AgentCard } from "../api/agents";
+import { fetchAgents, type AgentCard, type AgentModel } from "../api/agents";
 import { StatusBadge } from "./status-badge";
 
 const showNewDialog = signal(false);
@@ -78,6 +78,13 @@ export function JobsView() {
 
 const DEFAULT_AGENT = "studio-threat-modeler";
 
+function formatModelLabel(model?: AgentModel): string | null {
+  if (!model?.name) return null;
+  return model.name
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const CONTEXT_SIZE_CAP = 100 * 1024;
 
 function NewJobDialog({ onClose }: { onClose: () => void }) {
@@ -95,7 +102,10 @@ function NewJobDialog({ onClose }: { onClose: () => void }) {
         setAgents(cards);
         if (cards.length > 0) setSelectedAgent(cards[0].name);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("failed to load agents", err);
+        setError("Failed to load agents. Please try again.");
+      });
   }, []);
 
   function toggleContext(name: string) {
@@ -141,7 +151,10 @@ function NewJobDialog({ onClose }: { onClose: () => void }) {
             <label class="dialog-label">Specialist</label>
             {agents.map((a) => (
               <div key={a.name} class={`agent-card ${selectedAgent === a.name ? "selected" : ""}`} onClick={() => setSelectedAgent(a.name)}>
-                <span class="agent-card-name">{a.name}</span>
+                <div class="agent-card-header">
+                  <span class="agent-card-name">{a.name}</span>
+                  {formatModelLabel(a.model) && <span class="agent-card-model">{formatModelLabel(a.model)}</span>}
+                </div>
                 <span class="agent-card-desc">{a.description}</span>
               </div>
             ))}
@@ -151,12 +164,28 @@ function NewJobDialog({ onClose }: { onClose: () => void }) {
         {wsArtifacts.length > 0 && (
           <div class="context-picker">
             <label class="dialog-label">Include workspace artifacts as context</label>
-            {wsArtifacts.map((a) => (
-              <label key={a.name} class="context-picker-row">
-                <input type="checkbox" checked={!!selectedContext[a.name]} onChange={() => toggleContext(a.name)} />
-                <span class="artifact-name-mono">{a.name}</span>
-              </label>
-            ))}
+            <select
+              class="context-select"
+              onChange={(e) => {
+                const val = (e.target as HTMLSelectElement).value;
+                if (val) { toggleContext(val); (e.target as HTMLSelectElement).value = ""; }
+              }}
+            >
+              <option value="">Select artifact...</option>
+              {wsArtifacts.filter((a) => !selectedContext[a.name]).map((a) => (
+                <option key={a.name} value={a.name}>{a.name}</option>
+              ))}
+            </select>
+            {selectedContextNames().length > 0 && (
+              <div class="context-pills">
+                {selectedContextNames().map((name) => (
+                  <span key={name} class="context-pill">
+                    <span class="artifact-name-mono">{name}</span>
+                    <button class="context-pill-remove" onClick={() => toggleContext(name)}>&times;</button>
+                  </span>
+                ))}
+              </div>
+            )}
             {contextSize() > CONTEXT_SIZE_CAP * 0.8 && (
               <div class="dialog-warn">Context size: {Math.round(contextSize() / 1024)} KB / {CONTEXT_SIZE_CAP / 1024} KB</div>
             )}

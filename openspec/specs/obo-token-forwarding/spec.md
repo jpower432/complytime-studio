@@ -42,30 +42,30 @@ MCP servers without `allowedHeaders` (gemara-mcp, clickhouse-mcp) SHALL continue
 - **WHEN** the studio-gemara-mcp MCPServer CRD is rendered
 - **THEN** it uses `transportType: stdio` with no `allowedHeaders`
 
-### Requirement: No static token fallback for github-mcp
-The github-mcp MCPServer CRD SHALL NOT include a static `GITHUB_PERSONAL_ACCESS_TOKEN` environment variable. GitHub access is exclusively via per-user OAuth tokens propagated through `allowedHeaders`.
+### Requirement: Static token for MCP session initialization
+The github-mcp MCPServer CRD SHALL include a `secretRefs` entry pointing to a Secret containing `GITHUB_PERSONAL_ACCESS_TOKEN`. This token authenticates MCP session initialization (tool discovery), which occurs before per-request `allowedHeaders` are available in the kagent Python runtime.
 
-#### Scenario: Unauthenticated agent request
-- **WHEN** an A2A request reaches the agent without an `Authorization` header
-- **THEN** the github-mcp tool call fails with a GitHub 401 error
-- **THEN** the agent reports the tool failure to the user
+#### Scenario: tokenSecret configured
+- **WHEN** `mcpServers.github.tokenSecret` is set in Helm values
+- **THEN** the MCPServer CRD includes `secretRefs` referencing that Secret
+- **THEN** MCP session initialization succeeds using the static PAT
 
-#### Scenario: No static Secret in deployment
-- **WHEN** the `studio-github-mcp` MCPServer CRD is rendered
-- **THEN** the deployment spec contains no `env` block with `GITHUB_PERSONAL_ACCESS_TOKEN`
-- **THEN** no `lookup` for `studio-github-token` Secret exists in the template
+#### Scenario: tokenSecret not configured
+- **WHEN** `mcpServers.github.tokenSecret` is empty
+- **THEN** no `secretRefs` appear on the MCPServer CRD
+- **THEN** MCP session initialization fails with 401 and the agent cannot discover tools
 
-### Requirement: Setup scripts omit github-mcp static token
-The `setup.sh` deployment script SHALL NOT create a `studio-github-token` Secret. The `GITHUB_TOKEN` environment variable SHALL NOT be referenced for MCP server configuration.
+### Requirement: OBO overrides static token for tool calls
+When an authenticated user's `Authorization` header is propagated via `allowedHeaders`, tool calls SHALL use the user's OBO token rather than the static PAT. The static token is a baseline for session init only.
 
-#### Scenario: Clean setup without GITHUB_TOKEN
-- **WHEN** `setup.sh` runs without `GITHUB_TOKEN` set
-- **THEN** no warning about "unauthenticated mode" is printed for github-mcp
-- **THEN** no `studio-github-token` Secret is created
+#### Scenario: Authenticated tool call
+- **WHEN** an A2A request includes `Authorization: Bearer <user_token>`
+- **AND** the agent calls `get_file_contents` on github-mcp
+- **THEN** the tool call uses the user's token, not the static PAT
 
-### Requirement: Values file omits github-mcp secret configuration
-The `values.yaml` SHALL NOT contain `secretName` or `secretKey` fields under `mcpServers.github`.
+### Requirement: Values file supports github-mcp token configuration
+The `values.yaml` SHALL contain a `tokenSecret` field under `mcpServers.github` defaulting to `"studio-github-token"`.
 
 #### Scenario: Default values
 - **WHEN** `values.yaml` is rendered with defaults
-- **THEN** `mcpServers.github` contains only `enabled` and `image` fields
+- **THEN** `mcpServers.github` contains `enabled`, `image`, and `tokenSecret` fields

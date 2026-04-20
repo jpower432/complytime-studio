@@ -11,13 +11,15 @@ prompt: prompt.md
 
 skills:
   - path: skills/gemara-layers
+  - path: skills/gemara-authoring
   - repo: https://github.com/openssf/stride-skills.git
     ref: main
     path: skills/stride-analysis
 
+# Default model preference. Helm values (agents.threat-modeler.model.*) take precedence.
 model:
   provider: AnthropicVertexAI
-  name: claude-sonnet-4-20250514
+  name: claude-sonnet-4
 
 mcp:
   - server: studio-gemara-mcp

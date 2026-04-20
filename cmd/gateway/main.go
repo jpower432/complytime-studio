@@ -18,6 +18,7 @@ import (
 	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/config"
+	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/proxy"
 	"github.com/complytime/complytime-studio/internal/publish"
@@ -42,7 +43,11 @@ func main() {
 		CallbackURL:  httputil.EnvOr("GITHUB_CALLBACK_URL", "http://localhost:8080/auth/callback"),
 	}
 	secretKey := cookieSecretKey(authCfg.ClientID != "")
-	authHandler := auth.NewHandler(authCfg, secretKey)
+	authHandler, err := auth.NewHandler(authCfg, secretKey)
+	if err != nil {
+		slog.Error("auth handler init failed", "error", err)
+		os.Exit(1)
+	}
 	authHandler.Register(mux)
 
 	registerGemaraProxy(mux, os.Getenv("GEMARA_MCP_URL"))
@@ -91,20 +96,16 @@ func main() {
 		slog.Info("CORS enabled", "origins", origins)
 	}
 
-	handler = httputil.RateLimit(httputil.RateLimitOptions{
-		RequestsPerMinute: 120,
-		PathPrefix:        "/api/",
-	})(handler)
-	slog.Info("rate limiting enabled", "rpm", 120, "prefix", "/api/")
+	handler = httputil.SecurityHeaders(handler)
 
 	addr := net.JoinHostPort("0.0.0.0", port)
 	slog.Info("gateway starting", "addr", addr)
 	srv := &http.Server{
 		Addr:           addr,
 		Handler:        handler,
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   5 * time.Minute,
-		IdleTimeout:    120 * time.Second,
+		ReadTimeout:    consts.ServerReadTimeout,
+		WriteTimeout:   consts.ServerWriteTimeout,
+		IdleTimeout:    consts.ServerIdleTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 	go func() {

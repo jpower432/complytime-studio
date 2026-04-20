@@ -85,3 +85,8 @@ The jobs view SHALL display two sections: Active and Recent.
 #### Scenario: Empty history state
 - **WHEN** no history jobs exist
 - **THEN** the Recent section SHALL be hidden entirely
+
+#### Scenario: Policy-composer job with risk enrichment
+- **WHEN** a policy-composer job is created
+- **THEN** the job flow SHALL include an early agent prompt asking whether risk analysis is desired
+- **THEN** the job SHALL proceed through the same state machine regardless of the user's enrichment choice

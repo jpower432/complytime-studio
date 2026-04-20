@@ -9,7 +9,8 @@ import (
 
 	gemara "github.com/gemaraproj/go-gemara"
 	gemarabundle "github.com/gemaraproj/go-gemara/bundle"
-	"time"
+
+	"github.com/complytime/complytime-studio/internal/consts"
 
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/memory"
@@ -17,7 +18,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
-var registryClient = &http.Client{Timeout: 60 * time.Second}
+var registryClient = &http.Client{Timeout: consts.RegistryPushTimeout}
 
 // BundleResult holds the outcome of a push operation.
 type BundleResult struct {
@@ -56,7 +57,7 @@ func AssembleAndPush(ctx context.Context, yamlContents [][]byte, target, tag str
 	b := &gemarabundle.Bundle{
 		Manifest: gemarabundle.Manifest{
 			BundleVersion: "1",
-			GemaraVersion: "v1.0.0",
+			GemaraVersion: consts.GemaraVersion,
 		},
 		Files: files,
 	}

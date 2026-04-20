@@ -30,11 +30,15 @@ export interface ContextArtifact {
   yaml: string;
 }
 
+function contextArtifactText(a: ContextArtifact): string {
+  return `--- Context: ${a.name} (reference only) ---\n${a.yaml}`;
+}
+
 export function streamMessage(text: string, callbacks: StreamCallbacks, agentName?: string, context?: ContextArtifact[]): () => void {
   const parts: Array<{ kind: string; text: string }> = [{ kind: "text", text }];
   if (context?.length) {
     for (const a of context) {
-      parts.push({ kind: "text", text: `--- Context: ${a.name} ---\n${a.yaml}` });
+      parts.push({ kind: "text", text: contextArtifactText(a) });
     }
   }
   const body = {
@@ -52,11 +56,33 @@ export function streamMessage(text: string, callbacks: StreamCallbacks, agentNam
   return doStreamFetch(a2aEndpoint(agentName), body, callbacks);
 }
 
+export interface StreamReplyOptions {
+  /** Prior turns serialized by the client; prepended as the first text part when set. */
+  history?: string;
+  context?: ContextArtifact[];
+}
+
 /**
  * Send a reply on an existing task via streaming A2A.
  * Returns a cleanup function to abort the stream.
  */
-export function streamReply(taskId: string, text: string, callbacks: StreamCallbacks, agentName?: string): () => void {
+export function streamReply(
+  taskId: string,
+  text: string,
+  callbacks: StreamCallbacks,
+  agentName?: string,
+  options?: StreamReplyOptions,
+): () => void {
+  const parts: Array<{ kind: string; text: string }> = [];
+  if (options?.history?.trim()) {
+    parts.push({ kind: "text", text: options.history.trim() });
+  }
+  parts.push({ kind: "text", text });
+  if (options?.context?.length) {
+    for (const a of options.context) {
+      parts.push({ kind: "text", text: contextArtifactText(a) });
+    }
+  }
   const body = {
     jsonrpc: "2.0",
     id: crypto.randomUUID(),
@@ -65,7 +91,7 @@ export function streamReply(taskId: string, text: string, callbacks: StreamCallb
       message: {
         messageId: crypto.randomUUID(),
         role: "user",
-        parts: [{ kind: "text", text }],
+        parts,
       },
       taskId,
     },

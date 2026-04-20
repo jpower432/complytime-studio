@@ -1,21 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { signal } from "@preact/signals";
-import { useState } from "preact/hooks";
+import { useState, useRef } from "preact/hooks";
 import type { Artifact } from "../store/jobs";
 import { validate } from "../api/a2a";
 import { detectDefinition } from "../lib/artifact-detect";
+import { downloadYaml } from "../lib/download";
 import { YamlEditor } from "./yaml-editor";
 import { PublishDialog } from "./publish-dialog";
-
-function downloadYaml(filename: string, content: string) {
-  const blob = new Blob([content], { type: "application/x-yaml" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 interface ArtifactPanelProps { artifacts: Artifact[]; jobId: string }
 
@@ -23,9 +13,9 @@ export function ArtifactPanel({ artifacts, jobId }: ArtifactPanelProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [validationResult, setValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [showPublish, setShowPublish] = useState(false);
-  const editorContent = signal(artifacts[activeTab]?.yaml ?? "");
+  const editorContentRef = useRef(artifacts[activeTab]?.yaml ?? "");
   if (artifacts.length === 0) return (<div class="artifact-panel"><div class="artifact-empty">Artifacts will appear here as the agent produces them.</div></div>);
-  function getCurrentContent(): string { return editorContent.value || artifacts[activeTab]?.yaml || ""; }
+  function getCurrentContent(): string { return editorContentRef.current || artifacts[activeTab]?.yaml || ""; }
   async function handleValidate() {
     const content = getCurrentContent(); const definition = detectDefinition(content) || "#ThreatCatalog";
     setValidationResult({ valid: true, message: "Validating..." });
@@ -41,7 +31,7 @@ export function ArtifactPanel({ artifacts, jobId }: ArtifactPanelProps) {
     const name = artifacts[activeTab]?.name || "artifact.yaml";
     downloadYaml(name, content);
   }
-  function switchTab(index: number) { setActiveTab(index); editorContent.value = artifacts[index]?.yaml ?? ""; setValidationResult(null); }
+  function switchTab(index: number) { setActiveTab(index); editorContentRef.current = artifacts[index]?.yaml ?? ""; setValidationResult(null); }
   return (
     <div class="artifact-panel">
       <div class="artifact-tabs">{artifacts.map((a, i) => (<button key={a.name} class={`artifact-tab ${i === activeTab ? "active" : ""}`} onClick={() => switchTab(i)}>{a.name}</button>))}</div>
@@ -51,7 +41,7 @@ export function ArtifactPanel({ artifacts, jobId }: ArtifactPanelProps) {
         <button class="btn btn-secondary btn-sm" onClick={handleDownload}>Download YAML</button>
         <button class="btn btn-accent btn-sm" onClick={() => setShowPublish(true)}>Publish</button>
       </div>
-      <YamlEditor content={artifacts[activeTab]?.yaml ?? ""} onChange={(val) => (editorContent.value = val)} />
+      <YamlEditor content={artifacts[activeTab]?.yaml ?? ""} onChange={(val) => { editorContentRef.current = val; }} />
       {validationResult && (<div class={`validation-result ${validationResult.valid ? "valid" : "invalid"}`}>{validationResult.valid ? "\u2713" : "\u2717"} {validationResult.message}</div>)}
       {showPublish && <PublishDialog artifacts={artifacts} onClose={() => setShowPublish(false)} />}
     </div>

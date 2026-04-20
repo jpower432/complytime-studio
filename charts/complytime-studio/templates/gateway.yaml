@@ -15,6 +15,7 @@ spec:
   template:
     metadata:
       labels:
+        {{- include "studio.labels" . | nindent 8 }}
         {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 8 }}
     spec:
       containers:
@@ -50,7 +51,24 @@ spec:
             - name: GITHUB_REPO
               value: {{ .Values.github.repo | quote }}
             - name: AGENT_DIRECTORY
-              value: {{ .Values.agentDirectory | toJson | quote }}
+              value: >-
+                {{- $enriched := list -}}
+                {{- range .Values.agentDirectory -}}
+                {{- $shortName := trimPrefix "studio-" .name -}}
+                {{- $agentOverride := dict -}}
+                {{- if hasKey $.Values.agents $shortName -}}
+                {{- $agentOverride = index $.Values.agents $shortName -}}
+                {{- end -}}
+                {{- $agentModel := dict -}}
+                {{- if hasKey $agentOverride "model" -}}
+                {{- $agentModel = $agentOverride.model -}}
+                {{- end -}}
+                {{- $provider := default $.Values.model.provider (index $agentModel "provider" | default "") -}}
+                {{- $modelName := default $.Values.model.name (index $agentModel "name" | default "") -}}
+                {{- $entry := merge (dict "model" (dict "provider" $provider "name" $modelName)) (deepCopy .) -}}
+                {{- $enriched = append $enriched $entry -}}
+                {{- end }}
+                {{ $enriched | toJson }}
             - name: KAGENT_A2A_URL
               value: {{ .Values.kagent.a2aURL | quote }}
             - name: KAGENT_AGENT_NAMESPACE

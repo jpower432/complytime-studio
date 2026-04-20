@@ -10,17 +10,24 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"time"
 
+	"github.com/complytime/complytime-studio/internal/consts"
 	studiohttp "github.com/complytime/complytime-studio/internal/httputil"
 )
 
+// CardModel describes the LLM provider and model backing an agent.
+type CardModel struct {
+	Provider string `json:"provider,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
 // Card represents a specialist agent entry in the directory.
 type Card struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	URL         string  `json:"url"`
-	Skills      []Skill `json:"skills"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	URL         string     `json:"url"`
+	Skills      []Skill    `json:"skills"`
+	Model       *CardModel `json:"model,omitempty"`
 }
 
 // Skill describes one A2A skill exposed by a specialist agent.
@@ -134,7 +141,7 @@ func registerA2AProxy(mux *http.ServeMux, opts Options) {
 				}
 			},
 			Transport: &http.Transport{
-				ResponseHeaderTimeout: 5 * time.Minute,
+				ResponseHeaderTimeout: consts.ProxyResponseTimeout,
 			},
 			FlushInterval: -1,
 			ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {

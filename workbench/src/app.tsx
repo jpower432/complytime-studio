@@ -17,10 +17,37 @@ export const currentJobId = signal<string | null>(null);
 export const currentUser = signal<UserInfo | null>(null);
 export const authChecked = signal(false);
 
+function parseHash(hash: string): { view: View; jobId: string | null } {
+  const stripped = hash.replace(/^#\/?/, "");
+  if (stripped.startsWith("workspace/")) {
+    return { view: "workspace", jobId: stripped.slice("workspace/".length) || null };
+  }
+  if (stripped === "workspace") return { view: "workspace", jobId: null };
+  if (stripped === "jobs") return { view: "jobs", jobId: null };
+  return { view: "workspace", jobId: null };
+}
+
+function buildHash(view: View, jobId?: string): string {
+  if (view === "workspace" && jobId) return `#/workspace/${jobId}`;
+  return `#/${view}`;
+}
+
 export function navigate(view: View, jobId?: string) {
   currentView.value = view;
   currentJobId.value = jobId ?? null;
+  const hash = buildHash(view, jobId);
+  if (window.location.hash !== hash) {
+    window.location.hash = hash;
+  }
 }
+
+function syncFromHash() {
+  const { view, jobId } = parseHash(window.location.hash);
+  currentView.value = view;
+  currentJobId.value = jobId;
+}
+
+syncFromHash();
 
 fetchMe().then((user) => {
   currentUser.value = user;
@@ -37,8 +64,13 @@ export function App() {
   const checked = authChecked.value;
 
   useEffect(() => {
+    const onHashChange = () => syncFromHash();
+    window.addEventListener("hashchange", onHashChange);
     const id = setInterval(purgeHistory, PURGE_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      clearInterval(id);
+    };
   }, []);
 
   if (!checked) {

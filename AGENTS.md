@@ -47,7 +47,7 @@ skills:
 
 model:
   provider: AnthropicVertexAI
-  name: claude-sonnet-4-20250514
+  name: claude-sonnet-4
 
 mcp:
   - server: studio-gemara-mcp
@@ -181,7 +181,7 @@ The final system prompt is assembled by kagent at runtime:
 |:--|:--|:--|
 | studio-gemara-mcp | stdio | Static (no user auth) |
 | studio-clickhouse-mcp | stdio | Static credentials via Secret |
-| studio-github-mcp | http | Per-request Bearer token (OBO) |
+| studio-github-mcp | http | Static PAT (session init) + per-request OBO (tool calls) |
 | studio-oras-mcp | stdio | Gateway proxy handles auth |
 
 Servers using `http` transport accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
@@ -197,6 +197,8 @@ Browser → Gateway → A2A Agent Pod → MCP Server
 ```
 
 The gateway extracts the user's GitHub token from the session cookie and injects it as an `Authorization: Bearer` header on A2A requests. kagent propagates this header to MCP tool calls for servers with `allowedHeaders: [Authorization]`.
+
+**Limitation:** The Python runtime initializes MCP sessions (tool discovery) before per-request headers are available. HTTP-transport MCP servers requiring auth (e.g., `studio-github-mcp`) need a static `tokenSecret` on the MCPServer CRD for session init. The OBO header overrides the static token for actual tool calls when present.
 
 ---
 

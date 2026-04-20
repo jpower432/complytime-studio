@@ -9,11 +9,17 @@ export interface AgentSkill {
   tags: string[];
 }
 
+export interface AgentModel {
+  provider: string;
+  name: string;
+}
+
 export interface AgentCard {
   name: string;
   description: string;
   url: string;
   skills: AgentSkill[];
+  model?: AgentModel;
 }
 
 export async function fetchAgents(): Promise<AgentCard[]> {

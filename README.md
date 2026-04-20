@@ -30,7 +30,7 @@ export VERTEX_PROJECT_ID=my-gcp-project
 
 **GitHub OAuth (required for agent GitHub access):**
 
-Agents access GitHub repositories using the logged-in user's OAuth token. No static GitHub token is needed.
+Agents access GitHub repositories using the logged-in user's OAuth token propagated via `allowedHeaders`. A static GitHub PAT is also required for MCP session initialization (tool discovery), which occurs before per-request headers are available.
 
 ```bash
 # Register an OAuth app at https://github.com/settings/applications/new
@@ -40,6 +40,17 @@ export GITHUB_CLIENT_SECRET=abc123...
 ```
 
 > **Note:** The OAuth app must request `repo` scope (configured automatically by the gateway) for agents to access private repositories.
+
+**GitHub MCP static token (required):**
+
+The GitHub MCP server needs a static PAT for MCP session initialization. Tool calls use the user's OBO token when available.
+
+```bash
+kubectl create secret generic studio-github-token -n kagent \
+  --from-literal=GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+```
+
+> **Why both?** The kagent Python runtime initializes MCP sessions (tool discovery) before per-request headers are available. The static token authenticates session init; `allowedHeaders` propagates the user's OAuth token for actual tool calls.
 
 ### 3. Create the cluster
 
@@ -105,7 +116,7 @@ Gateway (:8080)
 ├── /api/config          → Platform configuration (GitHub org/repo)
 ├── /auth/*              → GitHub OAuth flow (optional)
 
-kagent Declarative Agents (Go runtime)
+kagent Declarative Agents (Python runtime)
 ├── studio-threat-modeler  — STRIDE analysis, ThreatCatalog + ControlCatalog
 │   └── MCP: gemara-mcp, github-mcp
 ├── studio-gap-analyst     — Evidence-backed AuditLog from ClickHouse L5/L6 data
@@ -151,7 +162,7 @@ Key values in `charts/complytime-studio/values.yaml`:
 | Value | Description |
 |:--|:--|
 | `model.provider` | LLM provider (`AnthropicVertexAI`) |
-| `model.name` | Model identifier (`claude-sonnet-4-20250514`) |
+| `model.name` | Model identifier (`claude-sonnet-4`) |
 | `model.anthropicVertexAI.projectID` | GCP project for Vertex AI |
 | `model.anthropicVertexAI.location` | Vertex AI region (default: `us-east5`) |
 | `model.anthropicVertexAI.credentialsSecret` | Secret with `application_default_credentials.json` |
@@ -159,6 +170,7 @@ Key values in `charts/complytime-studio/values.yaml`:
 | `auth.github.clientId` | GitHub OAuth client ID (enables auth middleware) |
 | `github.org` | GitHub organization/user for platform links |
 | `github.repo` | GitHub repository name |
+| `mcpServers.github.tokenSecret` | Secret name with `GITHUB_PERSONAL_ACCESS_TOKEN` for MCP session init |
 | `clickhouse.enabled` | Deploy ClickHouse evidence store (default: `false`) |
 | `registry.enabled` | Deploy in-cluster OCI registry |
 

@@ -15,6 +15,7 @@ import (
 	"github.com/gemaraproj/go-gemara/fetcher"
 	"github.com/goccy/go-yaml"
 
+	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/ingest"
 )
 
@@ -159,19 +160,12 @@ func derivePolicyID(refs []gemara.MappingReference) string {
 }
 
 func writerConfig() ingest.WriterConfig {
-	port, _ := strconv.Atoi(envOr("CLICKHOUSE_PORT", "9000"))
+	port, _ := strconv.Atoi(httputil.EnvOr("CLICKHOUSE_PORT", "9000"))
 	return ingest.WriterConfig{
-		Host:     envOr("CLICKHOUSE_HOST", "localhost"),
+		Host:     httputil.EnvOr("CLICKHOUSE_HOST", "localhost"),
 		Port:     port,
-		User:     envOr("CLICKHOUSE_USER", "default"),
-		Password: envOr("CLICKHOUSE_PASSWORD", ""),
-		Database: envOr("CLICKHOUSE_DATABASE", "default"),
+		User:     httputil.EnvOr("CLICKHOUSE_USER", "default"),
+		Password: httputil.EnvOr("CLICKHOUSE_PASSWORD", ""),
+		Database: httputil.EnvOr("CLICKHOUSE_DATABASE", "default"),
 	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

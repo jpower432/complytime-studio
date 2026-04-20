@@ -20,6 +20,9 @@ spec:
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/gemara-layers
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/gemara-authoring
       {{- end }}
       {{- if .Values.externalSkills.stride.enabled }}
       - url: {{ .Values.externalSkills.stride.repo }}
@@ -29,7 +32,7 @@ spec:
   {{- end }}
   declarative:
     runtime: python
-    modelConfig: studio-model
+    modelConfig: studio-model-threat-modeler
     stream: true
     promptTemplate:
       dataSources:
@@ -92,6 +95,9 @@ spec:
       - url: {{ .Values.platformRepo }}
         ref: main
         path: skills/gemara-layers
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/gemara-authoring
       {{- end }}
       {{- if .Values.externalSkills.auditClassification.enabled }}
       - url: {{ .Values.externalSkills.auditClassification.repo }}
@@ -101,7 +107,7 @@ spec:
   {{- end }}
   declarative:
     runtime: python
-    modelConfig: studio-model
+    modelConfig: studio-model-gap-analyst
     stream: true
     promptTemplate:
       dataSources:
@@ -172,7 +178,13 @@ spec:
         path: skills/gemara-layers
       - url: {{ .Values.platformRepo }}
         ref: main
+        path: skills/gemara-authoring
+      - url: {{ .Values.platformRepo }}
+        ref: main
         path: skills/policy-risk-linkage
+      - url: {{ .Values.platformRepo }}
+        ref: main
+        path: skills/risk-reasoning
       {{- end }}
       {{- if .Values.externalSkills.assessmentDefaults.enabled }}
       - url: {{ .Values.externalSkills.assessmentDefaults.repo }}
@@ -182,7 +194,7 @@ spec:
   {{- end }}
   declarative:
     runtime: python
-    modelConfig: studio-model
+    modelConfig: studio-model-policy-composer
     stream: true
     promptTemplate:
       dataSources:

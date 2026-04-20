@@ -11,14 +11,17 @@ prompt: prompt.md
 
 skills:
   - path: skills/gemara-layers
+  - path: skills/gemara-authoring
+  - path: skills/risk-reasoning
   - path: skills/policy-risk-linkage
   - repo: https://github.com/gemaraproj/gemara-skills.git
     ref: main
     path: skills/assessment-defaults
 
+# Default model preference. Helm values (agents.policy-composer.model.*) take precedence.
 model:
   provider: AnthropicVertexAI
-  name: claude-sonnet-4-20250514
+  name: claude-sonnet-4
 
 mcp:
   - server: studio-gemara-mcp

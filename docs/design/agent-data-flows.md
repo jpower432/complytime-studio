@@ -68,7 +68,7 @@ graph TB
 
 ## Authentication & On-Behalf-Of Flow
 
-All agent communication routes through the gateway. The user's GitHub token propagates end-to-end. github-mcp uses `http` transport — each request carries the calling user's `Authorization: Bearer` header. No static `GITHUB_PERSONAL_ACCESS_TOKEN` exists in the deployment.
+All agent communication routes through the gateway. The user's GitHub token propagates end-to-end via `allowedHeaders`. github-mcp uses `http` transport — each tool call carries the calling user's `Authorization: Bearer` header. A static `GITHUB_PERSONAL_ACCESS_TOKEN` (via `tokenSecret` on the MCPServer CRD) is required for MCP session initialization, which occurs before per-request headers are available.
 
 ```mermaid
 sequenceDiagram

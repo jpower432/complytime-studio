@@ -60,11 +60,19 @@ kagent:
   # When empty, falls back to direct per-agent URLs from agentDirectory.
   a2aURL: "http://kagent-controller.kagent:8083"
 
-# -- Shared model configuration for all Declarative agents.
-# Rendered as a kagent ModelConfig CRD.
+# -- Per-agent model overrides. Keys match agent short names from agentDirectory.
+# When a key is absent or empty, the agent inherits the global model.* values.
+# Example: agents.gap-analyst.model.provider: GeminiVertexAI
+agents:
+  threat-modeler: {}
+  gap-analyst: {}
+  policy-composer: {}
+
+# -- Global model configuration. Used as default for all agents unless
+# overridden per-agent in agents.<name>.model.
 model:
-  provider: AnthropicVertexAI
-  name: claude-sonnet-4-20250514
+  provider: GeminiVertexAI
+  name: gemini-2.5-pro
   # apiKeySecret:
   #   name: studio-model-credentials
   #   key: api-key
@@ -74,6 +82,11 @@ model:
     # Secret containing application_default_credentials.json for GCP auth.
     # Required when running outside GKE (e.g. kind) without workload identity.
     credentialsSecret: studio-gcp-credentials
+  # -- Gemini via Vertex AI. Use with provider: GeminiVertexAI.
+  # Reuses the same credentialsSecret as anthropicVertexAI.
+  geminiVertexAI:
+    projectID: ""
+    location: us-central1
 
 # -- Agent directory entries exposed via GET /api/agents.
 # Each entry maps to a deployed Declarative agent's A2A endpoint.
@@ -113,18 +126,20 @@ agentDirectory:
 mcpServers:
   gemara:
     enabled: true
+    # Pin to a release tag in production to ensure reproducible deployments.
     image: ghcr.io/gemaraproj/gemara-mcp:latest
   oras:
     enabled: true
     image: ghcr.io/oras-project/oras-mcp:v0.2.1
   github:
     enabled: true
+    # Pin to a release tag in production to ensure reproducible deployments.
     image: ghcr.io/github/github-mcp-server:latest
     # Kubernetes Secret name containing GITHUB_PERSONAL_ACCESS_TOKEN.
     # Required until kagent supports per-request OBO header propagation.
     # Create with: kubectl create secret generic studio-github-token -n kagent \
     #   --from-literal=GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-    tokenSecret: ""
+    tokenSecret: "studio-github-token"
 
 # -- ClickHouse evidence store for L5/L6 evaluation and enforcement data.
 # Disabled by default. Enable with clickhouse.enabled=true.
@@ -135,7 +150,10 @@ clickhouse:
     tag: "24.8"
   auth:
     user: default
+    # For production, create a Secret externally and reference it via
+    # clickhouse.auth.existingSecret. This default is for local dev only.
     password: complytime-dev
+    existingSecret: ""
   storage:
     size: 2Gi
   retentionMonths: 24
@@ -149,12 +167,14 @@ clickhouse:
   mcp:
     image:
       repository: docker.io/mcp/clickhouse
+      # Pin to a release tag in production to ensure reproducible deployments.
       tag: latest
 
 # -- Built-in OCI registry (dev only). Disable for production clusters
 # where an external registry (Quay, GHCR, etc.) is available.
 registry:
   enabled: true
+  # Pin to a release tag in production to ensure reproducible deployments.
   image: ghcr.io/project-zot/zot-linux-amd64:latest
   service:
     port: 5000
@@ -169,3 +189,11 @@ registry:
   seed:
     enabled: true
     image: ghcr.io/oras-project/oras:v1.2.2
+
+# -- NetworkPolicy for Helm-managed studio pods (gateway, registry, clickhouse).
+# Agents and MCP servers are managed by kagent/kmcp; their network policies
+# should be configured at the kagent level.
+# Requires a CNI that supports NetworkPolicy (Calico, Cilium). Kind's default
+# kindnet does NOT enforce policies — deploy to a production cluster for enforcement.
+networkPolicy:
+  enabled: true

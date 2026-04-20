@@ -2,6 +2,8 @@
 {{- if .Values.clickhouse.enabled }}
 {{- $labels := include "studio.labels" . -}}
 {{- $selectorLabels := include "studio.selectorLabels" (dict "component" "studio-clickhouse" "root" .) -}}
+{{- $chSecretName := .Values.clickhouse.auth.existingSecret | default "studio-clickhouse-credentials" -}}
+{{- if not .Values.clickhouse.auth.existingSecret }}
 ---
 apiVersion: v1
 kind: Secret
@@ -14,6 +16,7 @@ type: Opaque
 stringData:
   CLICKHOUSE_USER: {{ .Values.clickhouse.auth.user | quote }}
   CLICKHOUSE_PASSWORD: {{ .Values.clickhouse.auth.password | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -66,12 +69,12 @@ spec:
             - name: CLICKHOUSE_USER
               valueFrom:
                 secretKeyRef:
-                  name: studio-clickhouse-credentials
+                  name: {{ $chSecretName }}
                   key: CLICKHOUSE_USER
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: studio-clickhouse-credentials
+                  name: {{ $chSecretName }}
                   key: CLICKHOUSE_PASSWORD
             - name: CLICKHOUSE_DB
               value: default
@@ -94,7 +97,7 @@ spec:
             httpGet:
               path: /ping
               port: http
-            periodSeconds: 5
+            periodSeconds: 10
             failureThreshold: 30
           livenessProbe:
             httpGet:
@@ -108,6 +111,8 @@ spec:
               port: http
             periodSeconds: 10
             failureThreshold: 3
+          # ClickHouse entrypoint requires chown + gosu (setuid) on data dirs.
+          # Restricting capabilities breaks the official image's startup sequence.
       volumes:
         - name: init-scripts
           configMap:
