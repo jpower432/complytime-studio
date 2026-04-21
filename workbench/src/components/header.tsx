@@ -32,7 +32,10 @@ export function Header({ user }: { user: UserInfo }) {
           }
         </button>
         <div class="user-info">
-          <img class="user-avatar" src={user.avatar_url} alt={user.name || user.login} width="24" height="24" />
+          {user.avatar_url
+            ? <img class="user-avatar" src={user.avatar_url} alt={user.name || user.login} width="24" height="24" referrerpolicy="no-referrer" />
+            : <span class="user-avatar-placeholder">{(user.name || user.login || "?").charAt(0).toUpperCase()}</span>
+          }
           <span class="user-login">{user.name || user.login}</span>
           <a href="/auth/logout" class="logout-link">Logout</a>
         </div>

@@ -7,8 +7,10 @@ from pathlib import Path
 
 import uvicorn
 from a2a.server.apps import A2AStarletteApplication
+from a2a.server.events import InMemoryQueueManager
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryPushNotificationConfigStore, InMemoryTaskStore
+from a2a.types import AgentCapabilities
 from google.adk.agents import LlmAgent
 from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutor
 from google.adk.a2a.executor.config import A2aAgentExecutorConfig
@@ -126,15 +128,21 @@ agent_executor = A2aAgentExecutor(
 
 task_store = InMemoryTaskStore()
 push_config_store = InMemoryPushNotificationConfigStore()
+queue_manager = InMemoryQueueManager()
 
 request_handler = DefaultRequestHandler(
     agent_executor=agent_executor,
     task_store=task_store,
     push_config_store=push_config_store,
+    queue_manager=queue_manager,
 )
 
 rpc_url = f"http://0.0.0.0:{PORT}/"
-card_builder = AgentCardBuilder(agent=root_agent, rpc_url=rpc_url)
+card_builder = AgentCardBuilder(
+    agent=root_agent,
+    rpc_url=rpc_url,
+    capabilities=AgentCapabilities(streaming=True),
+)
 
 
 @asynccontextmanager

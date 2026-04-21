@@ -55,6 +55,19 @@ spec:
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /var/secrets/gcp/application_default_credentials.json
             {{- end }}
+            {{- $resolvedProvider := default .Values.model.provider (index $agentModel "provider" | default "") }}
+            {{- if eq $resolvedProvider "GeminiVertexAI" }}
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "1"
+            {{- with .Values.model.geminiVertexAI.projectID }}
+            - name: GOOGLE_CLOUD_PROJECT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.model.geminiVertexAI.location }}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
           {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
           volumeMounts:
             - name: gcp-credentials
