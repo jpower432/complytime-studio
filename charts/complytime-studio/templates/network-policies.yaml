@@ -44,6 +44,27 @@ spec:
         - port: 8080
           protocol: TCP
 
+---
+# Assistant: accept ingress from namespace peers (gateway A2A proxy) on port 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-assistant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: assistant
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+
 {{- if .Values.registry.enabled }}
 ---
 # Registry: accept ingress from namespace peers (gateway, seed job, oras-mcp).

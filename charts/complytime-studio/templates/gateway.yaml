@@ -33,13 +33,13 @@ spec:
               drop: ["ALL"]
           livenessProbe:
             httpGet:
-              path: /api/config
+              path: /healthz
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /api/config
+              path: /healthz
               port: 8080
             initialDelaySeconds: 2
             periodSeconds: 10
@@ -69,6 +69,10 @@ spec:
                 {{- $enriched = append $enriched $entry -}}
                 {{- end }}
                 {{ $enriched | toJson }}
+            {{- if .Values.a2aProxy.enabled }}
+            - name: A2A_PROXY_URL
+              value: "http://studio-a2a-proxy:8081"
+            {{- end }}
             - name: KAGENT_A2A_URL
               value: {{ .Values.kagent.a2aURL | quote }}
             - name: KAGENT_AGENT_NAMESPACE
@@ -85,23 +89,42 @@ spec:
             - name: REGISTRY_INSECURE
               value: "studio-registry:{{ .Values.registry.service.port }}"
             {{- end }}
-            {{- if .Values.auth.github.clientId }}
-            - name: GITHUB_CLIENT_ID
-              value: {{ .Values.auth.github.clientId | quote }}
-            - name: GITHUB_CLIENT_SECRET
+            {{- if .Values.auth.google.clientId }}
+            - name: GOOGLE_CLIENT_ID
+              value: {{ .Values.auth.google.clientId | quote }}
+            - name: GOOGLE_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.github.secretName }}
-                  key: {{ .Values.auth.github.secretKey }}
-            - name: GITHUB_CALLBACK_URL
-              value: {{ .Values.auth.github.callbackURL | quote }}
+                  name: {{ .Values.auth.google.secretName }}
+                  key: {{ .Values.auth.google.secretKey }}
+            - name: GOOGLE_CALLBACK_URL
+              value: {{ .Values.auth.google.callbackURL | quote }}
             {{- end }}
-            {{- if .Values.auth.github.cookieSecretName }}
+            {{- if .Values.auth.cookieSecretName }}
             - name: COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.github.cookieSecretName }}
+                  name: {{ .Values.auth.cookieSecretName }}
                   key: cookie-secret
+            {{- end }}
+            {{- if .Values.auth.apiToken }}
+            - name: STUDIO_API_TOKEN
+              value: {{ .Values.auth.apiToken | quote }}
+            {{- end }}
+            {{- if .Values.clickhouse.enabled }}
+            - name: CLICKHOUSE_ADDR
+              value: "studio-clickhouse:9000"
+            - name: CLICKHOUSE_USER
+              value: {{ .Values.clickhouse.auth.user | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              {{- if .Values.clickhouse.auth.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.auth.existingSecret }}
+                  key: password
+              {{- else }}
+              value: {{ .Values.clickhouse.auth.password | quote }}
+              {{- end }}
             {{- end }}
           resources:
             requests:

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Agent system prompts loaded from agents/*/prompt.md.
-# Each Declarative Agent references its key via systemMessageFrom.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -11,9 +10,5 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 data:
-  threat-modeler: |
-{{ .Files.Get "agents/threat-modeler/prompt.md" | indent 4 }}
-  gap-analyst: |
-{{ .Files.Get "agents/gap-analyst/prompt.md" | indent 4 }}
-  policy-composer: |
-{{ .Files.Get "agents/policy-composer/prompt.md" | indent 4 }}
+  assistant: |
+{{ .Files.Get "agents/assistant/prompt.md" | indent 4 }}

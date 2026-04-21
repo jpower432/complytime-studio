@@ -3,9 +3,9 @@ ComplyTime Studio {{ .Chart.AppVersion }} installed in namespace {{ .Release.Nam
 Prerequisite: kagent >= 0.8.0 with KMCP controller must be installed in this cluster.
 
 Architecture:
-  Specialists:   3 kagent Declarative Agents (Go runtime) — threat-modeler, gap-analyst, policy-composer
+  Assistant:     BYO ADK agent (Python) — studio-assistant
   Gateway:       Thin Go service — serves workbench SPA, agent directory, REST endpoints
-  MCP servers:   gemara-mcp, oras-mcp, github-mcp — deployed as MCPServer CRDs via KMCP
+  MCP servers:   gemara-mcp, oras-mcp — deployed as MCPServer CRDs via KMCP
 {{- if .Values.clickhouse.enabled }}
   ClickHouse:    Evidence store + ClickHouse/mcp-clickhouse MCP server
 {{- end }}
@@ -14,7 +14,7 @@ Access:
   Gateway:       kubectl port-forward -n {{ .Release.Namespace }} svc/studio-gateway 8080:8080
   kagent UI:     kubectl port-forward -n {{ .Release.Namespace }} svc/kagent-ui 8001:8080
   kagent API:    kubectl port-forward -n {{ .Release.Namespace }} svc/kagent-controller 8083:8083
-  Invoke (CLI):  kagent invoke --agent studio-threat-modeler --task "Analyze threats for ..."
+  Invoke (CLI):  kagent invoke --agent studio-assistant --task "Prepare audit for ..."
 {{- if .Values.registry.enabled }}
   OCI registry:  kubectl port-forward -n {{ .Release.Namespace }} svc/studio-registry {{ .Values.registry.service.port }}:{{ .Values.registry.service.port }}
 {{- end }}

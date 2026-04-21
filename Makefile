@@ -5,12 +5,14 @@ KIND_CLUSTER ?= complytime-studio
 NAMESPACE ?= kagent
 GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
+ASSISTANT_IMAGE ?= studio-assistant
+ASSISTANT_TAG ?= local
 
 CLICKHOUSE ?= true
 
 HELM_AUTH_FLAGS :=
-ifdef GITHUB_CLIENT_ID
-HELM_AUTH_FLAGS += --set auth.github.clientId=$(GITHUB_CLIENT_ID)
+ifdef GOOGLE_CLIENT_ID
+HELM_AUTH_FLAGS += --set auth.google.clientId=$(GOOGLE_CLIENT_ID)
 endif
 ifdef VERTEX_PROJECT_ID
 HELM_AUTH_FLAGS += --set model.anthropicVertexAI.projectID=$(VERTEX_PROJECT_ID)
@@ -18,31 +20,20 @@ HELM_AUTH_FLAGS += --set model.geminiVertexAI.projectID=$(VERTEX_PROJECT_ID)
 endif
 
 HELM_AGENT_FLAGS :=
-ifdef THREAT_MODELER_MODEL_PROVIDER
-HELM_AGENT_FLAGS += --set agents.threat-modeler.model.provider=$(THREAT_MODELER_MODEL_PROVIDER)
+ifdef ASSISTANT_MODEL_PROVIDER
+HELM_AGENT_FLAGS += --set agents.assistant.model.provider=$(ASSISTANT_MODEL_PROVIDER)
 endif
-ifdef THREAT_MODELER_MODEL_NAME
-HELM_AGENT_FLAGS += --set agents.threat-modeler.model.name=$(THREAT_MODELER_MODEL_NAME)
-endif
-ifdef GAP_ANALYST_MODEL_PROVIDER
-HELM_AGENT_FLAGS += --set agents.gap-analyst.model.provider=$(GAP_ANALYST_MODEL_PROVIDER)
-endif
-ifdef GAP_ANALYST_MODEL_NAME
-HELM_AGENT_FLAGS += --set agents.gap-analyst.model.name=$(GAP_ANALYST_MODEL_NAME)
-endif
-ifdef POLICY_COMPOSER_MODEL_PROVIDER
-HELM_AGENT_FLAGS += --set agents.policy-composer.model.provider=$(POLICY_COMPOSER_MODEL_PROVIDER)
-endif
-ifdef POLICY_COMPOSER_MODEL_NAME
-HELM_AGENT_FLAGS += --set agents.policy-composer.model.name=$(POLICY_COMPOSER_MODEL_NAME)
+ifdef ASSISTANT_MODEL_NAME
+HELM_AGENT_FLAGS += --set agents.assistant.model.name=$(ASSISTANT_MODEL_NAME)
 endif
 
 HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE)
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
+	assistant-image \
 	ingest-build ingest-image \
-	compose-up sync-prompts \
+	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
 	deploy oauth-secret
@@ -57,16 +48,17 @@ clean:
 	rm -rf bin/
 
 sync-prompts:
-	@cp agents/platform.md charts/complytime-studio/agents/platform.md
-	@for agent in threat-modeler gap-analyst policy-composer; do \
-		cp agents/$$agent/prompt.md charts/complytime-studio/agents/$$agent/prompt.md; \
-	done
+	@mkdir -p charts/complytime-studio/agents/assistant
+	@cp agents/assistant/prompt.md charts/complytime-studio/agents/assistant/prompt.md
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
 
 gateway-image: workbench-build
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
+
+assistant-image:
+	docker build --no-cache -f agents/assistant/Dockerfile -t $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) agents/assistant/
 
 ingest-build:
 	go build -o bin/studio-ingest ./cmd/ingest/
@@ -93,6 +85,8 @@ studio-up: sync-prompts
 		--namespace $(NAMESPACE) \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
+		--set "assistant.image.repository=$(ASSISTANT_IMAGE)" \
+		--set "assistant.image.tag=$(ASSISTANT_TAG)" \
 		--set "model.provider=$${MODEL_PROVIDER:-GeminiVertexAI}" \
 		--set "model.name=$${MODEL_NAME:-gemini-2.5-pro}" \
 		$(HELM_AUTH_FLAGS) \
@@ -109,32 +103,44 @@ studio-template: sync-prompts
 		--namespace $(NAMESPACE) \
 		$(HELM_FEATURE_FLAGS)
 
-# Create the Kubernetes secret for GitHub OAuth credentials.
-# Usage: GITHUB_CLIENT_SECRET=<secret> make oauth-secret
+# Create the Kubernetes secret for Google OAuth credentials.
+# Usage: GOOGLE_CLIENT_SECRET=<secret> make oauth-secret
 oauth-secret:
-	@if [ -z "$$GITHUB_CLIENT_SECRET" ]; then \
-		echo "error: GITHUB_CLIENT_SECRET is required"; exit 1; \
+	@if [ -z "$$GOOGLE_CLIENT_SECRET" ]; then \
+		echo "error: GOOGLE_CLIENT_SECRET is required"; exit 1; \
 	fi
 	kubectl create secret generic studio-oauth-credentials \
 		--namespace $(NAMESPACE) \
-		--from-literal=client-secret="$$GITHUB_CLIENT_SECRET" \
+		--from-literal=client-secret="$$GOOGLE_CLIENT_SECRET" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "Secret studio-oauth-credentials written to namespace $(NAMESPACE)"
 
 # Full build → load → deploy → port-forward cycle for kind clusters.
 # Usage: make deploy
-# With OAuth: GITHUB_CLIENT_ID=<id> GITHUB_CLIENT_SECRET=<secret> make deploy
-deploy: gateway-image
+# With OAuth: GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> make deploy
+deploy: gateway-image assistant-image
 	kind load docker-image $(GATEWAY_IMAGE):$(GATEWAY_TAG) --name $(KIND_CLUSTER)
 	@docker exec $(KIND_CLUSTER)-control-plane \
 		ctr --namespace=k8s.io images tag --force \
 		localhost/$(GATEWAY_IMAGE):$(GATEWAY_TAG) \
 		docker.io/library/$(GATEWAY_IMAGE):$(GATEWAY_TAG) 2>/dev/null || true
-	@if [ -n "$$GITHUB_CLIENT_SECRET" ]; then \
+	kind load docker-image $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) --name $(KIND_CLUSTER)
+	@docker exec $(KIND_CLUSTER)-control-plane \
+		ctr --namespace=k8s.io images tag --force \
+		localhost/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) \
+		docker.io/library/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) 2>/dev/null || true
+	@if [ -n "$$GOOGLE_CLIENT_SECRET" ]; then \
 		$(MAKE) oauth-secret; \
 	fi
 	$(MAKE) studio-up
 	kubectl rollout restart deployment/studio-gateway -n $(NAMESPACE)
-	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=60s
-	@echo "Gateway deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
+	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=240s
+	kubectl rollout restart deployment/studio-assistant -n $(NAMESPACE)
+	kubectl rollout status deployment/studio-assistant -n $(NAMESPACE) --timeout=120s
+	@echo "Deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
+
+# Seed demo data into a running Studio instance.
+# Requires: kubectl port-forward -n kagent svc/studio-gateway 8080:8080
+seed:
+	GATEWAY_URL=http://localhost:$(PORT) ./demo/seed.sh
 

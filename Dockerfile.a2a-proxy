@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+FROM golang:1.25 AS builder
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+RUN CGO_ENABLED=0 go build -o /studio-a2a-proxy ./cmd/a2a-proxy/
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /studio-a2a-proxy /studio-a2a-proxy
+
+EXPOSE 8081
+
+ENTRYPOINT ["/studio-a2a-proxy"]

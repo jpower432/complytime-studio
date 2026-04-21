@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,11 +25,15 @@ const (
 	sessionCookieName = "studio_session"
 	stateCookieName   = "studio_oauth_state"
 	sessionMaxAge     = 8 * time.Hour
+
+	googleAuthURL  = "https://accounts.google.com/o/oauth2/v2/auth"
+	googleTokenURL = "https://oauth2.googleapis.com/token"
+	googleUserURL  = "https://openidconnect.googleapis.com/v1/userinfo"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-// Config holds GitHub OAuth application credentials.
+// Config holds Google OAuth application credentials.
 type Config struct {
 	ClientID     string
 	ClientSecret string
@@ -37,7 +42,7 @@ type Config struct {
 
 // Session represents the authenticated user session stored in the cookie.
 type Session struct {
-	GitHubToken string `json:"t"`
+	AccessToken string `json:"t"`
 	Login       string `json:"l"`
 	Name        string `json:"n"`
 	AvatarURL   string `json:"a"`
@@ -68,6 +73,7 @@ type Handler struct {
 	cfg       Config
 	secretKey []byte
 	gcm       cipher.AEAD
+	apiToken  string
 }
 
 // NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
@@ -84,6 +90,12 @@ func NewHandler(cfg Config, secretKey []byte) (*Handler, error) {
 	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm}, nil
 }
 
+// SetAPIToken configures a static bearer token that bypasses session auth.
+// Intended for dev/CI seeding scripts. No-op if token is empty.
+func (h *Handler) SetAPIToken(token string) {
+	h.apiToken = token
+}
+
 // Register mounts auth endpoints on the mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/login", h.handleLogin)
@@ -92,26 +104,35 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/logout", h.handleLogout)
 }
 
-// TokenFromRequest extracts the user's GitHub token from the session cookie.
-// It satisfies the httputil.TokenProvider interface.
+// TokenFromRequest extracts the user's access token from the session cookie.
+// Satisfies the httputil.TokenProvider interface.
 func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
 	sess, err := h.sessionFromCookie(r)
 	if err != nil {
 		return "", false
 	}
-	if sess.GitHubToken == "" {
+	if sess.AccessToken == "" {
 		return "", false
 	}
-	return sess.GitHubToken, true
+	return sess.AccessToken, true
 }
 
 // Middleware returns an http.Handler that requires a valid session cookie
 // on all /api/* paths. It injects the Session into request context.
+// When an API token is configured, requests with a matching
+// Authorization: Bearer header bypass the session cookie check.
 func (h *Handler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
 			next.ServeHTTP(w, r)
 			return
+		}
+
+		if h.apiToken != "" {
+			if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		sess, err := h.sessionFromCookie(r)
@@ -137,11 +158,15 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   isSecureRequest(r),
 	})
 
-	url := fmt.Sprintf(
-		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=%s&state=%s",
-		h.cfg.ClientID, h.cfg.CallbackURL, "read:user,user:email,repo", state,
-	)
-	http.Redirect(w, r, url, http.StatusFound)
+	params := url.Values{
+		"client_id":     {h.cfg.ClientID},
+		"redirect_uri":  {h.cfg.CallbackURL},
+		"response_type": {"code"},
+		"scope":         {"openid email profile"},
+		"state":         {state},
+		"access_type":   {"online"},
+	}
+	http.Redirect(w, r, googleAuthURL+"?"+params.Encode(), http.StatusFound)
 }
 
 func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +190,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := fetchGitHubUser(r.Context(), token)
+	user, err := fetchGoogleUser(r.Context(), token)
 	if err != nil {
 		slog.Error("oauth user fetch failed", "error", err)
 		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
@@ -173,10 +198,10 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := &Session{
-		GitHubToken: token,
-		Login:       user.Login,
+		AccessToken: token,
+		Login:       user.Email,
 		Name:        user.Name,
-		AvatarURL:   user.AvatarURL,
+		AvatarURL:   user.Picture,
 		Email:       user.Email,
 		ExpiresAt:   time.Now().Add(sessionMaxAge).Unix(),
 	}
@@ -263,13 +288,18 @@ func (h *Handler) sessionFromCookie(r *http.Request) (*Session, error) {
 }
 
 func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) {
-	body := fmt.Sprintf("client_id=%s&client_secret=%s&code=%s", cfg.ClientID, cfg.ClientSecret, code)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(body))
+	data := url.Values{
+		"client_id":     {cfg.ClientID},
+		"client_secret": {cfg.ClientSecret},
+		"code":          {code},
+		"grant_type":    {"authorization_code"},
+		"redirect_uri":  {cfg.CallbackURL},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -279,7 +309,7 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("github token endpoint %d: %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("google token endpoint %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
@@ -290,25 +320,24 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) 
 		return "", err
 	}
 	if result.Error != "" {
-		return "", fmt.Errorf("github: %s", result.Error)
+		return "", fmt.Errorf("google: %s", result.Error)
 	}
 	return result.AccessToken, nil
 }
 
-type ghUser struct {
-	Login     string `json:"login"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatar_url"`
-	Email     string `json:"email"`
+type googleUser struct {
+	Sub     string `json:"sub"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture"`
 }
 
-func fetchGitHubUser(ctx context.Context, token string) (*ghUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
+func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleUserURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -318,10 +347,10 @@ func fetchGitHubUser(ctx context.Context, token string) (*ghUser, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("github API %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("google userinfo %d: %s", resp.StatusCode, string(b))
 	}
 
-	var user ghUser
+	var user googleUser
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, err
 	}

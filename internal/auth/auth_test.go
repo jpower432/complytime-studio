@@ -51,11 +51,11 @@ func TestSessionCookieRoundTrip(t *testing.T) {
 	}
 
 	original := &Session{
-		GitHubToken: "ghp_test123",
-		Login:       "octocat",
-		Name:        "Octo Cat",
-		AvatarURL:   "https://github.com/octocat.png",
-		Email:       "octo@example.com",
+		AccessToken: "ya29.test123",
+		Login:       "user@example.com",
+		Name:        "Test User",
+		AvatarURL:   "https://lh3.googleusercontent.com/photo.jpg",
+		Email:       "user@example.com",
 		ExpiresAt:   time.Now().Add(sessionMaxAge).Unix(),
 	}
 
@@ -87,8 +87,8 @@ func TestSessionCookieRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sessionFromCookie: %v", err)
 	}
-	if decoded.GitHubToken != original.GitHubToken {
-		t.Errorf("token = %q, want %q", decoded.GitHubToken, original.GitHubToken)
+	if decoded.AccessToken != original.AccessToken {
+		t.Errorf("token = %q, want %q", decoded.AccessToken, original.AccessToken)
 	}
 	if decoded.Login != original.Login {
 		t.Errorf("login = %q, want %q", decoded.Login, original.Login)
@@ -130,7 +130,7 @@ func TestSessionFromCookie_MalformedValue(t *testing.T) {
 func TestTokenFromRequest(t *testing.T) {
 	h, _ := NewHandler(Config{}, testKey(t))
 
-	sess := &Session{GitHubToken: "ghp_abc", Login: "user", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	sess := &Session{AccessToken: "ya29.abc", Login: "user@example.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	_ = h.setSessionCookie(rec, req, sess)
@@ -139,8 +139,8 @@ func TestTokenFromRequest(t *testing.T) {
 	readReq.AddCookie(rec.Result().Cookies()[0])
 
 	token, ok := h.TokenFromRequest(readReq)
-	if !ok || token != "ghp_abc" {
-		t.Fatalf("TokenFromRequest = (%q, %v), want (ghp_abc, true)", token, ok)
+	if !ok || token != "ya29.abc" {
+		t.Fatalf("TokenFromRequest = (%q, %v), want (ya29.abc, true)", token, ok)
 	}
 }
 

@@ -17,7 +17,9 @@ import (
 
 	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
+	chclient "github.com/complytime/complytime-studio/internal/clickhouse"
 	"github.com/complytime/complytime-studio/internal/config"
+	"github.com/complytime/complytime-studio/internal/store"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/proxy"
@@ -37,10 +39,66 @@ func main() {
 	port := httputil.EnvOr("PORT", "8080")
 	mux := http.NewServeMux()
 
+	var chClient *chclient.Client
+	if chAddr := os.Getenv("CLICKHOUSE_ADDR"); chAddr != "" {
+		chCfg := chclient.Config{
+			Addr:     chAddr,
+			User:     httputil.EnvOr("CLICKHOUSE_USER", "default"),
+			Password: os.Getenv("CLICKHOUSE_PASSWORD"),
+		}
+		maxRetries := 90
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			var err error
+			chClient, err = chclient.New(ctx, chCfg)
+			if err == nil {
+				break
+			}
+			if attempt == maxRetries {
+				slog.Error("clickhouse connection failed after retries", "error", err, "attempts", maxRetries)
+				os.Exit(1)
+			}
+			slog.Warn("clickhouse not ready, retrying", "attempt", attempt, "error", err)
+			select {
+			case <-ctx.Done():
+				os.Exit(1)
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if err := chClient.EnsureSchema(ctx, 24); err != nil {
+			slog.Error("clickhouse schema init failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("clickhouse ready")
+	}
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if chClient != nil {
+			if err := chClient.Ping(r.Context()); err != nil {
+				http.Error(w, "clickhouse unreachable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	if chClient != nil {
+		st := store.New(chClient.Conn())
+		store.Register(mux, store.Stores{
+			Policies:  st,
+			Mappings:  st,
+			Evidence:  st,
+			AuditLogs: st,
+		})
+		slog.Info("store API registered", "routes", []string{
+			"/api/policies", "/api/evidence", "/api/audit-logs", "/api/mappings",
+		})
+	}
+
 	authCfg := auth.Config{
-		ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
-		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-		CallbackURL:  httputil.EnvOr("GITHUB_CALLBACK_URL", "http://localhost:8080/auth/callback"),
+		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		CallbackURL:  httputil.EnvOr("GOOGLE_CALLBACK_URL", "http://localhost:8080/auth/callback"),
 	}
 	secretKey := cookieSecretKey(authCfg.ClientID != "")
 	authHandler, err := auth.NewHandler(authCfg, secretKey)
@@ -49,6 +107,11 @@ func main() {
 		os.Exit(1)
 	}
 	authHandler.Register(mux)
+
+	if apiToken := os.Getenv("STUDIO_API_TOKEN"); apiToken != "" {
+		authHandler.SetAPIToken(apiToken)
+		slog.Info("api token auth enabled for seed/CI scripts")
+	}
 
 	registerGemaraProxy(mux, os.Getenv("GEMARA_MCP_URL"))
 
@@ -66,12 +129,19 @@ func main() {
 	})
 
 	agentCards := agents.ParseDirectory(os.Getenv("AGENT_DIRECTORY"))
-	agents.Register(mux, agents.Options{
-		Cards:          agentCards,
-		TokenProvider:  authHandler,
-		KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
-		AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
-	})
+	agents.RegisterDirectory(mux, agentCards)
+
+	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
+		agents.RegisterA2AForward(mux, a2aProxyURL)
+	} else {
+		agents.RegisterA2AProxy(mux, agents.Options{
+			Cards:          agentCards,
+			TokenProvider:  authHandler,
+			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
+			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
+		})
+		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
+	}
 
 	config.Register(mux, config.Options{
 		Values: map[string]string{
@@ -86,7 +156,7 @@ func main() {
 	var handler http.Handler = mux
 	if authCfg.ClientID != "" {
 		handler = authHandler.Middleware(mux)
-		slog.Info("auth enabled", "provider", "github-oauth")
+		slog.Info("auth enabled", "provider", "google-oauth")
 	} else {
 		slog.Info("auth disabled")
 	}

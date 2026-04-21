@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # MCP servers deployed via kagent MCPServer CRDs.
-# github-mcp uses http transport — per-request Authorization header from user OAuth (OBO).
 # oras-mcp uses stdio — OBO handled via gateway proxy (/api/registry/*).
 # Platform servers (gemara, clickhouse) use stdio with static credentials.
 {{- if .Values.mcpServers.gemara.enabled }}
@@ -69,30 +68,4 @@ spec:
     secretRefs:
       - name: studio-clickhouse-credentials
 {{- end }}
-{{- if .Values.mcpServers.github.enabled }}
----
-apiVersion: kagent.dev/v1alpha1
-kind: MCPServer
-metadata:
-  name: studio-github-mcp
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "studio.labels" . | nindent 4 }}
-spec:
-  transportType: http
-  httpTransport:
-    targetPort: 3000
-  deployment:
-    image: {{ .Values.mcpServers.github.image }}
-    cmd: /server/github-mcp-server
-    args:
-      - http
-      - "--port"
-      - "3000"
-      - "--toolsets=repos,code_security"
-    port: 3000
-    {{- if .Values.mcpServers.github.tokenSecret }}
-    secretRefs:
-      - name: {{ .Values.mcpServers.github.tokenSecret }}
-    {{- end }}
-{{- end }}
+{{- /* github-mcp removed — not required for audit dashboard workflow. */ -}}

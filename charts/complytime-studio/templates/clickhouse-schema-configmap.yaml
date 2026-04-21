@@ -8,9 +8,23 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 data:
+  users_override.xml: |
+    <clickhouse>
+        <users>
+            <default>
+                <password>{{ .Values.clickhouse.auth.password }}</password>
+                <networks>
+                    <ip>::/0</ip>
+                </networks>
+                <profile>default</profile>
+                <quota>default</quota>
+                <access_management>1</access_management>
+            </default>
+        </users>
+    </clickhouse>
   low_resource_config.xml: |
     <clickhouse>
-        <max_thread_pool_size>100</max_thread_pool_size>
+        <max_thread_pool_size>1000</max_thread_pool_size>
         <background_schedule_pool_size>8</background_schedule_pool_size>
         <background_pool_size>8</background_pool_size>
         <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
@@ -54,12 +68,12 @@ data:
         eval_message          Nullable(String),
 
         -- Compliance context (compliance.*)
-        policy_id             Nullable(String),
-        control_id            Nullable(String),
+        policy_id             String DEFAULT '',
+        control_id            String DEFAULT '',
         control_catalog_id    Nullable(String),
         control_category      Nullable(String),
         control_applicability Array(String),
-        requirement_id        Nullable(String),
+        requirement_id        String DEFAULT '',
         plan_id               Nullable(String),
         confidence            Nullable(Enum8(
                                 'Undetermined' = 0,
@@ -123,4 +137,48 @@ data:
     PARTITION BY toYYYYMM(collected_at)
     ORDER BY (target_id, policy_id, control_id, collected_at, row_key)
     TTL toDateTime(collected_at) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
+
+    -- Imported policies from OCI registries.
+    CREATE TABLE IF NOT EXISTS policies
+    (
+        policy_id             String,
+        title                 String,
+        version               Nullable(String),
+        oci_reference         String,
+        content               String,
+        imported_at           DateTime64(3) DEFAULT now64(3),
+        imported_by           Nullable(String)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (policy_id);
+
+    -- Crosswalk mapping documents linking internal criteria to external frameworks.
+    CREATE TABLE IF NOT EXISTS mapping_documents
+    (
+        mapping_id            String,
+        policy_id             String,
+        framework             String,
+        content               String,
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (mapping_id, policy_id);
+
+    -- Historical AuditLog artifacts produced by the studio assistant.
+    CREATE TABLE IF NOT EXISTS audit_logs
+    (
+        audit_id              String,
+        policy_id             String,
+        audit_start           DateTime64(3),
+        audit_end             DateTime64(3),
+        framework             Nullable(String),
+        created_at            DateTime64(3) DEFAULT now64(3),
+        created_by            Nullable(String),
+        content               String,
+        summary               String
+    )
+    ENGINE = ReplacingMergeTree(created_at)
+    PARTITION BY toYYYYMM(audit_start)
+    ORDER BY (policy_id, audit_start, audit_id)
+    TTL toDateTime(audit_start) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
 {{- end }}

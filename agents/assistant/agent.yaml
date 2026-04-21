@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Canonical agent definition — framework-agnostic source of truth.
+# Helm renders this into a kagent Declarative Agent CRD.
+
+name: studio-assistant
+description: >-
+  ComplyTime Studio assistant — audit preparation, evidence synthesis,
+  cross-framework coverage analysis, and compliance guidance
+
+prompt: prompt.md
+
+skills:
+  # Internal skills (this repo)
+  - path: skills/gemara-mcp
+  - path: skills/evidence-schema
+  - path: skills/audit-methodology
+  - path: skills/coverage-mapping
+  # External skills (rhaml-23/prompt)
+  - repo: https://github.com/rhaml-23/prompt.git
+    ref: main
+    path: skills/research.md
+  - repo: https://github.com/rhaml-23/prompt.git
+    ref: main
+    path: skills/gemara.md
+
+# Default model preference. Helm values (agents.assistant.model.*) take precedence.
+model:
+  provider: AnthropicVertexAI
+  name: claude-sonnet-4
+
+mcp:
+  - server: studio-gemara-mcp
+    tools:
+      - validate_gemara_artifact
+      - migrate_gemara_artifact
+  - server: studio-clickhouse-mcp
+    tools:
+      - run_select_query
+      - list_databases
+      - list_tables
+
+a2a:
+  skills:
+    - id: gap-analysis
+      name: Combined Audit Preparation
+      description: >-
+        Prepare for combined audits — derive target inventory from evidence,
+        assess criteria coverage per target, translate coverage to external
+        frameworks via MappingDocuments using strength and confidence scores.
+        Produces multi-target AuditLogs with cross-framework coverage analysis.
+      tags: [gap-analysis, audit, compliance, coverage, combined-audit, layer-7]

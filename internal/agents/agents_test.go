@@ -38,7 +38,7 @@ func TestRegisterDirectory_GET(t *testing.T) {
 	mux := http.NewServeMux()
 	cards := []Card{
 		{Name: "studio-threat-modeler", Description: "STRIDE analysis"},
-		{Name: "studio-gap-analyst", Description: "Audit prep"},
+		{Name: "studio-assistant", Description: "Compliance assistant"},
 	}
 	registerDirectory(mux, cards)
 

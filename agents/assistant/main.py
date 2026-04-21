@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import uvicorn
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryPushNotificationConfigStore, InMemoryTaskStore
+from google.adk.agents import LlmAgent
+from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutor
+from google.adk.a2a.executor.config import A2aAgentExecutorConfig
+from google.adk.a2a.utils.agent_card_builder import AgentCardBuilder
+from google.adk.artifacts.in_memory_artifact_service import InMemoryArtifactService
+from google.adk.auth.credential_service.in_memory_credential_service import (
+    InMemoryCredentialService,
+)
+from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
+from google.adk.runners import Runner
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StreamableHTTPConnectionParams,
+)
+from starlette.applications import Starlette
+
+from callbacks import after_agent, before_agent, before_tool
+from event_converter import convert_event_with_yaml_metadata
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-2.5-pro")
+PORT = int(os.environ.get("PORT", "8080"))
+
+GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
+CLICKHOUSE_MCP_URL = os.environ.get("CLICKHOUSE_MCP_URL", "")
+
+
+def load_skills() -> str:
+    skills_dir = Path("/app/skills")
+    if not skills_dir.exists():
+        return ""
+    parts = []
+    for skill_file in sorted(skills_dir.glob("*/SKILL.md")):
+        parts.append(skill_file.read_text())
+    return "\n\n---\n\n".join(parts)
+
+
+def load_prompt() -> str:
+    prompt_path = Path("/app/prompt.md")
+    base_prompt = prompt_path.read_text()
+    skills_text = load_skills()
+    if skills_text:
+        return f"{base_prompt}\n\n## Loaded Skills\n\n{skills_text}"
+    return base_prompt
+
+
+def build_tools() -> list:
+    tools = []
+
+    if GEMARA_MCP_URL:
+        tools.append(
+            McpToolset(
+                connection_params=StreamableHTTPConnectionParams(url=GEMARA_MCP_URL),
+                tool_filter=["validate_gemara_artifact", "migrate_gemara_artifact"],
+                use_mcp_resources=True,
+            )
+        )
+        logger.info("gemara-mcp toolset registered (http: %s, resources=True)", GEMARA_MCP_URL)
+
+    if CLICKHOUSE_MCP_URL:
+        tools.append(
+            McpToolset(
+                connection_params=StreamableHTTPConnectionParams(
+                    url=CLICKHOUSE_MCP_URL
+                ),
+            )
+        )
+        logger.info("clickhouse-mcp toolset registered (http: %s)", CLICKHOUSE_MCP_URL)
+
+    if not tools:
+        logger.warning("No MCP URLs configured — agent running without tools")
+
+    return tools
+
+
+root_agent = LlmAgent(
+    name="studio_assistant",
+    model=MODEL_NAME,
+    instruction=load_prompt(),
+    tools=build_tools(),
+    description=(
+        "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
+        "cross-framework coverage analysis, and compliance guidance"
+    ),
+    before_agent_callback=before_agent,
+    after_agent_callback=after_agent,
+    before_tool_callback=before_tool,
+)
+
+
+# --- Manual A2aAgentExecutor setup (replaces to_a2a()) ---
+
+async def create_runner() -> Runner:
+    return Runner(
+        app_name="studio_assistant",
+        agent=root_agent,
+        artifact_service=InMemoryArtifactService(),
+        session_service=InMemorySessionService(),
+        memory_service=InMemoryMemoryService(),
+        credential_service=InMemoryCredentialService(),
+    )
+
+
+config = A2aAgentExecutorConfig(
+    adk_event_converter=convert_event_with_yaml_metadata,
+)
+
+agent_executor = A2aAgentExecutor(
+    runner=create_runner,
+    config=config,
+)
+
+task_store = InMemoryTaskStore()
+push_config_store = InMemoryPushNotificationConfigStore()
+
+request_handler = DefaultRequestHandler(
+    agent_executor=agent_executor,
+    task_store=task_store,
+    push_config_store=push_config_store,
+)
+
+rpc_url = f"http://0.0.0.0:{PORT}/"
+card_builder = AgentCardBuilder(agent=root_agent, rpc_url=rpc_url)
+
+
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    agent_card = await card_builder.build()
+    a2a_app = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
+    )
+    a2a_app.add_routes_to_app(app)
+    logger.info("A2A routes registered, agent card built for %s", root_agent.name)
+    yield
+
+
+app = Starlette(lifespan=lifespan)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

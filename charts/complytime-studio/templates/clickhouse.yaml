@@ -81,8 +81,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
-            - name: init-scripts
-              mountPath: /docker-entrypoint-initdb.d
             - name: config-override
               mountPath: /etc/clickhouse-server/config.d/low_resource_config.xml
               subPath: low_resource_config.xml
@@ -114,12 +112,6 @@ spec:
           # ClickHouse entrypoint requires chown + gosu (setuid) on data dirs.
           # Restricting capabilities breaks the official image's startup sequence.
       volumes:
-        - name: init-scripts
-          configMap:
-            name: studio-clickhouse-schema
-            items:
-              - key: init.sql
-                path: init.sql
         - name: config-override
           configMap:
             name: studio-clickhouse-schema

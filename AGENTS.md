@@ -38,28 +38,22 @@ description: >-
 prompt: prompt.md
 
 skills:
-  # Internal skills (from this repo)
-  - path: skills/gemara-layers
-  # External skills (from other repos)
-  - repo: https://github.com/org/skill-repo.git
-    ref: main
-    path: skills/skill-name
+ # Internal skills (from this repo)
+ - path: skills/gemara-mcp
+ # External skills (from other repos)
+ - repo: https://github.com/rhaml-23/prompt.git
+ ref: main
+ path: skills/research.md
 
 model:
   provider: AnthropicVertexAI
   name: claude-sonnet-4
 
 mcp:
-  - server: studio-gemara-mcp
-    tools:
-      - validate_gemara_artifact
-      - migrate_gemara_artifact
-  - server: studio-github-mcp
-    allowedHeaders: [Authorization]
-    tools:
-      - get_file_contents
-      - search_code
-      - search_repositories
+ - server: studio-gemara-mcp
+ tools:
+ - validate_gemara_artifact
+ - migrate_gemara_artifact
 
 a2a:
   skills:
@@ -79,7 +73,7 @@ You specialize in <Layer N (Name)>: <what you do>.
 
 ## Workflow
 
-1. **Gather context**: Use github-mcp tools to fetch relevant files.
+1. **Gather context**: Ask the user for relevant context or use available MCP tools.
 2. **Analyze**: Apply your skills to the input data.
 3. **Author**: Produce the Gemara artifact YAML.
 4. **Validate**: Call `validate_gemara_artifact`. Fix and re-validate.
@@ -181,7 +175,6 @@ The final system prompt is assembled by kagent at runtime:
 |:--|:--|:--|
 | studio-gemara-mcp | stdio | Static (no user auth) |
 | studio-clickhouse-mcp | stdio | Static credentials via Secret |
-| studio-github-mcp | http | Static PAT (session init) + per-request OBO (tool calls) |
 | studio-oras-mcp | stdio | Gateway proxy handles auth |
 
 Servers using `http` transport accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
@@ -196,19 +189,17 @@ Browser → Gateway → A2A Agent Pod → MCP Server
   │         │ header     │ Authorization│
 ```
 
-The gateway extracts the user's GitHub token from the session cookie and injects it as an `Authorization: Bearer` header on A2A requests. kagent propagates this header to MCP tool calls for servers with `allowedHeaders: [Authorization]`.
-
-**Limitation:** The Python runtime initializes MCP sessions (tool discovery) before per-request headers are available. HTTP-transport MCP servers requiring auth (e.g., `studio-github-mcp`) need a static `tokenSecret` on the MCPServer CRD for session init. The OBO header overrides the static token for actual tool calls when present.
+The gateway extracts the user's access token from the session cookie and injects it as an `Authorization: Bearer` header on A2A requests. kagent propagates this header to MCP tool calls for servers with `allowedHeaders: [Authorization]`.
 
 ---
 
 ## Existing Agents
 
-| Agent | Layer | A2A Skills |
-|:--|:--|:--|
-| studio-threat-modeler | L2 (Controls) | threat-assessment, control-authoring |
-| studio-gap-analyst | L7 (Audit) | gap-analysis |
-| studio-policy-composer | L3 (Policy) | policy-authoring |
+| Agent | Layer | Type | A2A Skills |
+|:--|:--|:--|:--|
+| studio-assistant | L7 (Audit) | BYO ADK | compliance-assistant |
+
+> Threat modeler and policy composer have been removed. Artifact authoring is handled by engineers using local tooling (Cursor, Claude Code) + gemara-mcp. See `docs/decisions/audit-dashboard-pivot.md`.
 
 ---
 
@@ -219,7 +210,7 @@ The gateway extracts the user's GitHub token from the session cookie and injects
 - [ ] Skills extracted to `skills/<name>/SKILL.md` if reusable
 - [ ] Agent added to `agent-specialists.yaml` Helm template
 - [ ] `make sync-prompts` copies prompt to chart
-- [ ] `allowedHeaders: [Authorization]` on github-mcp tool ref (for OBO)
+- [ ] `allowedHeaders: [Authorization]` on MCP tool refs requiring OBO (if any)
 
 ---
 
@@ -253,10 +244,10 @@ Test boundary conditions and error handling.
 | MCP server unavailable | Start job when a required MCP server is down | Agent reports the specific unavailability (not a hang or generic failure) |
 | Multi-turn interruption | Close browser mid-conversation, reopen | Job resumes from last status; SSE reconnects or reports disconnected |
 | Validation failure | Manually edit artifact YAML to be invalid, click Validate | Validation returns specific errors referencing the CUE definition |
-| Empty evidence (gap-analyst) | Query a policy_id/timeline with no ClickHouse data | Agent classifies all criteria as Gap, does not fabricate evidence |
-| Cadence gap (gap-analyst) | Evidence exists but with missing assessment cycles | Agent produces Findings (not Observations) for each missing cycle with specific dates |
-| No MappingDocuments (gap-analyst) | Start audit without MappingDocuments | Agent offers internal-only analysis, skips cross-framework phase |
-| Partial mapping strength (gap-analyst) | MappingDocument has targets with low strength scores | Coverage matrix shows Partially/Weakly Covered with correct strength values |
+| Empty evidence (assistant) | Query a policy_id/timeline with no ClickHouse data | Agent classifies all criteria as Gap, does not fabricate evidence |
+| Cadence gap (assistant) | Evidence exists but with missing assessment cycles | Agent produces Findings (not Observations) for each missing cycle with specific dates |
+| No MappingDocuments (assistant) | Start audit without MappingDocuments | Agent offers internal-only analysis, skips cross-framework phase |
+| Partial mapping strength (assistant) | MappingDocument has targets with low strength scores | Coverage matrix shows Partially/Weakly Covered with correct strength values |
 | Concurrent job | Attempt to start a second job while one is active | "+ New Job" button disabled with tooltip explaining why |
 
 ### Helm Verification

@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+# BYO ADK assistant — standalone Python A2A agent.
+# Connects to KMCP-managed MCP services over HTTP (same infra as declarative agents).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-assistant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: assistant
+  template:
+    metadata:
+      labels:
+        {{- include "studio.labels" . | nindent 8 }}
+        app.kubernetes.io/component: assistant
+    spec:
+      containers:
+        - name: agent
+          image: "{{ .Values.assistant.image.repository }}:{{ .Values.assistant.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            {{- $shortName := "assistant" }}
+            {{- $agentOverride := dict }}
+            {{- if hasKey .Values.agents $shortName }}
+            {{- $agentOverride = index .Values.agents $shortName }}
+            {{- end }}
+            {{- $agentModel := dict }}
+            {{- if hasKey $agentOverride "model" }}
+            {{- $agentModel = $agentOverride.model }}
+            {{- end }}
+            - name: MODEL_PROVIDER
+              value: {{ default .Values.model.provider (index $agentModel "provider" | default "") | quote }}
+            - name: MODEL_NAME
+              value: {{ default .Values.model.name (index $agentModel "name" | default "") | quote }}
+            {{- if .Values.mcpServers.gemara.enabled }}
+            - name: GEMARA_MCP_URL
+              value: "http://studio-gemara-mcp:3000/mcp"
+            {{- end }}
+            {{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
+            - name: CLICKHOUSE_MCP_URL
+              value: "http://studio-clickhouse-mcp:3000/mcp"
+            {{- end }}
+            {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/secrets/gcp/application_default_credentials.json
+            {{- end }}
+          {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+          volumeMounts:
+            - name: gcp-credentials
+              mountPath: /var/secrets/gcp
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /.well-known/agent-card.json
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /.well-known/agent-card.json
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+      {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+      volumes:
+        - name: gcp-credentials
+          secret:
+            secretName: {{ .Values.model.anthropicVertexAI.credentialsSecret }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-assistant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: assistant
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP

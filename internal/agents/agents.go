@@ -68,8 +68,48 @@ func ParseDirectory(raw string) []Card {
 
 // Register mounts agent directory and A2A proxy routes on the mux.
 func Register(mux *http.ServeMux, opts Options) {
-	registerDirectory(mux, opts.Cards)
+	RegisterDirectory(mux, opts.Cards)
+	RegisterA2AProxy(mux, opts)
+}
+
+// RegisterDirectory mounts the agent card directory endpoint.
+func RegisterDirectory(mux *http.ServeMux, cards []Card) {
+	registerDirectory(mux, cards)
+}
+
+// RegisterA2AProxy mounts the A2A reverse proxy routes.
+func RegisterA2AProxy(mux *http.ServeMux, opts Options) {
 	registerA2AProxy(mux, opts)
+}
+
+// RegisterA2AForward mounts a thin pass-through that forwards all /api/a2a/
+// requests to the standalone A2A proxy service. Keeps the frontend unaware of
+// the backend split — it still hits the gateway on the same port.
+func RegisterA2AForward(mux *http.ServeMux, proxyURL string) {
+	target, err := url.Parse(proxyURL)
+	if err != nil {
+		slog.Error("invalid A2A_PROXY_URL", "url", proxyURL, "error", err)
+		return
+	}
+	rp := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.Host = target.Host
+		},
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: consts.ProxyResponseTimeout,
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, err error) {
+			slog.Error("a2a forward error", "target", proxyURL, "error", err)
+			studiohttp.WriteJSON(rw, http.StatusBadGateway, map[string]string{
+				"error": fmt.Sprintf("a2a proxy unreachable: %v", err),
+			})
+		},
+	}
+	mux.Handle("/api/a2a/", rp)
+	slog.Info("a2a forwarding registered", "target", proxyURL)
 }
 
 func registerDirectory(mux *http.ServeMux, cards []Card) {

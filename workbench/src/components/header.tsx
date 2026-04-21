@@ -13,8 +13,8 @@ export function Header({ user }: { user: UserInfo }) {
   return (
     <header class="header">
       <div class="header-left">
-        <h1 class="logo" onClick={() => navigate("jobs")}>ComplyTime Studio</h1>
-        <span class="tagline">Gemara Artifact Workbench</span>
+        <h1 class="logo" onClick={() => navigate("posture")}>ComplyTime Studio</h1>
+        <span class="tagline">Audit Dashboard</span>
       </div>
       <nav class="header-links">
         <a href="https://gemara.openssf.org/" target="_blank" rel="noopener noreferrer" class="icon-link" title="Gemara Docs">
@@ -32,8 +32,8 @@ export function Header({ user }: { user: UserInfo }) {
           }
         </button>
         <div class="user-info">
-          <img class="user-avatar" src={user.avatar_url} alt={user.login} width="24" height="24" />
-          <span class="user-login">{user.login}</span>
+          <img class="user-avatar" src={user.avatar_url} alt={user.name || user.login} width="24" height="24" />
+          <span class="user-login">{user.name || user.login}</span>
           <a href="/auth/logout" class="logout-link">Logout</a>
         </div>
       </nav>

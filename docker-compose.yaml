@@ -31,9 +31,3 @@ services:
     command: ["/bin/oras-mcp", "serve", "--transport", "sse", "--port", "3000"]
     expose:
       - "3000"
-
-  github-mcp:
-    image: ghcr.io/github/github-mcp-server:latest
-    command: ["http", "--port", "3000", "--toolsets=repos,code_security"]
-    expose:
-      - "3000"

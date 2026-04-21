@@ -24,7 +24,7 @@ Mapping between the `beacon.evidence` OTel semantic convention ([complytime-coll
 
 | Semconv Attribute | ClickHouse Column | Type | Requirement |
 |:------------------|:------------------|:-----|:------------|
-| `compliance.control.id` | `control_id` | Nullable(String) | required |
+| `compliance.control.id` | `control_id` | String DEFAULT '' | required |
 | `compliance.control.category` | `control_category` | Nullable(String) | recommended |
 | `compliance.control.catalog.id` | `control_catalog_id` | Nullable(String) | required |
 | `compliance.control.applicability` | `control_applicability` | Array(String) | opt_in |
@@ -54,8 +54,8 @@ The current `beacon.evidence` entity is missing attributes required for Gemara a
 
 | Proposed Attribute | Type | ClickHouse Column | Rationale |
 |:-------------------|:-----|:------------------|:----------|
-| `compliance.policy.id` | string | `policy_id` | Links evidence to the Gemara L3 Policy driving the assessment. Required for the gap-analyst to scope audit queries (`WHERE policy_id = ?`). |
-| `compliance.assessment.requirement.id` | string | `requirement_id` | Assessment granularity below the control level. Gemara EvaluationLogs produce one AssessmentLog per requirement — this is the atomic unit the AuditLog maps to. |
+| `compliance.policy.id` | string | `policy_id` (String DEFAULT '') | Links evidence to the Gemara L3 Policy driving the assessment. Required for the assistant to scope audit queries (`WHERE policy_id = ?`). |
+| `compliance.assessment.requirement.id` | string | `requirement_id` (String DEFAULT '') | Assessment granularity below the control level. Gemara EvaluationLogs produce one AssessmentLog per requirement — this is the atomic unit the AuditLog maps to. |
 | `compliance.assessment.plan.id` | string | `plan_id` | Ties an assessment to a specific plan within the Policy's `adherence.assessment-plans[]`. Required for cadence validation (did assessments occur at the expected frequency?). |
 | `compliance.assessment.confidence` | enum (Undetermined, Low, Medium, High) | `confidence` | Confidence level of the assessment result. Used by the gap-analyst to classify evidence strength and by cross-framework coverage analysis via MappingDocument strength scores. |
 | `compliance.assessment.steps` | int | `steps_executed` | Number of evaluation steps executed during the assessment. Provides assessment depth context — a single-step check vs. a multi-step validation suite. |
