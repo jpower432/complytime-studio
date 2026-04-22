@@ -23,15 +23,19 @@ The gateway SHALL expose `/auth/callback` which exchanges the authorization code
 - **THEN** the gateway returns HTTP 403 and does not exchange the code
 
 ### Requirement: Gateway serves user info endpoint
-The gateway SHALL expose `GET /auth/me` which returns the authenticated user's GitHub profile information.
+The gateway SHALL expose `GET /auth/me` which returns the authenticated user's profile information including their resolved `role` (`"admin"` or `"viewer"`).
 
-#### Scenario: Authenticated request
-- **WHEN** a request to `GET /auth/me` includes a valid session cookie
-- **THEN** the gateway returns JSON with `login`, `name`, `avatar_url`, and `email` fields
+#### Scenario: Authenticated admin request
+- **WHEN** a request to `GET /auth/me` includes a valid session cookie for an admin user
+- **THEN** the gateway SHALL return JSON with `login`, `name`, `avatar_url`, `email`, and `role: "admin"` fields
+
+#### Scenario: Authenticated viewer request
+- **WHEN** a request to `GET /auth/me` includes a valid session cookie for a non-admin user
+- **THEN** the gateway SHALL return JSON with `login`, `name`, `avatar_url`, `email`, and `role: "viewer"` fields
 
 #### Scenario: Unauthenticated request
 - **WHEN** a request to `GET /auth/me` has no session cookie or an expired/invalid cookie
-- **THEN** the gateway returns HTTP 401
+- **THEN** the gateway SHALL return HTTP 401
 
 ### Requirement: OAuth configuration via Helm values
 The GitHub OAuth client ID and secret SHALL be configurable via `values.yaml` and stored in a Kubernetes Secret.

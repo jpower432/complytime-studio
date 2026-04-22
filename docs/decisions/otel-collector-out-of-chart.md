@@ -17,7 +17,7 @@ Evidence producers (complyctl/ProofWatch, policy engines, admission controllers)
 
 - Studio chart no longer manages collector deployment, image versions, or resource limits.
 - Cluster operators deploy collectors using their preferred method (OTel Operator, standalone Helm chart, sidecar injection).
-- The `cmd/ingest` CLI remains available for local development without any collector.
+- `POST /api/evidence` and `POST /api/evidence/upload` remain for local development and manual import without a collector.
 - ClickHouse connection details for the collector exporter are the operator's responsibility.
 - The `clickhouse.enabled` value still deploys the ClickHouse instance and schema for development use.
 

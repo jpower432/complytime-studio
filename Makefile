@@ -15,8 +15,7 @@ ifdef GOOGLE_CLIENT_ID
 HELM_AUTH_FLAGS += --set auth.google.clientId=$(GOOGLE_CLIENT_ID)
 endif
 ifdef VERTEX_PROJECT_ID
-HELM_AUTH_FLAGS += --set model.anthropicVertexAI.projectID=$(VERTEX_PROJECT_ID)
-HELM_AUTH_FLAGS += --set model.geminiVertexAI.projectID=$(VERTEX_PROJECT_ID)
+HELM_AUTH_FLAGS += --set model.vertexAI.projectID=$(VERTEX_PROJECT_ID)
 endif
 
 HELM_AGENT_FLAGS :=
@@ -32,7 +31,6 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE)
 .PHONY: test lint clean \
 	gateway-build gateway-image \
 	assistant-image \
-	ingest-build ingest-image \
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
@@ -60,12 +58,6 @@ gateway-image: workbench-build
 assistant-image:
 	docker build --no-cache -f agents/assistant/Dockerfile -t $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) agents/assistant/
 
-ingest-build:
-	go build -o bin/studio-ingest ./cmd/ingest/
-
-ingest-image:
-	docker build -f Dockerfile.ingest -t studio-ingest:local .
-
 compose-up:
 	docker compose up --build
 
@@ -80,6 +72,14 @@ cluster-up:
 cluster-down:
 	kind delete cluster --name complytime-studio
 
+HELM_MODEL_FLAGS :=
+ifdef MODEL_PROVIDER
+HELM_MODEL_FLAGS += --set model.provider=$(MODEL_PROVIDER)
+endif
+ifdef MODEL_NAME
+HELM_MODEL_FLAGS += --set model.name=$(MODEL_NAME)
+endif
+
 studio-up: sync-prompts
 	helm upgrade --install complytime-studio ./charts/complytime-studio \
 		--namespace $(NAMESPACE) \
@@ -87,8 +87,7 @@ studio-up: sync-prompts
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
 		--set "assistant.image.repository=$(ASSISTANT_IMAGE)" \
 		--set "assistant.image.tag=$(ASSISTANT_TAG)" \
-		--set "model.provider=$${MODEL_PROVIDER:-GeminiVertexAI}" \
-		--set "model.name=$${MODEL_NAME:-gemini-2.5-pro}" \
+		$(HELM_MODEL_FLAGS) \
 		$(HELM_AUTH_FLAGS) \
 		$(HELM_AGENT_FLAGS) \
 		$(HELM_FEATURE_FLAGS) \

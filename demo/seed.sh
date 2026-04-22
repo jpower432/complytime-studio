@@ -16,10 +16,11 @@ fi
 
 info()  { echo "==> $*"; }
 check() { echo "  ✓ $*"; }
+warn()  { echo "  ! $*"; }
 
 info "Seeding demo data into ${GATEWAY_URL}"
 
-info "Importing policy..."
+info "Importing AMPEL Branch Protection policy..."
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   -X POST "${GATEWAY_URL}/api/policies/import" \
   -H "Content-Type: application/json" \
@@ -28,10 +29,22 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
 if [[ "$HTTP_CODE" =~ ^2 ]]; then
   check "Policy imported (${HTTP_CODE})"
 else
-  echo "  ! Policy import returned ${HTTP_CODE} (may already exist)"
+  warn "Policy import returned ${HTTP_CODE} (may already exist)"
 fi
 
-info "Ingesting evidence (20 records across 2 targets)..."
+info "Importing SOC 2 mapping document..."
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST "${GATEWAY_URL}/api/mappings/import" \
+  -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
+  -d @"${SCRIPT_DIR}/mapping-soc2.json")
+if [[ "$HTTP_CODE" =~ ^2 ]]; then
+  check "SOC 2 mapping imported (${HTTP_CODE})"
+else
+  warn "Mapping import returned ${HTTP_CODE} (may already exist)"
+fi
+
+info "Ingesting evidence (45 records across 3 repositories, 3 scan dates)..."
 RESULT=$(curl -s -X POST "${GATEWAY_URL}/api/evidence" \
   -H "Content-Type: application/json" \
   "${AUTH_HEADER[@]}" \
@@ -43,7 +56,7 @@ info "Verifying seed data..."
 POLICY_COUNT=$(curl -s "${AUTH_HEADER[@]}" "${GATEWAY_URL}/api/policies" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
 check "Policies: ${POLICY_COUNT}"
 
-EVIDENCE_COUNT=$(curl -s "${AUTH_HEADER[@]}" "${GATEWAY_URL}/api/evidence?policy_id=demo-cloud-native-security&limit=100" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
+EVIDENCE_COUNT=$(curl -s "${AUTH_HEADER[@]}" "${GATEWAY_URL}/api/evidence?policy_id=ampel-branch-protection&limit=100" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
 check "Evidence records: ${EVIDENCE_COUNT}"
 
 info ""

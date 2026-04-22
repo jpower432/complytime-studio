@@ -203,6 +203,24 @@ The gateway extracts the user's access token from the session cookie and injects
 
 ---
 
+## Git Commit Conventions
+
+All commits created by agents MUST:
+
+1. Use `-s` to add a `Signed-off-by` trailer.
+2. Include an `Assisted-by: Cursor (<model used>)` trailer.
+
+```bash
+git commit -s -m "$(cat <<'EOF'
+feat: description of the change
+
+Assisted-by: Cursor (claude-sonnet-4-20250514)
+EOF
+)"
+```
+
+---
+
 ## Checklist
 
 - [ ] `agents/<name>/agent.yaml` with name, description, skills, mcp, a2a

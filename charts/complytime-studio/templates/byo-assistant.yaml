@@ -51,24 +51,27 @@ spec:
             - name: CLICKHOUSE_MCP_URL
               value: "http://studio-clickhouse-mcp:3000/mcp"
             {{- end }}
-            {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+            {{- if .Values.model.vertexAI.credentialsSecret }}
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /var/secrets/gcp/application_default_credentials.json
             {{- end }}
             {{- $resolvedProvider := default .Values.model.provider (index $agentModel "provider" | default "") }}
+            {{- $isVertexAI := or (eq $resolvedProvider "GeminiVertexAI") (eq $resolvedProvider "AnthropicVertexAI") }}
             {{- if eq $resolvedProvider "GeminiVertexAI" }}
             - name: GOOGLE_GENAI_USE_VERTEXAI
               value: "1"
-            {{- with .Values.model.geminiVertexAI.projectID }}
+            {{- end }}
+            {{- if $isVertexAI }}
+            {{- with .Values.model.vertexAI.projectID }}
             - name: GOOGLE_CLOUD_PROJECT
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.model.geminiVertexAI.location }}
+            {{- with .Values.model.vertexAI.location }}
             - name: GOOGLE_CLOUD_LOCATION
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
-          {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+          {{- if .Values.model.vertexAI.credentialsSecret }}
           volumeMounts:
             - name: gcp-credentials
               mountPath: /var/secrets/gcp
@@ -93,11 +96,11 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "500m"
-      {{- if .Values.model.anthropicVertexAI.credentialsSecret }}
+      {{- if .Values.model.vertexAI.credentialsSecret }}
       volumes:
         - name: gcp-credentials
           secret:
-            secretName: {{ .Values.model.anthropicVertexAI.credentialsSecret }}
+            secretName: {{ .Values.model.vertexAI.credentialsSecret }}
       {{- end }}
 ---
 apiVersion: v1

@@ -20,7 +20,7 @@ Studio is the aggregation point in a decoupled compliance ecosystem — policies
 
 ### 2. Configure credentials
 
-The agents use Anthropic Claude via GCP Vertex AI. Both values are **required**.
+The agents use LLMs via GCP Vertex AI (default: Claude for specialists, Gemini for the assistant). A GCP project with Vertex AI enabled is **required**.
 
 ```bash
 gcloud auth application-default login
@@ -35,6 +35,10 @@ export VERTEX_PROJECT_ID=my-gcp-project
 export GOOGLE_CLIENT_ID=123456...apps.googleusercontent.com
 export GOOGLE_CLIENT_SECRET=GOCSPX-...
 ```
+
+**Admin allowlist (optional, defaults to all-admin):**
+
+Configure `auth.admins` in `charts/complytime-studio/values.yaml` with email addresses. Users not in the list get viewer (read-only) access.
 
 ### 3. Create the cluster
 
@@ -65,6 +69,14 @@ kubectl port-forward -n kagent svc/studio-gateway 8080:8080
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
+
+### 6. Seed demo data
+
+```bash
+GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=dev-seed-token ./demo/seed.sh
+```
+
+Seeds the AMPEL branch protection policy (from [complytime-policies](https://github.com/complytime/complytime-policies)), a SOC 2 mapping document, and 45 evidence records across 3 ComplyTime repositories. See [demo/prompts.md](demo/prompts.md) for a guided walkthrough.
 
 ### Tear down
 

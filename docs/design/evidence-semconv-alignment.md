@@ -1,6 +1,8 @@
 # Evidence Semantic Convention Alignment
 
-Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio ClickHouse `evidence` table.
+**Interface contract** between `complytime-collector-components` (ClickHouse exporter config), `complyctl`/ProofWatch (attribute emission), and `complytime-studio` (table DDL and query APIs).
+
+Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio ClickHouse `evidence` table. The OTel Collector's ClickHouse exporter writes directly to the `evidence` table using this mapping. See [OTel-Native Ingestion](../decisions/otel-native-ingestion.md).
 
 ## Attribute-to-Column Mapping
 

@@ -33,3 +33,51 @@ Each `mcp[]` entry in agent.yaml SHALL support an `allowedHeaders` string array 
 #### Scenario: No allowedHeaders
 - **WHEN** an agent.yaml MCP entry omits `allowedHeaders`
 - **THEN** Helm renders the tool reference without `allowedHeaders` and no A2A request headers are forwarded
+
+### Requirement: Agent reads schema before authoring AuditLog
+The agent prompt SHALL instruct the assistant to read the `gemara://schema/definitions` MCP resource to obtain the `#AuditLog` definition BEFORE authoring any AuditLog artifact. This ensures the agent uses the correct field structure.
+
+#### Scenario: Agent prepares to author AuditLog
+- **WHEN** the agent reaches the "Author AuditLog" workflow step
+- **THEN** the agent SHALL first read `gemara://schema/definitions` to obtain the `#AuditLog` schema definition
+
+### Requirement: Agent validates AuditLog via MCP tool
+The agent prompt SHALL instruct the assistant to call the `validate_gemara_artifact` MCP tool with `definition: "#AuditLog"` on every generated AuditLog YAML block before returning it to the user. The agent SHALL fix validation errors and re-validate up to 3 times.
+
+#### Scenario: Agent produces valid AuditLog
+- **WHEN** the agent generates an AuditLog YAML artifact
+- **THEN** the agent SHALL call `validate_gemara_artifact` with the YAML content and `definition: "#AuditLog"` before returning it
+
+#### Scenario: Validation fails on first attempt
+- **WHEN** `validate_gemara_artifact` returns errors
+- **THEN** the agent SHALL fix the identified issues and re-validate, up to 3 total attempts
+
+#### Scenario: Validation fails after 3 attempts
+- **WHEN** the agent cannot produce valid YAML after 3 validation attempts
+- **THEN** the agent SHALL report the validation errors to the user and halt
+
+### Requirement: Agent recognizes sticky-notes context tag
+
+The agent prompt SHALL document the `<sticky-notes>` tag convention. Content within `<sticky-notes>` tags represents persistent user-curated facts. The agent SHALL treat these as always-true background context unless explicitly contradicted by the user.
+
+#### Scenario: Sticky notes present in message
+- **WHEN** a user message contains a `<sticky-notes>` block
+- **THEN** the agent SHALL treat each note as a persistent fact for the duration of the conversation
+- **THEN** the agent SHALL NOT ask the user to re-confirm information already in sticky notes
+
+#### Scenario: User contradicts a sticky note
+- **WHEN** the user provides information that contradicts a sticky note
+- **THEN** the agent SHALL use the user's latest statement and note the discrepancy
+
+### Requirement: Agent suggests sticky notes for persistent facts
+
+The agent prompt SHALL instruct the assistant to suggest saving persistent facts as sticky notes when the user establishes scope, dates, priorities, or recurring parameters.
+
+#### Scenario: User establishes audit window
+- **WHEN** the user states "our audit window is Q1 2026" or equivalent scope-setting fact
+- **THEN** the agent SHALL include a suggestion: "Tip: save 'Audit window: Q1 2026' as a sticky note to carry this across sessions."
+
+#### Scenario: Agent does not auto-create
+- **WHEN** the agent suggests a sticky note
+- **THEN** the agent SHALL NOT create the note automatically
+- **THEN** the user SHALL manually add the note via the sticky notes panel

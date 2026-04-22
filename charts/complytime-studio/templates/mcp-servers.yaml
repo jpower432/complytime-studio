@@ -63,8 +63,9 @@ spec:
     env:
       CLICKHOUSE_HOST: "studio-clickhouse.{{ .Release.Namespace }}"
       CLICKHOUSE_PORT: "8123"
-      CLICKHOUSE_USER: {{ .Values.clickhouse.auth.user | quote }}
-      CLICKHOUSE_PASSWORD: {{ .Values.clickhouse.auth.password | quote }}
+      CLICKHOUSE_SECURE: "false"
+      CLICKHOUSE_USER: {{ .Values.clickhouse.auth.readerUser | quote }}
+      CLICKHOUSE_PASSWORD: {{ .Values.clickhouse.auth.readerPassword | quote }}
     secretRefs:
       - name: studio-clickhouse-credentials
 {{- end }}

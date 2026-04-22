@@ -1,56 +1,50 @@
-# Backend Architecture: Modulith Gateway + Extracted A2A Proxy
+# Backend Architecture: Modulith Gateway
 
 **Status:** Accepted
-**Date:** 2026-04-18
+**Date:** 2026-04-18 (updated 2026-04-18)
 
 ## Context
 
-The gateway is a Go monolith serving six concerns: SPA, OAuth, A2A proxy, MCP proxy, store CRUD, and config. As the audit dashboard grows, we evaluated whether decomposition improves development velocity, scalability, or fault isolation.
+The gateway is a Go monolith serving six concerns: SPA, OAuth, A2A proxy, MCP proxy, store CRUD, and config. We evaluated whether decomposition improves development velocity, scalability, or fault isolation.
 
 ## Decision
 
-**Modulith gateway + extracted A2A proxy.**
+**Single modulith gateway with the A2A proxy embedded.**
 
-- The A2A reverse proxy moves to a standalone binary (`cmd/a2a-proxy/`). It is stateless, has no ClickHouse dependency, and scales on a different axis (long-lived SSE streams vs. short-lived CRUD).
-- The gateway stays as a single binary with domain-specific store interfaces (`EvidenceStore`, `PolicyStore`, `AuditLogStore`, `MappingStore`) that enable future extraction without code changes.
+- The A2A reverse proxy runs inside the gateway process. It is architecturally isolated (`internal/agents/` imports only `internal/consts` and `internal/httputil`) but does not warrant a separate deployment at current scale.
+- Domain-specific store interfaces (`EvidenceStore`, `PolicyStore`, `AuditLogStore`, `MappingStore`) enable future extraction without code changes.
 
 ## Architecture
 
-```
-Browser ──▶ Gateway (modulith)  ──▶ ClickHouse
-            │ SPA + OAuth
-            │ /api/policies
-            │ /api/evidence
-            │ /api/audit-logs
-            │ /api/validate
-            │ /api/registry
-            │
-            ├── /api/a2a/ ──forward──▶ A2A Proxy (stateless) ──▶ Agents
+```mermaid
+graph LR
+    Browser --> Gateway
+    Gateway -- "/api/policies, /api/evidence" --> CH[("ClickHouse")]
+    Gateway -- "/api/a2a/{agent}" --> Agents["Agent Pods"]
+    Gateway -- "/api/validate" --> MCP["MCP Servers"]
 ```
 
-## Rationale
+## Future: A2A Proxy Extraction
 
-The natural architectural seam is between the **data plane** (gateway) and the **agent plane** (A2A proxy), not within the data layer.
+The A2A proxy is the natural candidate for extraction when load or team boundaries justify it.
 
-`internal/agents/` imports only `internal/consts` and `internal/httputil`. Zero database coupling, zero session state. Already architecturally independent — colocated by accident, not necessity.
+**Trigger:** Measured contention between long-lived SSE streams (chat) and short-lived CRUD requests sharing the same Go process.
 
-Splitting evidence into its own binary adds two deploy targets sharing the same ClickHouse schema. Two processes contending on the same connection pool provides no real isolation.
+**Seam:** `internal/agents/` has zero database coupling and zero session state. Extraction is a packaging change:
+
+1. Build `internal/agents` as a standalone binary
+2. Deploy as a separate Kubernetes Deployment
+3. Set `A2A_PROXY_URL` on the gateway to forward `/api/a2a/` traffic
+4. The gateway's `A2A_PROXY_URL` forwarding path already exists in `cmd/gateway/main.go`
+
+**Not done now because:**
+- Single-digit concurrent users, no measured contention
+- One deployment is simpler to operate, debug, and port-forward
+- The architectural seam is preserved in code — extraction doesn't require a rewrite
 
 ## Rejected Alternatives
 
 | Option | Reason |
 |:--|:--|
-| Extract evidence service | Shared ClickHouse schema negates isolation benefit. Interface boundaries in the modulith deliver the same code-level separation without ops overhead. |
-| Full decomposition (gateway, A2A, evidence, store) | Overkill for prototype. Auth propagation, debugging complexity, and latency overhead not justified before team or load boundaries demand it. |
-| Keep monolith with no changes | Misses the opportunity to demonstrate correct service boundaries between data and agent planes. |
-
-## Future Options
-
-Evidence extraction is enabled by the domain store interfaces. When measured load demonstrates contention between ingestion and dashboard reads, swap the ClickHouse-backed `EvidenceStore` implementation for an HTTP client pointing at a standalone evidence service. This is a packaging change, not a rewrite.
-
-## Consequences
-
-- Two Kubernetes Deployments instead of one (gateway + proxy)
-- Gateway forwards `/api/a2a/` to the proxy service, keeping the frontend unchanged
-- Proxy scales independently under chat load
-- Agent unavailability does not affect dashboard CRUD
+| Extract evidence service | Shared ClickHouse schema negates isolation benefit |
+| Full decomposition (gateway, A2A, evidence, store) | Overkill at current scale. Auth propagation and debugging complexity not justified. |

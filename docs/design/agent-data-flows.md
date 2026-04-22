@@ -4,93 +4,62 @@ Data flow diagrams for ComplyTime Studio, traced from the workbench UI through t
 
 ## End-to-End Request Flow
 
-```
-Browser (Workbench SPA)
-    │
-    │  POST /api/a2a/studio-assistant
-    │  Authorization: Bearer {token} (when OAuth enabled)
-    │
-    ▼
-Gateway (Go)
-    │  Auth middleware → decode cookie → inject Bearer header
-    │  A2A proxy → forward to agent pod
-    │
-    ▼
-Studio Assistant (Python ADK, :8080)
-    │  LlmAgent processes prompt with skills context
-    │  Calls MCP tools as needed:
-    │  ├── clickhouse-mcp → run_select_query (evidence, policies, mappings)
-    │  └── gemara-mcp → validate_gemara_artifact, load resources
-    │
-    │  SSE event stream (TaskStatusUpdateEvent, TaskArtifactUpdateEvent)
-    │
-    ▼
-Gateway (passthrough)
-    │
-    ▼
-Browser
-    ChatDrawer receives SSE events
-    extractArtifacts() scans for YAML code blocks
-    Artifacts proposed to WorkspaceView editor
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant G as Gateway
+    participant A as Studio Assistant
+    participant CH as clickhouse-mcp
+    participant GM as gemara-mcp
+
+    B->>G: POST /api/a2a/studio-assistant
+    Note over G: Auth middleware decodes cookie,<br/>injects Bearer header
+    G->>A: A2A proxy forward
+    A->>CH: run_select_query (evidence, policies)
+    CH-->>A: query results
+    A->>GM: validate_gemara_artifact
+    GM-->>A: validation result
+    A-->>G: SSE event stream
+    G-->>B: SSE passthrough
+    Note over G: Artifact interceptor<br/>auto-persists AuditLog YAML
+    Note over B: ChatAssistant renders<br/>markdown + YAML blocks
 ```
 
 ## Authentication Flow
 
-```
-Browser → Gateway → Agent Pod → MCP Server
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant G as Gateway
+    participant A as Agent Pod
+    participant M as MCP Server
 
-  cookie    decode     inject      allowedHeaders
-            session    Bearer      propagates
-                       header      Authorization
+    B->>G: cookie (studio_session)
+    Note over G: Decode session,<br/>extract access token
+    G->>A: Authorization: Bearer {token}
+    Note over A: allowedHeaders propagates
+    A->>M: Authorization: Bearer {token}
 ```
 
 When OAuth is disabled, no token propagation occurs. MCP servers use static credentials from Secrets.
 
 ## Job Lifecycle
 
-```
-1. User opens Chat Drawer, types prompt
-2. Workbench POST /api/a2a/studio-assistant (JSON-RPC: message/send)
+1. User opens ChatAssistant overlay, types prompt
+2. Workbench `POST /api/a2a/studio-assistant` (JSON-RPC: `message/send`)
 3. Gateway proxies to studio-assistant pod
 4. Assistant queries ClickHouse via clickhouse-mcp (evidence, policies)
 5. Assistant produces AuditLog YAML, validates via gemara-mcp
 6. SSE events stream back through gateway to browser
-7. ChatDrawer extracts YAML artifacts from response text
-8. Artifacts appear as proposals in WorkspaceView editor
-9. User reviews, edits, validates, publishes
-```
+7. ChatAssistant renders response as markdown with YAML/mermaid blocks
+8. Gateway auto-persists valid AuditLog artifacts to ClickHouse
+9. User sees "Auto-saved" indicator; can manually re-save via button
 
-## Artifact Extraction
+## Agent Response Rendering
 
-Agent responses contain Gemara YAML embedded in markdown. The workbench extracts artifacts client-side.
+Agent responses stream as SSE events containing markdown text. The ChatAssistant component renders this via `renderMarkdown()`. YAML code blocks in the response are displayed as formatted code within the chat conversation.
 
-```
-Agent response text
-    │
-    ▼
-extractArtifacts(text)
-    ├── Scan for ```yaml fenced blocks
-    ├── Fallback: detect inline YAML (metadata:, threats:, etc.)
-    │
-    ▼
-isGemaraArtifact(yaml)?
-    ├── YES → detectDefinition(yaml) → inferArtifactName(yaml)
-    │         → proposeArtifact to editor
-    └── NO  → keep in prose text
-```
-
-Recognized artifact keys: `threats`, `controls`, `capabilities`, `guidances`, `policy`, `results`, `risks`, `mappings`, `metadata`.
-
-## Post-Authoring Actions
-
-```
-YAML in Editor
-    ├── Validate    → POST /api/validate (gemara-mcp)
-    ├── Download    → browser Blob API
-    ├── Copy        → clipboard API
-    ├── Publish     → POST /api/publish (OCI bundle)
-    └── Import      → GET /api/registry/* (browse + inject mapping ref)
-```
+**Artifact persistence:** The gateway SSE interceptor detects `TaskArtifactUpdateEvent` payloads with `mimeType: application/yaml`, parses them via `ParseAuditLog`, and auto-persists valid AuditLog artifacts to ClickHouse. The frontend displays an "Auto-saved" indicator on artifact cards. Manual re-save via "Save to Audit History" is idempotent (content-addressed `audit_id` deduplicates via `ReplacingMergeTree`).
 
 ## Assistant Capabilities
 

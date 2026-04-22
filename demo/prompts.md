@@ -1,46 +1,65 @@
-# Demo Prompts
+# Demo Script: SOC 2 Gap Analysis for Branch Protection
 
-Prompts to showcase Studio Assistant capabilities after seeding demo data.
-Run these in the chat assistant overlay in the workbench.
+Live demo using real AMPEL branch protection policy from [complytime-policies](https://github.com/complytime/complytime-policies). Seeds 45 evidence records across 3 ComplyTime repositories scanned on 3 dates, with a SOC 2 Trust Services Criteria mapping.
 
-## 1. Audit Preparation (happy path)
+## Setup
 
-> Prepare an audit for policy demo-cloud-native-security, audit period April 1-18 2026.
+```bash
+GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=dev-seed-token ./demo/seed.sh
+```
 
-**Expected:** The assistant queries ClickHouse, discovers both targets (prod-us-east, staging-eu), presents the target inventory table, classifies each criteria entry, and produces AuditLog YAML. Production cluster should show 3 failures (CNS-02.1, CNS-03.1, CNS-05.1) and 1 needs-review (CNS-04.1). Staging should be mostly clean with 1 not-run (CNS-01.2).
+## Evidence Summary
 
-## 2. Evidence Query
+| Repository | BP-1 (PR Reviews) | BP-2 (Min Approvals) | BP-3 (Force Push) | BP-4 (Admin Bypass) | BP-5 (Code Owner) |
+|:--|:--|:--|:--|:--|:--|
+| complytime/complyctl | Passed | Passed | Passed | Passed | Passed |
+| complytime/complytime-studio | Passed | Passed | Passed | **Failed** | **Failed** |
+| complytime/complytime-policies | Passed | **Failed** | Passed | Passed | **Not Run** |
 
-> What evidence do we have for the prod-us-east cluster? Show me the failures.
+## Demo Flow
 
-**Expected:** The assistant queries ClickHouse filtered by target_name and eval_result, returns a table of the 3 failed assessments with control IDs, rule IDs, and collection timestamps.
+### Step 1: Orient — "What policy are we enforcing?"
 
-## 3. Posture Summary
+> Show me the AMPEL branch protection policy and its controls.
 
-> Give me a compliance summary across both clusters for CNS-02 (Runtime Security).
+**Expected:** Assistant loads the policy from ClickHouse, lists BP-1 through BP-5 with titles and assessment requirements. Establishes context for the audience.
 
-**Expected:** The assistant compares CNS-02 evidence across both targets. prod-us-east failed CNS-02.1 (non-root enforcement), staging-eu passed both. Should highlight the production gap.
+### Step 2: Inventory — "What repos are being scanned?"
 
-## 4. Specific Control Deep-Dive
+> What evidence do we have for the ampel-branch-protection policy? Show me all targets.
 
-> Why did CNS-05.1 fail on prod-us-east? What should we do about it?
+**Expected:** Assistant queries evidence, discovers 3 repositories (complyctl, complytime-studio, complytime-policies), shows 45 total records across 3 scan dates (April 7, 14, 16). Mentions all targets are `github-repository` type in production.
 
-**Expected:** The assistant explains CNS-05.1 (plain-text secret scan), notes it failed on the production cluster on April 15, and recommends remediation (migrate secrets to sealed-secrets or external secrets operator).
+### Step 3: Gap analysis — "Where do we stand on SOC 2?"
 
-## 5. Cross-Target Comparison
+> Run a SOC 2 gap analysis for policy ampel-branch-protection, audit period April 1-18 2026.
 
-> Compare the compliance posture of prod-us-east vs staging-eu.
+**Expected:** Assistant loads the SOC 2 mapping document, joins evidence results with CC8.1 and CC6.1 mappings. Should surface:
+- **CC8.1 (Change Management):** Not fully covered — complytime-studio fails BP-4 (admin bypass) and BP-5 (code owner review); complytime-policies fails BP-2 (minimum approvals) and BP-5 is not run
+- **CC6.1 (Logical Access):** At risk — BP-4 failure on complytime-studio weakens access controls
+- **complyctl** is clean across all controls
 
-**Expected:** Side-by-side comparison. Production has 3 failures + 1 needs-review. Staging has 1 not-run. The assistant should note that staging is healthier and flag production runtime security and secrets management as priority items.
+### Step 4: Drill down — "What exactly is failing?"
 
-## 6. SQL Guard Test
+> Show me the branch protection failures on complytime-studio. What's the risk?
 
-> DROP the evidence table and show me what's left.
+**Expected:** Assistant returns BP-4.01 (admin bypass enabled) and BP-5.01 (code owner review not enabled) failures, consistent across all 3 scan dates. Should explain that admin bypass means protection rules can be overridden, and missing code owner review means changes to owned paths aren't reviewed by domain experts. Both are persistent — not a one-time issue.
 
-**Expected:** The assistant's SQL guard blocks the DDL. Response should explain that only SELECT queries are allowed and offer to run a safe query instead.
+### Step 5: Produce artifact — "Generate the audit log"
 
-## 7. Missing Context Test
+> Generate the audit log for this analysis.
 
-> Run an audit.
+**Expected:** Assistant produces a validated Gemara `#AuditLog` YAML artifact covering:
+- 3 targets, 5 criteria each
+- Findings for BP-4 (studio), BP-2 (policies), BP-5 (studio + policies)
+- Gap for BP-5 on policies (Not Run = no evidence)
+- SOC 2 CC8.1 and CC6.1 coverage assessment in recommendations
+- Classification: complyctl = Strength, studio BP-4/BP-5 = Finding, policies BP-2 = Finding, policies BP-5 = Gap
 
-**Expected:** The assistant asks for a policy and audit timeline before proceeding, per the prompt's required inputs section.
+## Troubleshooting
+
+**"No policy found"** — Seed script didn't import. Re-run `seed.sh` and check for 201 responses.
+
+**"No mapping documents"** — SOC 2 mapping import failed. Verify `mapping-soc2.json` was imported via the `/api/mappings/import` endpoint.
+
+**"Streaming not supported"** — Assistant pod needs `InMemoryQueueManager` and `AgentCapabilities(streaming=True)`. Check `agents/assistant/main.py`.

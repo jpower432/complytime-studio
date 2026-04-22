@@ -11,7 +11,34 @@ function escapeHtml(str: string): string {
 
 export function renderMarkdown(text: string): string {
   if (!text) return "";
-  let html = escapeHtml(text);
+
+  const codeBlocks: string[] = [];
+  let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const placeholder = `\x00CODE${codeBlocks.length}\x00`;
+    if (lang === "mermaid") {
+      codeBlocks.push(`<div class="mermaid">${escapeHtml(code.trimEnd())}</div>`);
+    } else {
+      const cls = lang ? ` class="language-${lang}"` : "";
+      codeBlocks.push(`<pre><code${cls}>${escapeHtml(code.trimEnd())}</code></pre>`);
+    }
+    return placeholder;
+  });
+
+  let html = escapeHtml(processed);
+
+  codeBlocks.forEach((block, i) => {
+    html = html.replace(escapeHtml(`\x00CODE${i}\x00`), block);
+  });
+
+  html = html.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/g, (_, header, body) => {
+    const ths = header.split("|").filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join("");
+    const rows = body.trim().split("\n").map((row: string) => {
+      const tds = row.split("|").filter((c: string) => c.trim()).map((c: string) => `<td>${c.trim()}</td>`).join("");
+      return `<tr>${tds}</tr>`;
+    }).join("");
+    return `<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>`;
+  });
+
   html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
   html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
   html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");

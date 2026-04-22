@@ -70,6 +70,9 @@ func (rp *proxy) connectMCP(ctx context.Context) (*mcp.ClientSession, error) {
 }
 
 func (rp *proxy) isInsecure(host string) bool {
+	if !isValidRegistryHost(host) {
+		return false
+	}
 	for _, h := range rp.insecure {
 		if h == host {
 			return true
@@ -78,7 +81,19 @@ func (rp *proxy) isInsecure(host string) bool {
 	return false
 }
 
+// isValidRegistryHost rejects host values that could cause SSRF via URL
+// injection (path separators, userinfo markers, backslashes).
+func isValidRegistryHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	return !strings.ContainsAny(host, "/@\\")
+}
+
 func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, error) {
+	if !isValidRegistryHost(host) {
+		return nil, fmt.Errorf("invalid registry host: %q", host)
+	}
 	u := fmt.Sprintf("http://%s%s", host, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
