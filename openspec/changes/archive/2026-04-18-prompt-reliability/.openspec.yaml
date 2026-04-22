@@ -1,0 +1,8 @@
+name: prompt-reliability
+status: proposed
+created: "2026-04-22"
+capabilities:
+  new:
+    - few-shot-classification
+  modified:
+    - audit-log-gateway-enrichment
