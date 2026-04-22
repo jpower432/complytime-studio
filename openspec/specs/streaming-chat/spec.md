@@ -61,17 +61,46 @@ The chat panel SHALL render approve and reject buttons on tool call blocks that 
 
 ### Requirement: Lifecycle controls in chat panel
 
-The chat panel SHALL display job lifecycle actions (Cancel, Accept) at the bottom of the panel, appropriate to the current job status.
+The chat panel SHALL display session management actions in the header: "New Session" and a sticky notes toggle button. The "New Session" button resets the A2A task and clears server-side conversation state.
 
-#### Scenario: Working job shows cancel
-- **WHEN** a job has status `working`
-- **THEN** the chat panel SHALL display a "Cancel Job" button
+#### Scenario: New Session resets with server clear
+- **WHEN** the user clicks "New Session"
+- **THEN** the client SHALL PUT empty state to `/api/chat/history`
+- **THEN** the `messages` array SHALL be cleared
+- **THEN** the `taskIdRef` SHALL be set to null
 
-#### Scenario: Ready job shows accept and cancel
-- **WHEN** a job has status `ready`
-- **THEN** the chat panel SHALL display "Accept" and "Cancel Job" buttons
-- **THEN** the "Accept" button SHALL open the acceptance note dialog
+#### Scenario: Sticky notes toggle
+- **WHEN** the user clicks the sticky notes button
+- **THEN** the sticky notes panel SHALL toggle open/closed
 
-#### Scenario: Completed states hide controls
-- **WHEN** a job has status `accepted`, `cancelled`, or `failed`
-- **THEN** the chat panel SHALL not display lifecycle action buttons
+### Requirement: Save AuditLog from chat
+The `saveAuditLog` function SHALL send only `policy_id` and `content` to `POST /api/audit-logs`. It SHALL NOT send `audit_start`, `audit_end`, or `summary` — the gateway derives these from the YAML content.
+
+#### Scenario: User clicks Save to Audit History
+- **WHEN** the user clicks "Save to Audit History" on an artifact card
+- **THEN** `saveAuditLog` SHALL POST `{"policy_id": selectedPolicyId, "content": artifact.content}` to `/api/audit-logs`
+
+#### Scenario: Gateway returns parse error
+- **WHEN** the gateway returns `400 Bad Request` because the artifact content is invalid AuditLog YAML
+- **THEN** the UI SHALL display the error message to the user
+
+### Requirement: Artifact save button is a confirmation action
+
+Previously: The "Save to Audit History" button was the **only** path to persist an agent-produced artifact.
+
+The "Save to Audit History" button SHALL remain available on artifact cards for admin users. When server-side auto-persistence is enabled, the button SHALL function as an idempotent confirmation or re-save action. The artifact card SHALL display an "Auto-saved" indicator when the artifact was persisted server-side.
+
+#### Scenario: Auto-persist enabled, artifact displayed
+- **WHEN** an artifact card is rendered and `AUTO_PERSIST_ARTIFACTS` is enabled
+- **THEN** the card SHALL display an "Auto-saved" text indicator
+- **AND** the "Save to Audit History" button SHALL still be available for admin users
+
+#### Scenario: Auto-persist disabled, artifact displayed
+- **WHEN** an artifact card is rendered and `AUTO_PERSIST_ARTIFACTS` is disabled
+- **THEN** the card SHALL NOT display an "Auto-saved" indicator
+- **AND** the "Save to Audit History" button SHALL be the primary save action (current behavior)
+
+#### Scenario: Manual save after auto-persist
+- **WHEN** an admin clicks "Save to Audit History" on an auto-persisted artifact
+- **THEN** the `POST /api/audit-logs` request SHALL succeed
+- **AND** `ReplacingMergeTree` SHALL deduplicate the row if content is unchanged

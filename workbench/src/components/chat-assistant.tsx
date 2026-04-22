@@ -1,51 +1,161 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useRef, useEffect } from "preact/hooks";
-import { currentView, selectedPolicyId, selectedTimeRange } from "../app";
-import { streamMessage, streamReply, type StreamCallbacks, type ContextArtifact } from "../api/a2a";
+import { currentView, selectedPolicyId, selectedTimeRange, currentUser } from "../app";
+import { streamMessage, streamReply, type StreamCallbacks } from "../api/a2a";
 import { apiFetch } from "../api/fetch";
+import { fetchConfig } from "../api/config";
+import { fetchChatHistory, saveChatHistory } from "../api/chat";
 import { renderMarkdown } from "../lib/markdown";
+import { renderMermaidBlocks } from "../lib/mermaid";
 
 interface ChatMessage {
   role: "user" | "agent";
   text: string;
-  artifact?: { content: string; name: string; mimeType?: string };
+  artifact?: { content: string; name: string; mimeType?: string; model?: string; promptVersion?: string; autoSaved?: boolean };
+  isContextIndicator?: boolean;
+  contextText?: string;
 }
 
-const STORAGE_KEY = "studio-chat-history";
+const STICKY_NOTES_KEY = "studio-sticky-notes";
 const AGENT_NAME = "studio-assistant";
+const MAX_STICKY_NOTES = 10;
+const MAX_STICKY_NOTE_CHARS = 200;
 
-function loadHistory(): ChatMessage[] {
+interface StickyNote {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+function loadStickyNotes(): StickyNote[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(STICKY_NOTES_KEY) || "[]");
   } catch {
     return [];
   }
 }
 
-function saveHistory(msgs: ChatMessage[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-50)));
+function saveStickyNotes(notes: StickyNote[]) {
+  localStorage.setItem(STICKY_NOTES_KEY, JSON.stringify(notes));
+}
+
+function buildInjectedContext(
+  dashboardCtx: Record<string, string>,
+  stickyNotes: StickyNote[],
+): string {
+  const parts: string[] = [];
+  parts.push(`[Dashboard context: ${JSON.stringify(dashboardCtx)}]`);
+
+  if (stickyNotes.length > 0) {
+    const noteLines = stickyNotes.map((n) => `- ${n.text}`).join("\n");
+    parts.push(`<sticky-notes>\n${noteLines}\n</sticky-notes>`);
+  }
+
+  return parts.join("\n\n");
+}
+
+function StickyNotesPanel({
+  notes,
+  onAdd,
+  onDelete,
+}: {
+  notes: StickyNote[];
+  onAdd: (text: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const atLimit = notes.length >= MAX_STICKY_NOTES;
+
+  return (
+    <div class="sticky-notes-panel">
+      <div class="sticky-notes-list">
+        {notes.length === 0 && <div class="sticky-notes-empty">No sticky notes yet</div>}
+        {notes.map((n) => (
+          <div key={n.id} class="sticky-note-item">
+            <span class="sticky-note-text">{n.text}</span>
+            <button class="sticky-note-delete" onClick={() => onDelete(n.id)} title="Delete">&times;</button>
+          </div>
+        ))}
+      </div>
+      <div class="sticky-notes-add">
+        <input
+          type="text"
+          value={draft}
+          maxLength={MAX_STICKY_NOTE_CHARS}
+          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim() && !atLimit) {
+              onAdd(draft.trim());
+              setDraft("");
+            }
+          }}
+          placeholder={atLimit ? "Limit reached (10)" : "Add a note\u2026"}
+          disabled={atLimit}
+        />
+        <span class="sticky-notes-charcount">{draft.length}/{MAX_STICKY_NOTE_CHARS}</span>
+        <button
+          class="btn btn-sm btn-primary"
+          disabled={!draft.trim() || atLimit}
+          onClick={() => { onAdd(draft.trim()); setDraft(""); }}
+        >Add</button>
+      </div>
+    </div>
+  );
 }
 
 export function ChatAssistant() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
+  const [modelLabel, setModelLabel] = useState("");
+  const [autoPersist, setAutoPersist] = useState(false);
+  const [stickyNotes, setStickyNotes] = useState<StickyNote[]>(loadStickyNotes);
+  const [showNotes, setShowNotes] = useState(false);
   const messagesEnd = useRef<HTMLDivElement>(null);
+  const messagesContainer = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
   const taskIdRef = useRef<string | null>(null);
+  const autoPersistRef = useRef(false);
+
+  useEffect(() => {
+    fetchChatHistory().then((data) => {
+      if (data.messages.length > 0) {
+        setMessages(data.messages as ChatMessage[]);
+      }
+      if (data.taskId) {
+        taskIdRef.current = data.taskId;
+      }
+      setLoading(false);
+    });
+  }, []);
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesContainer.current) {
+      renderMermaidBlocks(messagesContainer.current);
+    }
   }, [messages, streamBuffer]);
 
   useEffect(() => {
-    saveHistory(messages);
-  }, [messages]);
+    saveStickyNotes(stickyNotes);
+  }, [stickyNotes]);
 
-  const buildContext = (): Record<string, string> => {
+  useEffect(() => {
+    fetchConfig().then((cfg) => {
+      if (cfg.model_name) setModelLabel(cfg.model_name);
+      const ap = cfg.auto_persist_artifacts === "true";
+      setAutoPersist(ap);
+      autoPersistRef.current = ap;
+    });
+  }, []);
+
+  const isAdmin = (): boolean => currentUser.value?.role === "admin";
+
+  const buildDashboardContext = (): Record<string, string> => {
     const ctx: Record<string, string> = { view: currentView.value };
     if (selectedPolicyId.value) ctx.policy_id = selectedPolicyId.value;
     if (selectedTimeRange.value) {
@@ -53,6 +163,42 @@ export function ChatAssistant() {
       ctx.end = selectedTimeRange.value.end;
     }
     return ctx;
+  };
+
+  const handleNewSession = () => {
+    setMessages([]);
+    taskIdRef.current = null;
+    saveChatHistory([], null);
+  };
+
+  const addStickyNote = (text: string) => {
+    setStickyNotes((prev) => {
+      if (prev.length >= MAX_STICKY_NOTES) return prev;
+      return [...prev, { id: crypto.randomUUID(), text, createdAt: new Date().toISOString() }];
+    });
+  };
+
+  const deleteStickyNote = (id: string) => {
+    setStickyNotes((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const finalize = (_state: string) => {
+    setStreaming(false);
+    setStreamBuffer((buf) => {
+      if (buf) {
+        setMessages((prev) => {
+          const updated = [...prev, { role: "agent" as const, text: buf }];
+          saveChatHistory(updated, taskIdRef.current);
+          return updated;
+        });
+      } else {
+        setMessages((prev) => {
+          saveChatHistory(prev, taskIdRef.current);
+          return prev;
+        });
+      }
+      return "";
+    });
   };
 
   const callbacks: StreamCallbacks = {
@@ -73,9 +219,11 @@ export function ChatAssistant() {
         if (part.metadata?.mimeType === "application/yaml") {
           const name = part.metadata?.name || "artifact.yaml";
           const content = part.text || "";
+          const model = part.metadata?.model;
+          const promptVersion = part.metadata?.promptVersion;
           setMessages((prev) => [
             ...prev,
-            { role: "agent", text: `Artifact produced: ${name}`, artifact: { content, name, mimeType: "application/yaml" } },
+            { role: "agent", text: `Artifact produced: ${name}`, artifact: { content, name, mimeType: "application/yaml", model, promptVersion, autoSaved: autoPersistRef.current } },
           ]);
         }
       }
@@ -87,16 +235,6 @@ export function ChatAssistant() {
     onDone: () => finalize("done"),
   };
 
-  const finalize = (_state: string) => {
-    setStreaming(false);
-    setStreamBuffer((buf) => {
-      if (buf) {
-        setMessages((prev) => [...prev, { role: "agent", text: buf }]);
-      }
-      return "";
-    });
-  };
-
   const send = () => {
     if (!input.trim() || streaming) return;
     const text = input.trim();
@@ -105,29 +243,40 @@ export function ChatAssistant() {
     setStreaming(true);
     setStreamBuffer("");
 
-    const ctxMeta = buildContext();
-    const contextPrefix = `[Dashboard context: ${JSON.stringify(ctxMeta)}]\n\n`;
-
     if (taskIdRef.current) {
       abortRef.current = streamReply(taskIdRef.current, text, callbacks, AGENT_NAME);
     } else {
-      abortRef.current = streamMessage(contextPrefix + text, callbacks, AGENT_NAME);
+      const injected = buildInjectedContext(buildDashboardContext(), stickyNotes);
+      const hasMemoryContext = stickyNotes.length > 0;
+
+      if (hasMemoryContext) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "agent", text: "Memory context sent to agent", isContextIndicator: true, contextText: injected },
+        ]);
+      }
+
+      abortRef.current = streamMessage(injected + "\n\n" + text, callbacks, AGENT_NAME);
     }
   };
 
-  const saveAuditLog = async (artifact: { content: string; name: string }) => {
+  const saveAuditLog = async (artifact: { content: string; name: string; model?: string; promptVersion?: string }) => {
     try {
-      await apiFetch("/api/audit-logs", {
+      const resp = await apiFetch("/api/audit-logs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           policy_id: selectedPolicyId.value || "unknown",
           content: artifact.content,
-          audit_start: new Date().toISOString(),
-          audit_end: new Date().toISOString(),
-          summary: JSON.stringify({ saved_from: "chat" }),
+          ...(artifact.model && { model: artifact.model }),
+          ...(artifact.promptVersion && { prompt_version: artifact.promptVersion }),
         }),
       });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        setMessages((prev) => [...prev, { role: "agent", text: `Failed to save: ${errText}` }]);
+        return;
+      }
       setMessages((prev) => [...prev, { role: "agent", text: `Saved ${artifact.name} to Audit History.` }]);
     } catch (e) {
       setMessages((prev) => [...prev, { role: "agent", text: `Failed to save: ${e}` }]);
@@ -143,27 +292,62 @@ export function ChatAssistant() {
       {open && (
         <div class="chat-overlay">
           <div class="chat-overlay-header">
-            <h3>Studio Assistant</h3>
-            <button class="btn btn-sm" onClick={() => { setMessages([]); taskIdRef.current = null; }}>Clear</button>
+            <div>
+              <h3>Studio Assistant</h3>
+              {modelLabel && <span class="chat-model-label">{modelLabel}</span>}
+            </div>
+            <div class="chat-header-controls">
+              <button
+                class={`btn btn-sm${showNotes ? " btn-primary" : " btn-secondary"}`}
+                onClick={() => setShowNotes(!showNotes)}
+                title="Sticky Notes"
+              ><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 3m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z"/><path d="M9 7l6 0"/><path d="M9 11l6 0"/><path d="M9 15l4 0"/></svg></button>
+              <button
+                class="btn btn-sm"
+                onClick={handleNewSession}
+                disabled={streaming}
+              >New Session</button>
+            </div>
           </div>
 
-          <div class="chat-overlay-messages">
-            {messages.map((msg, i) => (
-              <div key={i} class={`chat-msg chat-msg-${msg.role}`}>
-                <span class="chat-msg-role">{msg.role === "user" ? "You" : "Agent"}</span>
-                {msg.artifact ? (
-                  <div class="chat-artifact-card">
-                    <div class="chat-artifact-name">{msg.artifact.name}</div>
-                    <pre class="chat-artifact-preview">{msg.artifact.content.slice(0, 500)}{msg.artifact.content.length > 500 ? "..." : ""}</pre>
-                    <button class="btn btn-primary btn-sm" onClick={() => saveAuditLog(msg.artifact!)}>
-                      Save to Audit History
-                    </button>
-                  </div>
-                ) : (
-                  <div class="chat-msg-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
-                )}
-              </div>
-            ))}
+          {showNotes && (
+            <StickyNotesPanel notes={stickyNotes} onAdd={addStickyNote} onDelete={deleteStickyNote} />
+          )}
+
+          <div class="chat-overlay-messages" ref={messagesContainer}>
+            {loading && <div class="view-loading">Loading chat...</div>}
+            {messages.map((msg, i) => {
+              if (msg.isContextIndicator) {
+                return (
+                  <details key={i} class="chat-context-indicator">
+                    <summary>Memory context sent to agent</summary>
+                    <pre class="chat-context-preview">{msg.contextText}</pre>
+                  </details>
+                );
+              }
+
+              return (
+                <div key={i} class={`chat-msg chat-msg-${msg.role}`}>
+                  <span class="chat-msg-role">{msg.role === "user" ? "You" : "Agent"}</span>
+                  {msg.artifact ? (
+                    <div class="chat-artifact-card">
+                      <div class="chat-artifact-name">
+                        {msg.artifact.name}
+                        {msg.artifact.autoSaved && <span class="chat-artifact-autosaved">Auto-saved</span>}
+                      </div>
+                      <pre class="chat-artifact-preview">{msg.artifact.content.slice(0, 500)}{msg.artifact.content.length > 500 ? "..." : ""}</pre>
+                      {isAdmin() && (
+                        <button class="btn btn-primary btn-sm" onClick={() => saveAuditLog(msg.artifact!)}>
+                          Save to Audit History
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div class="chat-msg-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                  )}
+                </div>
+              );
+            })}
             {streaming && (
               <div class="chat-msg chat-msg-agent">
                 <span class="chat-msg-role">Agent</span>
