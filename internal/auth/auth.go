@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,7 +32,14 @@ const (
 	googleUserURL  = "https://openidconnect.googleapis.com/v1/userinfo"
 )
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var (
+	httpClient = &http.Client{Timeout: 15 * time.Second}
+
+	// ErrSessionNotFound indicates no session exists for the given ID.
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrSessionExpired indicates the session has passed its expiration time.
+	ErrSessionExpired = errors.New("session expired")
+)
 
 // Config holds Google OAuth application credentials.
 type Config struct {
@@ -40,14 +48,20 @@ type Config struct {
 	CallbackURL  string
 }
 
-// Session represents the authenticated user session stored in the cookie.
+// Session represents the authenticated user session injected into request
+// context. It does not contain the access token — that stays server-side.
 type Session struct {
-	AccessToken string `json:"t"`
-	Login       string `json:"l"`
-	Name        string `json:"n"`
-	AvatarURL   string `json:"a"`
-	Email       string `json:"e"`
-	ExpiresAt   int64  `json:"x"`
+	Login     string   `json:"l"`
+	Name      string   `json:"n"`
+	AvatarURL string   `json:"a"`
+	Email     string   `json:"e"`
+	Groups    []string `json:"g,omitempty"`
+	ExpiresAt int64    `json:"x"`
+}
+
+// cookiePayload is the encrypted cookie content — only a session ID.
+type cookiePayload struct {
+	SessionID string `json:"sid"`
 }
 
 // UserInfo is the public-facing user info returned by /auth/me.
@@ -56,6 +70,37 @@ type UserInfo struct {
 	Name      string `json:"name"`
 	AvatarURL string `json:"avatar_url"`
 	Email     string `json:"email"`
+	Role      string `json:"role"`
+}
+
+// RoleForEmail returns "admin" if the email is in the admin set, "viewer" otherwise.
+// An empty admin set means everyone is admin (fail-open for dev clusters).
+func RoleForEmail(email string, admins map[string]bool) string {
+	if len(admins) == 0 {
+		return "admin"
+	}
+	if admins[strings.ToLower(email)] {
+		return "admin"
+	}
+	return "viewer"
+}
+
+// RequireAdmin returns middleware that rejects non-admin requests with 403.
+func RequireAdmin(admins map[string]bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sess, ok := SessionFrom(r.Context())
+			if !ok {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+				return
+			}
+			if RoleForEmail(sess.Email, admins) != "admin" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type contextKey string
@@ -74,11 +119,14 @@ type Handler struct {
 	secretKey []byte
 	gcm       cipher.AEAD
 	apiToken  string
+	store     SessionStore
+	admins    map[string]bool
 }
 
 // NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
-// (AES-256). Session cookies are encrypted with AES-GCM.
-func NewHandler(cfg Config, secretKey []byte) (*Handler, error) {
+// (AES-256). Session cookies are encrypted with AES-GCM. The cookie now
+// carries only a session ID; tokens are stored in the SessionStore.
+func NewHandler(cfg Config, secretKey []byte, store SessionStore) (*Handler, error) {
 	block, err := aes.NewCipher(secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("auth: invalid secret key: %w", err)
@@ -87,7 +135,18 @@ func NewHandler(cfg Config, secretKey []byte) (*Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: GCM init: %w", err)
 	}
-	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm}, nil
+	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store, admins: make(map[string]bool)}, nil
+}
+
+// SetAdmins configures the admin email allowlist. An empty map means
+// everyone is admin (dev-mode fail-open).
+func (h *Handler) SetAdmins(admins map[string]bool) {
+	h.admins = admins
+}
+
+// Admins returns the admin email set for use with RequireAdmin middleware.
+func (h *Handler) Admins() map[string]bool {
+	return h.admins
 }
 
 // SetAPIToken configures a static bearer token that bypasses session auth.
@@ -104,10 +163,68 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/logout", h.handleLogout)
 }
 
-// TokenFromRequest extracts the user's access token from the session cookie.
-// Satisfies the httputil.TokenProvider interface.
+// RegisterChatHistory mounts GET/PUT /api/chat/history for server-side chat persistence.
+func (h *Handler) RegisterChatHistory(mux *http.ServeMux, chatStore ChatStore) {
+	mux.HandleFunc("GET /api/chat/history", h.handleGetChatHistory(chatStore))
+	mux.HandleFunc("PUT /api/chat/history", h.handlePutChatHistory(chatStore))
+}
+
+func (h *Handler) handleGetChatHistory(cs ChatStore) http.HandlerFunc {
+	type chatResp struct {
+		Messages json.RawMessage `json:"messages"`
+		TaskID   *string         `json:"taskId"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := SessionFrom(r.Context())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		chat, err := cs.GetChat(r.Context(), sess.Email)
+		if err != nil {
+			writeJSON(w, http.StatusOK, chatResp{Messages: json.RawMessage("[]"), TaskID: nil})
+			return
+		}
+		tid := &chat.TaskID
+		if chat.TaskID == "" {
+			tid = nil
+		}
+		writeJSON(w, http.StatusOK, chatResp{Messages: chat.Messages, TaskID: tid})
+	}
+}
+
+func (h *Handler) handlePutChatHistory(cs ChatStore) http.HandlerFunc {
+	type chatReq struct {
+		Messages json.RawMessage `json:"messages"`
+		TaskID   string          `json:"taskId"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := SessionFrom(r.Context())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		var req chatReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if err := cs.PutChat(r.Context(), sess.Email, ChatSession{Messages: req.Messages, TaskID: req.TaskID}); err != nil {
+			http.Error(w, "store failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// TokenFromRequest looks up the server-side session and returns the access
+// token. Satisfies the httputil.TokenProvider interface.
 func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
-	sess, err := h.sessionFromCookie(r)
+	sid, err := h.sessionIDFromCookie(r)
+	if err != nil {
+		return "", false
+	}
+	sess, err := h.store.Get(r.Context(), sid)
 	if err != nil {
 		return "", false
 	}
@@ -135,12 +252,25 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			}
 		}
 
-		sess, err := h.sessionFromCookie(r)
-		if err != nil || time.Now().Unix() > sess.ExpiresAt {
+		sid, err := h.sessionIDFromCookie(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		serverSess, err := h.store.Get(r.Context(), sid)
+		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
 		}
 
+		sess := &Session{
+			Login:     serverSess.Login,
+			Name:      serverSess.Name,
+			AvatarURL: serverSess.AvatarURL,
+			Email:     serverSess.Email,
+			Groups:    serverSess.Groups,
+			ExpiresAt: serverSess.ExpiresAt,
+		}
 		ctx := context.WithValue(r.Context(), sessionKey, sess)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -183,30 +313,39 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := exchangeCode(r.Context(), h.cfg, code)
+	tokenResp, err := exchangeCode(r.Context(), h.cfg, code)
 	if err != nil {
 		slog.Error("oauth token exchange failed", "error", err)
 		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
 		return
 	}
 
-	user, err := fetchGoogleUser(r.Context(), token)
+	user, err := fetchGoogleUser(r.Context(), tokenResp.AccessToken)
 	if err != nil {
 		slog.Error("oauth user fetch failed", "error", err)
 		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
 		return
 	}
 
-	sess := &Session{
-		AccessToken: token,
+	groups := groupsFromIDToken(tokenResp.IDToken)
+
+	sid := generateSessionID()
+	serverSess := ServerSession{
+		AccessToken: tokenResp.AccessToken,
 		Login:       user.Email,
 		Name:        user.Name,
 		AvatarURL:   user.Picture,
 		Email:       user.Email,
+		Groups:      groups,
 		ExpiresAt:   time.Now().Add(sessionMaxAge).Unix(),
 	}
+	if err := h.store.Put(r.Context(), sid, serverSess); err != nil {
+		slog.Error("session store put failed", "error", err)
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
 
-	if err := h.setSessionCookie(w, r, sess); err != nil {
+	if err := h.setSessionCookie(w, r, sid); err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
@@ -215,26 +354,35 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
-	sess, err := h.sessionFromCookie(r)
-	if err != nil || time.Now().Unix() > sess.ExpiresAt {
+	sid, err := h.sessionIDFromCookie(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	serverSess, err := h.store.Get(r.Context(), sid)
+	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
 	writeJSON(w, http.StatusOK, UserInfo{
-		Login:     sess.Login,
-		Name:      sess.Name,
-		AvatarURL: sess.AvatarURL,
-		Email:     sess.Email,
+		Login:     serverSess.Login,
+		Name:      serverSess.Name,
+		AvatarURL: serverSess.AvatarURL,
+		Email:     serverSess.Email,
+		Role:      RoleForEmail(serverSess.Email, h.admins),
 	})
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if sid, err := h.sessionIDFromCookie(r); err == nil {
+		_ = h.store.Delete(r.Context(), sid)
+	}
 	clearCookie(w, sessionCookieName, "/", isSecureRequest(r))
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sess *Session) error {
-	plaintext, err := json.Marshal(sess)
+func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sid string) error {
+	plaintext, err := json.Marshal(cookiePayload{SessionID: sid})
 	if err != nil {
 		return err
 	}
@@ -258,36 +406,52 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sess 
 	return nil
 }
 
-func (h *Handler) sessionFromCookie(r *http.Request) (*Session, error) {
+// sessionIDFromCookie decrypts the cookie and returns the session ID.
+func (h *Handler) sessionIDFromCookie(r *http.Request) (string, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	ciphertext, err := base64.RawURLEncoding.DecodeString(cookie.Value)
 	if err != nil {
-		return nil, fmt.Errorf("decode cookie: %w", err)
+		return "", fmt.Errorf("decode cookie: %w", err)
 	}
 
 	nonceSize := h.gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("malformed session cookie")
+		return "", fmt.Errorf("malformed session cookie")
 	}
 	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
 
 	plaintext, err := h.gcm.Open(nil, nonce, sealed, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt session: %w", err)
+		return "", fmt.Errorf("decrypt session: %w", err)
 	}
 
-	var sess Session
-	if err := json.Unmarshal(plaintext, &sess); err != nil {
-		return nil, err
+	var payload cookiePayload
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		return "", err
 	}
-	return &sess, nil
+	if payload.SessionID == "" {
+		return "", fmt.Errorf("empty session ID in cookie")
+	}
+	return payload.SessionID, nil
 }
 
-func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) {
+func generateSessionID() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// tokenResponse holds the result of a Google OAuth token exchange.
+type tokenResponse struct {
+	AccessToken string
+	IDToken     string
+}
+
+func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse, error) {
 	data := url.Values{
 		"client_id":     {cfg.ClientID},
 		"client_secret": {cfg.ClientSecret},
@@ -297,32 +461,33 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (string, error) 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("google token endpoint %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("google token endpoint %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
 		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
 		Error       string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
 	if result.Error != "" {
-		return "", fmt.Errorf("google: %s", result.Error)
+		return nil, fmt.Errorf("google: %s", result.Error)
 	}
-	return result.AccessToken, nil
+	return &tokenResponse{AccessToken: result.AccessToken, IDToken: result.IDToken}, nil
 }
 
 type googleUser struct {
@@ -355,6 +520,31 @@ func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// groupsFromIDToken extracts the "groups" claim from a Google OIDC ID token.
+// The ID token is a JWT; we decode the payload without signature verification
+// because the token was just received from Google's token endpoint over TLS.
+// Returns nil if the claim is absent or unparseable.
+func groupsFromIDToken(idToken string) []string {
+	if idToken == "" {
+		return nil
+	}
+	parts := strings.SplitN(idToken, ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims struct {
+		Groups []string `json:"groups"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	return claims.Groups
 }
 
 func generateState() string {

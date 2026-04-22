@@ -19,12 +19,12 @@ import (
 	"github.com/complytime/complytime-studio/internal/auth"
 	chclient "github.com/complytime/complytime-studio/internal/clickhouse"
 	"github.com/complytime/complytime-studio/internal/config"
-	"github.com/complytime/complytime-studio/internal/store"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/proxy"
 	"github.com/complytime/complytime-studio/internal/publish"
 	"github.com/complytime/complytime-studio/internal/registry"
+	"github.com/complytime/complytime-studio/internal/store"
 	"github.com/complytime/complytime-studio/internal/web"
 	"github.com/complytime/complytime-studio/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,6 +71,7 @@ func main() {
 		slog.Info("clickhouse ready")
 	}
 
+	var st *store.Store
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if chClient != nil {
 			if err := chClient.Ping(r.Context()); err != nil {
@@ -83,12 +84,24 @@ func main() {
 	})
 
 	if chClient != nil {
-		st := store.New(chClient.Conn())
+		st = store.New(chClient.Conn())
+		if err := store.PopulateMappingEntries(ctx, st); err != nil {
+			slog.Warn("mapping entries backfill failed", "error", err)
+		}
+		if err := store.PopulateControls(ctx, st, st); err != nil {
+			slog.Warn("controls backfill failed", "error", err)
+		}
+		if err := store.PopulateThreats(ctx, st, st); err != nil {
+			slog.Warn("threats backfill failed", "error", err)
+		}
 		store.Register(mux, store.Stores{
 			Policies:  st,
 			Mappings:  st,
 			Evidence:  st,
 			AuditLogs: st,
+			Controls:  st,
+			Threats:   st,
+			Catalogs:  st,
 		})
 		slog.Info("store API registered", "routes", []string{
 			"/api/policies", "/api/evidence", "/api/audit-logs", "/api/mappings",
@@ -101,12 +114,25 @@ func main() {
 		CallbackURL:  httputil.EnvOr("GOOGLE_CALLBACK_URL", "http://localhost:8080/auth/callback"),
 	}
 	secretKey := cookieSecretKey(authCfg.ClientID != "")
-	authHandler, err := auth.NewHandler(authCfg, secretKey)
+	sessionStore := auth.NewMemorySessionStore()
+	authHandler, err := auth.NewHandler(authCfg, secretKey, sessionStore)
 	if err != nil {
 		slog.Error("auth handler init failed", "error", err)
 		os.Exit(1)
 	}
+	adminEmails := splitComma(os.Getenv("ADMIN_EMAILS"))
+	admins := make(map[string]bool, len(adminEmails))
+	for _, e := range adminEmails {
+		admins[strings.ToLower(e)] = true
+	}
+	authHandler.SetAdmins(admins)
+	if len(admins) > 0 {
+		slog.Info("admin allowlist configured", "count", len(admins))
+	} else {
+		slog.Info("no admin allowlist — all users are admin")
+	}
 	authHandler.Register(mux)
+	authHandler.RegisterChatHistory(mux, sessionStore)
 
 	if apiToken := os.Getenv("STUDIO_API_TOKEN"); apiToken != "" {
 		authHandler.SetAPIToken(apiToken)
@@ -134,20 +160,29 @@ func main() {
 	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
 		agents.RegisterA2AForward(mux, a2aProxyURL)
 	} else {
+		autoPersist := httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true") == "true"
+		if autoPersist && st != nil {
+			slog.Info("artifact auto-persist enabled")
+		}
 		agents.RegisterA2AProxy(mux, agents.Options{
-			Cards:          agentCards,
-			TokenProvider:  authHandler,
-			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
-			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
+			Cards:                agentCards,
+			TokenProvider:        authHandler,
+			KagentA2AURL:         os.Getenv("KAGENT_A2A_URL"),
+			AgentNamespace:       os.Getenv("KAGENT_AGENT_NAMESPACE"),
+			AutoPersistArtifacts: autoPersist && st != nil,
+			AuditLogStore:        st,
 		})
 		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
 	}
 
 	config.Register(mux, config.Options{
 		Values: map[string]string{
-			"github_org":        httputil.EnvOr("GITHUB_ORG", ""),
-			"github_repo":       httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
-			"registry_insecure": httputil.EnvOr("REGISTRY_INSECURE", ""),
+			"github_org":             httputil.EnvOr("GITHUB_ORG", ""),
+			"github_repo":            httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
+			"registry_insecure":      httputil.EnvOr("REGISTRY_INSECURE", ""),
+			"model_provider":         httputil.EnvOr("MODEL_PROVIDER", ""),
+			"model_name":             httputil.EnvOr("MODEL_NAME", ""),
+			"auto_persist_artifacts": httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true"),
 		},
 	})
 
@@ -155,7 +190,8 @@ func main() {
 
 	var handler http.Handler = mux
 	if authCfg.ClientID != "" {
-		handler = authHandler.Middleware(mux)
+		adminGuard := auth.RequireAdmin(admins)
+		handler = authHandler.Middleware(writeProtect(mux, adminGuard))
 		slog.Info("auth enabled", "provider", "google-oauth")
 	} else {
 		slog.Info("auth disabled")
@@ -229,6 +265,23 @@ func splitComma(raw string) []string {
 	return out
 }
 
+// writeProtect wraps a handler so that POST/PUT/PATCH/DELETE requests to /api/*
+// pass through the adminGuard middleware first. GET and non-API requests are unaffected.
+func writeProtect(next http.Handler, adminGuard func(http.Handler) http.Handler) http.Handler {
+	guarded := adminGuard(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet {
+			if r.URL.Path == "/api/chat/history" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // cookieSecretKey returns the 32-byte AES-256 key for session cookie encryption.
 // Reads hex-encoded key from COOKIE_SECRET. Falls back to COOKIE_SIGN_KEY for
 // backward compatibility. Generates an ephemeral key for development only.
@@ -246,7 +299,8 @@ func cookieSecretKey(authEnabled bool) []byte {
 		return key
 	}
 	if authEnabled {
-		slog.Warn("COOKIE_SECRET not set — sessions will not survive restarts", "hint", "openssl rand -hex 32")
+		slog.Error("COOKIE_SECRET is required when auth is enabled", "hint", "openssl rand -hex 32")
+		os.Exit(1)
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {

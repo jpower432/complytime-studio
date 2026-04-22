@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
+import { currentUser } from "../app";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -94,11 +95,13 @@ export function EvidenceView() {
         <button class="btn btn-primary" onClick={search}>Search</button>
       </div>
 
-      <div class="evidence-upload">
-        <input type="file" ref={fileRef} accept=".csv,.json" />
-        <button class="btn btn-secondary" onClick={handleUpload}>Upload</button>
-        {uploadStatus && <span class="upload-status">{uploadStatus}</span>}
-      </div>
+      {currentUser.value?.role === "admin" && (
+        <div class="evidence-upload">
+          <input type="file" ref={fileRef} accept=".csv,.json" />
+          <button class="btn btn-secondary" onClick={handleUpload}>Upload</button>
+          {uploadStatus && <span class="upload-status">{uploadStatus}</span>}
+        </div>
+      )}
 
       {loading ? (
         <div class="view-loading">Querying evidence...</div>

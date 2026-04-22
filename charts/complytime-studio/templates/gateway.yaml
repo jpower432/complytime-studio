@@ -69,10 +69,6 @@ spec:
                 {{- $enriched = append $enriched $entry -}}
                 {{- end }}
                 {{ $enriched | toJson }}
-            {{- if .Values.a2aProxy.enabled }}
-            - name: A2A_PROXY_URL
-              value: "http://studio-a2a-proxy:8081"
-            {{- end }}
             - name: KAGENT_A2A_URL
               value: {{ .Values.kagent.a2aURL | quote }}
             - name: KAGENT_AGENT_NAMESPACE
@@ -100,17 +96,23 @@ spec:
             - name: GOOGLE_CALLBACK_URL
               value: {{ .Values.auth.google.callbackURL | quote }}
             {{- end }}
-            {{- if .Values.auth.cookieSecretName }}
             - name: COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.cookieSecretName }}
+                  name: {{ .Values.auth.cookieSecretName | default "studio-cookie-secret" }}
                   key: cookie-secret
+            {{- if .Values.auth.admins }}
+            - name: ADMIN_EMAILS
+              value: {{ join "," .Values.auth.admins | quote }}
             {{- end }}
             {{- if .Values.auth.apiToken }}
             - name: STUDIO_API_TOKEN
               value: {{ .Values.auth.apiToken | quote }}
             {{- end }}
+            - name: MODEL_PROVIDER
+              value: {{ .Values.model.provider | quote }}
+            - name: MODEL_NAME
+              value: {{ .Values.model.name | quote }}
             {{- if .Values.clickhouse.enabled }}
             - name: CLICKHOUSE_ADDR
               value: "studio-clickhouse:9000"
@@ -126,6 +128,8 @@ spec:
               value: {{ .Values.clickhouse.auth.password | quote }}
               {{- end }}
             {{- end }}
+            - name: AUTO_PERSIST_ARTIFACTS
+              value: {{ .Values.gateway.autoPersistArtifacts | default true | quote }}
           resources:
             requests:
               memory: "32Mi"

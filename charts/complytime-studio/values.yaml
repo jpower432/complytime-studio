@@ -9,6 +9,7 @@ gateway:
   image:
     repository: studio-gateway
     tag: latest
+  autoPersistArtifacts: true
 
 # -- Google OAuth for user authentication.
 # Create credentials at https://console.cloud.google.com/apis/credentials
@@ -20,6 +21,9 @@ auth:
     secretKey: client-secret
     callbackURL: "http://localhost:8080/auth/callback"
   cookieSecretName: ""
+  # Admin email allowlist. When empty, all authenticated users are admins.
+  # Viewers can read policies/evidence and chat, but cannot import or upload.
+  admins: []
   # Static bearer token for dev/CI seeding (STUDIO_API_TOKEN).
   # Leave empty to disable.
   apiToken: "dev-seed-token"
@@ -59,13 +63,6 @@ kagent:
 
 # -- Standalone A2A reverse proxy. Stateless — no ClickHouse, no session state.
 # Scales independently from the gateway for concurrent chat load.
-a2aProxy:
-  enabled: false
-  image:
-    repository: studio-a2a-proxy
-    tag: latest
-  replicas: 1
-
 # -- BYO assistant agent. Standalone Python container with MCP sidecars.
 assistant:
   image:
@@ -76,27 +73,28 @@ assistant:
 # When a key is absent or empty, the agent inherits the global model.* values.
 # Example: agents.assistant.model.provider: GeminiVertexAI
 agents:
-  assistant: {}
+  assistant:
+    model:
+      provider: GeminiVertexAI
+      name: gemini-2.5-pro
 
 # -- Global model configuration. Used as default for all agents unless
 # overridden per-agent in agents.<name>.model.
 model:
-  provider: GeminiVertexAI
-  name: gemini-2.5-pro
+  provider: AnthropicVertexAI
+  name: claude-opus-4-6
   # apiKeySecret:
   #   name: studio-model-credentials
   #   key: api-key
-  anthropicVertexAI:
+  # -- Vertex AI configuration. Shared by all Vertex AI providers
+  # (GeminiVertexAI, AnthropicVertexAI). Same project, location, and
+  # credentials regardless of which model is selected.
+  vertexAI:
     projectID: ""
-    location: us-east5
+    location: global
     # Secret containing application_default_credentials.json for GCP auth.
     # Required when running outside GKE (e.g. kind) without workload identity.
     credentialsSecret: studio-gcp-credentials
-  # -- Gemini via Vertex AI. Use with provider: GeminiVertexAI.
-  # Reuses the same credentialsSecret as anthropicVertexAI.
-  geminiVertexAI:
-    projectID: ""
-    location: us-central1
 
 # -- Agent directory entries exposed via GET /api/agents.
 # Single agent — BYO assistant deployed via byo-assistant.yaml.
@@ -136,6 +134,9 @@ clickhouse:
     # clickhouse.auth.existingSecret. This default is for local dev only.
     password: complytime-dev
     existingSecret: ""
+    # Read-only user for clickhouse-mcp (agent queries). SELECT only.
+    readerUser: reader
+    readerPassword: complytime-reader-dev
   storage:
     size: 2Gi
   retentionMonths: 24

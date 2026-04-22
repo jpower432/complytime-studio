@@ -5,6 +5,7 @@ export interface UserInfo {
   name: string;
   avatar_url: string;
   email: string;
+  role: string;
 }
 
 export async function fetchMe(): Promise<UserInfo | null> {

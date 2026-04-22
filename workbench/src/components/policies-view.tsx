@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
+import { currentUser } from "../app";
 
 interface Policy {
   policy_id: string;
@@ -13,7 +14,7 @@ interface Policy {
 
 interface PolicyDetail {
   policy: Policy & { content: string };
-  mappings: { mapping_id: string; framework: string; imported_at: string }[];
+  mappings: { mapping_id: string; framework: string; content: string; imported_at: string }[];
 }
 
 export function PoliciesView() {
@@ -23,6 +24,7 @@ export function PoliciesView() {
   const [importing, setImporting] = useState(false);
   const [importRef, setImportRef] = useState("");
   const [importError, setImportError] = useState("");
+  const isAdmin = currentUser.value?.role === "admin";
 
   const loadPolicies = () => {
     apiFetch("/api/policies")
@@ -73,18 +75,20 @@ export function PoliciesView() {
     <div class="policies-view">
       <div class="policies-header">
         <h2>Policies</h2>
-        <div class="import-bar">
-          <input
-            type="text"
-            placeholder="ghcr.io/org/policy-bundle:v1.0"
-            value={importRef}
-            onInput={(e) => setImportRef((e.target as HTMLInputElement).value)}
-            class="import-input"
-          />
-          <button class="btn btn-primary" onClick={handleImport} disabled={importing}>
-            {importing ? "Importing..." : "Import"}
-          </button>
-        </div>
+        {isAdmin && (
+          <div class="import-bar">
+            <input
+              type="text"
+              placeholder="ghcr.io/org/policy-bundle:v1.0"
+              value={importRef}
+              onInput={(e) => setImportRef((e.target as HTMLInputElement).value)}
+              class="import-input"
+            />
+            <button class="btn btn-primary" onClick={handleImport} disabled={importing}>
+              {importing ? "Importing..." : "Import"}
+            </button>
+          </div>
+        )}
         {importError && <p class="import-error">{importError}</p>}
       </div>
 
@@ -131,11 +135,12 @@ export function PoliciesView() {
               {selected.mappings.length === 0 ? (
                 <p>No mapping documents linked.</p>
               ) : (
-                <ul>
-                  {selected.mappings.map((m) => (
-                    <li key={m.mapping_id}>{m.framework} — imported {new Date(m.imported_at).toLocaleDateString()}</li>
-                  ))}
-                </ul>
+                selected.mappings.map((m) => (
+                  <details key={m.mapping_id} class="mapping-detail">
+                    <summary>{m.framework} — imported {new Date(m.imported_at).toLocaleDateString()}</summary>
+                    <pre class="yaml-viewer">{m.content}</pre>
+                  </details>
+                ))
               )}
             </div>
           </div>
