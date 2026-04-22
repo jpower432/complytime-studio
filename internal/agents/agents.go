@@ -13,6 +13,7 @@ import (
 
 	"github.com/complytime/complytime-studio/internal/consts"
 	studiohttp "github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/complytime/complytime-studio/internal/store"
 )
 
 // CardModel describes the LLM provider and model backing an agent.
@@ -51,6 +52,11 @@ type Options struct {
 	// AgentNamespace is the Kubernetes namespace where agents are deployed.
 	// Used with KagentA2AURL to build the controller proxy path.
 	AgentNamespace string
+	// AutoPersistArtifacts enables server-side interception and persistence
+	// of AuditLog artifacts from the A2A SSE stream.
+	AutoPersistArtifacts bool
+	// AuditLogStore is used by the artifact interceptor to persist audit logs.
+	AuditLogStore store.AuditLogStore
 }
 
 // ParseDirectory parses the AGENT_DIRECTORY JSON into a slice of Cards.
@@ -129,6 +135,10 @@ func registerA2AProxy(mux *http.ServeMux, opts Options) {
 		allowedAgents[c.Name] = c.URL
 	}
 
+	transport := &http.Transport{
+		ResponseHeaderTimeout: consts.ProxyResponseTimeout,
+	}
+
 	mux.HandleFunc("/api/a2a/", func(w http.ResponseWriter, r *http.Request) {
 		agentName := strings.TrimPrefix(r.URL.Path, "/api/a2a/")
 		agentName = strings.SplitN(agentName, "/", 2)[0]
@@ -180,9 +190,7 @@ func registerA2AProxy(mux *http.ServeMux, opts Options) {
 					}
 				}
 			},
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: consts.ProxyResponseTimeout,
-			},
+			Transport:     transport,
 			FlushInterval: -1,
 			ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
 				slog.Error("a2a proxy error", "agent", agentName, "target", target.String()+targetPath, "error", err)
@@ -192,7 +200,13 @@ func registerA2AProxy(mux *http.ServeMux, opts Options) {
 			},
 		}
 
-		rp.ServeHTTP(w, r)
+		if opts.AutoPersistArtifacts && opts.AuditLogStore != nil {
+			ai := newArtifactInterceptor(w, opts.AuditLogStore)
+			defer ai.Close()
+			rp.ServeHTTP(ai, r)
+		} else {
+			rp.ServeHTTP(w, r)
+		}
 	})
 
 	mode := "direct (per-agent URL)"
