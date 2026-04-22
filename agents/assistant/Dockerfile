@@ -10,6 +10,7 @@ COPY main.py .
 COPY callbacks.py .
 COPY event_converter.py .
 COPY prompt.md .
+COPY prompts/ /app/prompts/
 
 COPY skills/ /app/skills/
 

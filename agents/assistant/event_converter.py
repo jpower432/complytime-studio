@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Custom ADK-to-A2A event converter that adds application/yaml metadata on artifacts.
+"""Custom ADK-to-A2A event converter that adds artifact metadata.
 
 Wraps the default converter and enriches TaskArtifactUpdateEvent parts with
-MIME type metadata when the originating ADK event carries artifact_delta.
+MIME type and provenance metadata when the originating ADK event carries
+artifact_delta.
 """
 
 import logging
@@ -58,11 +59,14 @@ def convert_event_with_yaml_metadata(
 def _enrich_artifact_metadata(
     a2a_event: TaskArtifactUpdateEvent, adk_event: Event
 ) -> None:
-    """Add application/yaml MIME metadata to artifact parts."""
+    """Add MIME type and provenance metadata to artifact parts."""
     if not a2a_event.artifact or not a2a_event.artifact.parts:
         return
 
     filenames = list(adk_event.actions.artifact_delta.keys())
+
+    from main import MODEL_NAME, PROMPT_VERSION
+
     for part in a2a_event.artifact.parts:
         root = getattr(part, "root", part)
         if not hasattr(root, "metadata"):
@@ -70,8 +74,13 @@ def _enrich_artifact_metadata(
         if root.metadata is None:
             root.metadata = {}
         root.metadata["mimeType"] = "application/yaml"
+        root.metadata["model"] = MODEL_NAME
+        root.metadata["promptVersion"] = PROMPT_VERSION
         if filenames:
             root.metadata["name"] = filenames[0]
             logger.info(
-                "Enriched artifact part with YAML metadata: %s", filenames[0]
+                "Enriched artifact part with metadata: %s (model=%s, prompt=%s)",
+                filenames[0],
+                MODEL_NAME,
+                PROMPT_VERSION,
             )

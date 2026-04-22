@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+import yaml
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import InMemoryQueueManager
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -51,12 +53,50 @@ def load_skills() -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def load_few_shot_examples() -> str:
+    """Read YAML few-shot files and format into a prompt section."""
+    few_shot_dir = Path("/app/prompts/few-shot")
+    if not few_shot_dir.exists():
+        return ""
+    parts: list[str] = []
+    for f in sorted(few_shot_dir.glob("*.yaml")):
+        try:
+            examples = yaml.safe_load(f.read_text())
+        except yaml.YAMLError:
+            logger.warning("Skipping malformed few-shot file: %s", f.name)
+            continue
+        if not isinstance(examples, list):
+            continue
+        for ex in examples:
+            if not isinstance(ex, dict) or "scenario" not in ex:
+                continue
+            lines = [f"**Scenario:** {ex['scenario']}"]
+            if ex.get("evidence"):
+                lines.append(f"**Evidence:** {ex['evidence']}")
+            elif ex.get("audit_result_type"):
+                lines.append(f"**AuditResult type:** {ex['audit_result_type']}")
+                if ex.get("mapping"):
+                    lines.append(f"**Mapping:** {ex['mapping']}")
+            for key in ("classification", "determination", "coverage"):
+                if key in ex:
+                    lines.append(f"**{key.title()}:** {ex[key]}")
+            if ex.get("reasoning"):
+                lines.append(f"**Reasoning:** {ex['reasoning'].strip()}")
+            parts.append("\n".join(lines))
+    if not parts:
+        return ""
+    return "## Classification Examples\n\n" + "\n\n---\n\n".join(parts)
+
+
 def load_prompt() -> str:
     prompt_path = Path("/app/prompt.md")
     base_prompt = prompt_path.read_text()
     skills_text = load_skills()
     if skills_text:
-        return f"{base_prompt}\n\n## Loaded Skills\n\n{skills_text}"
+        base_prompt = f"{base_prompt}\n\n## Loaded Skills\n\n{skills_text}"
+    few_shot_text = load_few_shot_examples()
+    if few_shot_text:
+        base_prompt = f"{base_prompt}\n\n{few_shot_text}"
     return base_prompt
 
 
@@ -79,6 +119,7 @@ def build_tools() -> list:
                 connection_params=StreamableHTTPConnectionParams(
                     url=CLICKHOUSE_MCP_URL
                 ),
+                tool_filter=["run_select_query", "list_databases", "list_tables"],
             )
         )
         logger.info("clickhouse-mcp toolset registered (http: %s)", CLICKHOUSE_MCP_URL)
@@ -89,10 +130,14 @@ def build_tools() -> list:
     return tools
 
 
+_INSTRUCTION = load_prompt()
+PROMPT_VERSION = hashlib.sha256(_INSTRUCTION.encode()).hexdigest()[:12]
+logger.info("prompt_version=%s model=%s", PROMPT_VERSION, MODEL_NAME)
+
 root_agent = LlmAgent(
     name="studio_assistant",
     model=MODEL_NAME,
-    instruction=load_prompt(),
+    instruction=_INSTRUCTION,
     tools=build_tools(),
     description=(
         "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
