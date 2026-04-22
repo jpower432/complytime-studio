@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/complytime/complytime-studio/internal/consts"
+	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/complytime/complytime-studio/internal/httputil"
 )
 
@@ -23,6 +25,9 @@ type Stores struct {
 	Mappings  MappingStore
 	Evidence  EvidenceStore
 	AuditLogs AuditLogStore
+	Controls  ControlStore
+	Threats        ThreatStore
+	Catalogs       CatalogStore
 }
 
 // Register mounts all store API endpoints on the mux.
@@ -37,6 +42,7 @@ func Register(mux *http.ServeMux, s Stores) {
 	mux.HandleFunc("GET /api/audit-logs/{id}", getAuditLogHandler(s.AuditLogs))
 	mux.HandleFunc("GET /api/audit-logs", listAuditLogsHandler(s.AuditLogs))
 	mux.HandleFunc("POST /api/audit-logs", createAuditLogHandler(s.AuditLogs))
+	mux.HandleFunc("POST /api/catalogs/import", importCatalogHandler(s.Catalogs, s.Controls, s.Threats))
 }
 
 func listPoliciesHandler(s PolicyStore) http.HandlerFunc {
@@ -109,12 +115,14 @@ func importPolicyHandler(s PolicyStore) http.HandlerFunc {
 			http.Error(w, "insert failed", http.StatusInternalServerError)
 			return
 		}
+
 		httputil.WriteJSON(w, http.StatusCreated, map[string]string{"status": "imported", "policy_id": p.PolicyID})
 	}
 }
 
 func importMappingHandler(s MappingStore) http.HandlerFunc {
 	type importReq struct {
+		MappingID string `json:"mapping_id"`
 		PolicyID  string `json:"policy_id"`
 		Framework string `json:"framework"`
 		Content   string `json:"content"`
@@ -130,6 +138,7 @@ func importMappingHandler(s MappingStore) http.HandlerFunc {
 			return
 		}
 		m := MappingDocument{
+			MappingID: req.MappingID,
 			PolicyID:  req.PolicyID,
 			Framework: req.Framework,
 			Content:   req.Content,
@@ -139,6 +148,21 @@ func importMappingHandler(s MappingStore) http.HandlerFunc {
 			http.Error(w, "insert failed", http.StatusInternalServerError)
 			return
 		}
+
+		entries, parseErr := gemarapkg.ParseMappingEntries(req.Content, m.MappingID, req.PolicyID, req.Framework)
+		if parseErr != nil {
+			slog.Warn("mapping YAML parse failed, structured entries skipped",
+				"mapping_id", m.MappingID, "error", parseErr)
+		} else if len(entries) > 0 {
+			if err := s.InsertMappingEntries(r.Context(), entries); err != nil {
+				slog.Warn("insert mapping entries failed",
+					"mapping_id", m.MappingID, "error", err)
+			} else {
+				slog.Info("mapping entries stored",
+					"mapping_id", m.MappingID, "count", len(entries))
+			}
+		}
+
 		httputil.WriteJSON(w, http.StatusCreated, map[string]string{"status": "imported", "mapping_id": m.MappingID})
 	}
 }
@@ -386,16 +410,44 @@ func listAuditLogsHandler(s AuditLogStore) http.HandlerFunc {
 }
 
 func createAuditLogHandler(s AuditLogStore) http.HandlerFunc {
+	type createReq struct {
+		PolicyID      string `json:"policy_id"`
+		Content       string `json:"content"`
+		Model         string `json:"model,omitempty"`
+		PromptVersion string `json:"prompt_version,omitempty"`
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		var a AuditLog
-		if err := json.NewDecoder(io.LimitReader(r.Body, consts.MaxRequestBody)).Decode(&a); err != nil {
+		var req createReq
+		if err := json.NewDecoder(io.LimitReader(r.Body, consts.MaxRequestBody)).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		if a.PolicyID == "" || a.Content == "" || a.AuditStart.IsZero() || a.AuditEnd.IsZero() {
-			http.Error(w, "policy_id, content, audit_start, and audit_end required", http.StatusBadRequest)
+		if req.PolicyID == "" || req.Content == "" {
+			http.Error(w, "policy_id and content required", http.StatusBadRequest)
 			return
 		}
+
+		summary, parseErr := gemarapkg.ParseAuditLog(req.Content)
+		if parseErr != nil {
+			slog.Warn("audit log YAML parse failed", "policy_id", req.PolicyID, "error", parseErr)
+			http.Error(w, fmt.Sprintf("invalid audit log content: %v", parseErr), http.StatusBadRequest)
+			return
+		}
+
+		a := AuditLog{
+			PolicyID:   req.PolicyID,
+			Content:    req.Content,
+			AuditStart: summary.AuditStart,
+			AuditEnd:   summary.AuditEnd,
+			Framework:  summary.Framework,
+			Summary: fmt.Sprintf(
+				`{"strengths":%d,"findings":%d,"gaps":%d,"observations":%d}`,
+				summary.Strengths, summary.Findings, summary.Gaps, summary.Observations,
+			),
+			Model:         req.Model,
+			PromptVersion: req.PromptVersion,
+		}
+
 		if err := s.InsertAuditLog(r.Context(), a); err != nil {
 			slog.Error("insert audit log failed", "error", err)
 			http.Error(w, "insert failed", http.StatusInternalServerError)
@@ -403,4 +455,132 @@ func createAuditLogHandler(s AuditLogStore) http.HandlerFunc {
 		}
 		httputil.WriteJSON(w, http.StatusCreated, map[string]string{"status": "stored", "audit_id": a.AuditID})
 	}
+}
+
+func importCatalogHandler(cs CatalogStore, ctrlS ControlStore, threatS ThreatStore) http.HandlerFunc {
+	type importReq struct {
+		CatalogID string `json:"catalog_id"`
+		PolicyID  string `json:"policy_id"`
+		Content   string `json:"content"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req importReq
+		if err := json.NewDecoder(io.LimitReader(r.Body, consts.MaxRequestBody)).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if req.Content == "" {
+			http.Error(w, "content required", http.StatusBadRequest)
+			return
+		}
+
+		catalogType, title := detectCatalogType(req.Content)
+		if catalogType == "" {
+			http.Error(w, "could not detect catalog type from content (expected ControlCatalog or ThreatCatalog)", http.StatusBadRequest)
+			return
+		}
+
+		catalogID := req.CatalogID
+		if catalogID == "" {
+			catalogID = detectCatalogID(req.Content)
+		}
+
+		if cs != nil {
+			if err := cs.InsertCatalog(r.Context(), Catalog{
+				CatalogID:   catalogID,
+				CatalogType: catalogType,
+				Title:       title,
+				Content:     req.Content,
+				PolicyID:    req.PolicyID,
+			}); err != nil {
+				slog.Error("insert catalog failed", "error", err)
+				http.Error(w, "insert failed", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		parseCatalogStructuredRows(r.Context(), catalogType, req.Content, catalogID, req.PolicyID, ctrlS, threatS)
+
+		httputil.WriteJSON(w, http.StatusCreated, map[string]string{
+			"status":       "imported",
+			"catalog_id":   catalogID,
+			"catalog_type": catalogType,
+		})
+	}
+}
+
+func parseCatalogStructuredRows(ctx context.Context, catalogType, content, catalogID, policyID string, ctrlS ControlStore, threatS ThreatStore) {
+	switch catalogType {
+	case "ControlCatalog":
+		if ctrlS == nil {
+			return
+		}
+		controls, reqs, threats, err := gemarapkg.ParseControlCatalog(content, catalogID, policyID)
+		if err != nil {
+			slog.Warn("control catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
+			return
+		}
+		if len(controls) > 0 {
+			if err := ctrlS.InsertControls(ctx, controls); err != nil {
+				slog.Warn("insert controls failed", "catalog_id", catalogID, "error", err)
+			}
+		}
+		if len(reqs) > 0 {
+			if err := ctrlS.InsertAssessmentRequirements(ctx, reqs); err != nil {
+				slog.Warn("insert assessment requirements failed", "catalog_id", catalogID, "error", err)
+			}
+		}
+		if len(threats) > 0 {
+			if err := ctrlS.InsertControlThreats(ctx, threats); err != nil {
+				slog.Warn("insert control threats failed", "catalog_id", catalogID, "error", err)
+			}
+		}
+		slog.Info("control catalog indexed", "catalog_id", catalogID, "controls", len(controls), "requirements", len(reqs), "control_threats", len(threats))
+
+	case "ThreatCatalog":
+		if threatS == nil {
+			return
+		}
+		rows, err := gemarapkg.ParseThreatCatalog(content, catalogID, policyID)
+		if err != nil {
+			slog.Warn("threat catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
+			return
+		}
+		if len(rows) > 0 {
+			if err := threatS.InsertThreats(ctx, rows); err != nil {
+				slog.Warn("insert threats failed", "catalog_id", catalogID, "error", err)
+			}
+		}
+		slog.Info("threat catalog indexed", "catalog_id", catalogID, "threats", len(rows))
+	}
+}
+
+func detectCatalogType(content string) (catalogType, title string) {
+	var meta struct {
+		Title    string `yaml:"title"`
+		Metadata struct {
+			Type string `yaml:"type"`
+		} `yaml:"metadata"`
+	}
+	if err := gemarapkg.UnmarshalYAML([]byte(content), &meta); err != nil {
+		return "", ""
+	}
+	switch meta.Metadata.Type {
+	case "ControlCatalog", "ThreatCatalog":
+		return meta.Metadata.Type, meta.Title
+	default:
+		return "", ""
+	}
+}
+
+func detectCatalogID(content string) string {
+	var meta struct {
+		Metadata struct {
+			ID string `yaml:"id"`
+		} `yaml:"metadata"`
+	}
+	if err := gemarapkg.UnmarshalYAML([]byte(content), &meta); err != nil {
+		return ""
+	}
+	return meta.Metadata.ID
 }

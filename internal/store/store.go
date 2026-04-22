@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/google/uuid"
 )
 
@@ -22,6 +23,30 @@ type PolicyStore interface {
 type MappingStore interface {
 	InsertMapping(ctx context.Context, m MappingDocument) error
 	ListMappings(ctx context.Context, policyID string) ([]MappingDocument, error)
+	ListAllMappings(ctx context.Context) ([]MappingDocument, error)
+	InsertMappingEntries(ctx context.Context, entries []gemara.MappingEntry) error
+	CountMappingEntries(ctx context.Context, mappingID string) (int, error)
+}
+
+// ControlStore defines read/write operations for parsed control catalog entries.
+type ControlStore interface {
+	InsertControls(ctx context.Context, rows []gemara.ControlRow) error
+	InsertAssessmentRequirements(ctx context.Context, rows []gemara.AssessmentRequirementRow) error
+	InsertControlThreats(ctx context.Context, rows []gemara.ControlThreatRow) error
+	CountControls(ctx context.Context, catalogID string) (int, error)
+}
+
+// ThreatStore defines read/write operations for parsed threat catalog entries.
+type ThreatStore interface {
+	InsertThreats(ctx context.Context, rows []gemara.ThreatRow) error
+	CountThreats(ctx context.Context, catalogID string) (int, error)
+}
+
+// CatalogStore defines read/write operations for raw catalog artifacts.
+type CatalogStore interface {
+	InsertCatalog(ctx context.Context, c Catalog) error
+	ListCatalogs(ctx context.Context) ([]Catalog, error)
+	GetCatalog(ctx context.Context, catalogID string) (*Catalog, error)
 }
 
 // EvidenceStore defines read/write operations for evidence records.
@@ -46,10 +71,13 @@ type Store struct {
 
 // Compile-time interface satisfaction checks.
 var (
-	_ PolicyStore   = (*Store)(nil)
-	_ MappingStore  = (*Store)(nil)
-	_ EvidenceStore = (*Store)(nil)
+	_ PolicyStore        = (*Store)(nil)
+	_ MappingStore       = (*Store)(nil)
+	_ EvidenceStore      = (*Store)(nil)
 	_ AuditLogStore = (*Store)(nil)
+	_ ControlStore  = (*Store)(nil)
+	_ ThreatStore        = (*Store)(nil)
+	_ CatalogStore       = (*Store)(nil)
 )
 
 // New wraps an existing ClickHouse connection.
@@ -133,7 +161,7 @@ func (s *Store) InsertMapping(ctx context.Context, m MappingDocument) error {
 // ListMappings returns mapping documents for a given policy.
 func (s *Store) ListMappings(ctx context.Context, policyID string) ([]MappingDocument, error) {
 	rows, err := s.conn.Query(ctx,
-		`SELECT mapping_id, policy_id, framework, imported_at FROM mapping_documents FINAL WHERE policy_id = ? ORDER BY imported_at DESC`, policyID)
+		`SELECT mapping_id, policy_id, framework, content, imported_at FROM mapping_documents FINAL WHERE policy_id = ? ORDER BY imported_at DESC`, policyID)
 	if err != nil {
 		return nil, fmt.Errorf("list mappings: %w", err)
 	}
@@ -142,12 +170,157 @@ func (s *Store) ListMappings(ctx context.Context, policyID string) ([]MappingDoc
 	var out []MappingDocument
 	for rows.Next() {
 		var m MappingDocument
-		if err := rows.Scan(&m.MappingID, &m.PolicyID, &m.Framework, &m.ImportedAt); err != nil {
+		if err := rows.Scan(&m.MappingID, &m.PolicyID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
 			return nil, fmt.Errorf("scan mapping: %w", err)
 		}
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// ListAllMappings returns all mapping documents across all policies.
+func (s *Store) ListAllMappings(ctx context.Context) ([]MappingDocument, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT mapping_id, policy_id, framework, content, imported_at FROM mapping_documents FINAL ORDER BY imported_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list all mappings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []MappingDocument
+	for rows.Next() {
+		var m MappingDocument
+		if err := rows.Scan(&m.MappingID, &m.PolicyID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
+			return nil, fmt.Errorf("scan mapping: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// InsertMappingEntries batch-inserts structured mapping entries.
+func (s *Store) InsertMappingEntries(ctx context.Context, entries []gemara.MappingEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO mapping_entries (mapping_id, policy_id, control_id, requirement_id, framework, reference, strength, confidence)`)
+	if err != nil {
+		return fmt.Errorf("prepare mapping entries batch: %w", err)
+	}
+	for _, e := range entries {
+		if err := batch.Append(e.MappingID, e.PolicyID, e.ControlID, e.RequirementID, e.Framework, e.Reference, e.Strength, e.Confidence); err != nil {
+			return fmt.Errorf("append mapping entry: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+// CountMappingEntries returns the number of structured entries for a given mapping document.
+func (s *Store) CountMappingEntries(ctx context.Context, mappingID string) (int, error) {
+	row := s.conn.QueryRow(ctx,
+		`SELECT count() FROM mapping_entries WHERE mapping_id = ?`, mappingID)
+	var count uint64
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("count mapping entries: %w", err)
+	}
+	return int(count), nil
+}
+
+func (s *Store) InsertControls(ctx context.Context, rows []gemara.ControlRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO controls (catalog_id, control_id, title, objective, group_id, state, policy_id)`)
+	if err != nil {
+		return fmt.Errorf("prepare controls batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.CatalogID, r.ControlID, r.Title, r.Objective, r.GroupID, r.State, r.PolicyID,
+		); err != nil {
+			return fmt.Errorf("append control: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+func (s *Store) InsertAssessmentRequirements(ctx context.Context, rows []gemara.AssessmentRequirementRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO assessment_requirements (catalog_id, control_id, requirement_id, text, applicability, recommendation, state)`)
+	if err != nil {
+		return fmt.Errorf("prepare assessment requirements batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.CatalogID, r.ControlID, r.RequirementID, r.Text, r.Applicability, r.Recommendation, r.State,
+		); err != nil {
+			return fmt.Errorf("append assessment requirement: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+func (s *Store) InsertControlThreats(ctx context.Context, rows []gemara.ControlThreatRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO control_threats (catalog_id, control_id, threat_reference_id, threat_entry_id)`)
+	if err != nil {
+		return fmt.Errorf("prepare control threats batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.CatalogID, r.ControlID, r.ThreatReferenceID, r.ThreatEntryID,
+		); err != nil {
+			return fmt.Errorf("append control threat: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+func (s *Store) CountControls(ctx context.Context, catalogID string) (int, error) {
+	row := s.conn.QueryRow(ctx,
+		`SELECT count() FROM controls WHERE catalog_id = ?`, catalogID)
+	var count uint64
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("count controls: %w", err)
+	}
+	return int(count), nil
+}
+
+func (s *Store) InsertThreats(ctx context.Context, rows []gemara.ThreatRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO threats (catalog_id, threat_id, title, description, group_id, policy_id)`)
+	if err != nil {
+		return fmt.Errorf("prepare threats batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.CatalogID, r.ThreatID, r.Title, r.Description, r.GroupID, r.PolicyID,
+		); err != nil {
+			return fmt.Errorf("append threat: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+func (s *Store) CountThreats(ctx context.Context, catalogID string) (int, error) {
+	row := s.conn.QueryRow(ctx,
+		`SELECT count() FROM threats WHERE catalog_id = ?`, catalogID)
+	var count uint64
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("count threats: %w", err)
+	}
+	return int(count), nil
 }
 
 // EvidenceRecord represents a single evidence row for the REST API.
@@ -193,18 +366,18 @@ func (s *Store) InsertEvidence(ctx context.Context, records []EvidenceRecord) (i
 
 // EvidenceFilter holds query parameters for evidence queries.
 type EvidenceFilter struct {
-	PolicyID      string
-	ControlID     string
-	TargetName    string
-	TargetType    string
-	TargetEnv     string
-	Framework     string
-	EngineVersion string
-	Owner         string
-	Start         time.Time
-	End           time.Time
-	Limit         int
-	Offset        int
+	PolicyID         string
+	ControlID        string
+	TargetName       string
+	TargetType       string
+	TargetEnv        string
+	Framework        string
+	EngineVersion    string
+	Owner            string
+	Start            time.Time
+	End              time.Time
+	Limit  int
+	Offset int
 }
 
 // QueryEvidence returns evidence rows matching the filter.
@@ -294,15 +467,17 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 
 // AuditLog represents a stored audit log artifact.
 type AuditLog struct {
-	AuditID    string    `json:"audit_id"`
-	PolicyID   string    `json:"policy_id"`
-	AuditStart time.Time `json:"audit_start"`
-	AuditEnd   time.Time `json:"audit_end"`
-	Framework  string    `json:"framework,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	CreatedBy  string    `json:"created_by,omitempty"`
-	Content    string    `json:"content"`
-	Summary    string    `json:"summary"`
+	AuditID       string    `json:"audit_id"`
+	PolicyID      string    `json:"policy_id"`
+	AuditStart    time.Time `json:"audit_start"`
+	AuditEnd      time.Time `json:"audit_end"`
+	Framework     string    `json:"framework,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	CreatedBy     string    `json:"created_by,omitempty"`
+	Content       string    `json:"content"`
+	Summary       string    `json:"summary"`
+	Model         string    `json:"model,omitempty"`
+	PromptVersion string    `json:"prompt_version,omitempty"`
 }
 
 // InsertAuditLog stores an AuditLog artifact.
@@ -311,14 +486,14 @@ func (s *Store) InsertAuditLog(ctx context.Context, a AuditLog) error {
 		a.AuditID = uuid.New().String()
 	}
 	return s.conn.Exec(ctx,
-		`INSERT INTO audit_logs (audit_id, policy_id, audit_start, audit_end, framework, created_by, content, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.AuditID, a.PolicyID, a.AuditStart, a.AuditEnd, a.Framework, a.CreatedBy, a.Content, a.Summary,
+		`INSERT INTO audit_logs (audit_id, policy_id, audit_start, audit_end, framework, created_by, content, summary, model, prompt_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.AuditID, a.PolicyID, a.AuditStart, a.AuditEnd, a.Framework, a.CreatedBy, a.Content, a.Summary, a.Model, a.PromptVersion,
 	)
 }
 
 // ListAuditLogs returns audit logs for a given policy, optionally filtered by time range.
 func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end time.Time) ([]AuditLog, error) {
-	query := `SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, summary FROM audit_logs FINAL WHERE policy_id = ?`
+	query := `SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, summary, model, prompt_version FROM audit_logs FINAL WHERE policy_id = ?`
 	args := []any{policyID}
 
 	if !start.IsZero() {
@@ -340,7 +515,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end t
 	var out []AuditLog
 	for rows.Next() {
 		var a AuditLog
-		if err := rows.Scan(&a.AuditID, &a.PolicyID, &a.AuditStart, &a.AuditEnd, &a.Framework, &a.CreatedAt, &a.CreatedBy, &a.Summary); err != nil {
+		if err := rows.Scan(&a.AuditID, &a.PolicyID, &a.AuditStart, &a.AuditEnd, &a.Framework, &a.CreatedAt, &a.CreatedBy, &a.Summary, &a.Model, &a.PromptVersion); err != nil {
 			return nil, fmt.Errorf("scan audit log: %w", err)
 		}
 		out = append(out, a)
@@ -351,10 +526,59 @@ func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end t
 // GetAuditLog returns a single audit log with full content.
 func (s *Store) GetAuditLog(ctx context.Context, auditID string) (*AuditLog, error) {
 	row := s.conn.QueryRow(ctx,
-		`SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary FROM audit_logs FINAL WHERE audit_id = ?`, auditID)
+		`SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary, model, prompt_version FROM audit_logs FINAL WHERE audit_id = ?`, auditID)
 	var a AuditLog
-	if err := row.Scan(&a.AuditID, &a.PolicyID, &a.AuditStart, &a.AuditEnd, &a.Framework, &a.CreatedAt, &a.CreatedBy, &a.Content, &a.Summary); err != nil {
+	if err := row.Scan(&a.AuditID, &a.PolicyID, &a.AuditStart, &a.AuditEnd, &a.Framework, &a.CreatedAt, &a.CreatedBy, &a.Content, &a.Summary, &a.Model, &a.PromptVersion); err != nil {
 		return nil, fmt.Errorf("get audit log: %w", err)
 	}
 	return &a, nil
+}
+
+// Catalog represents a stored catalog artifact (ControlCatalog, ThreatCatalog, etc.).
+type Catalog struct {
+	CatalogID   string    `json:"catalog_id"`
+	CatalogType string    `json:"catalog_type"`
+	Title       string    `json:"title"`
+	Content     string    `json:"content"`
+	PolicyID    string    `json:"policy_id,omitempty"`
+	ImportedAt  time.Time `json:"imported_at"`
+}
+
+// InsertCatalog stores a raw catalog artifact.
+func (s *Store) InsertCatalog(ctx context.Context, c Catalog) error {
+	return s.conn.Exec(ctx,
+		`INSERT INTO catalogs (catalog_id, catalog_type, title, content, policy_id) VALUES (?, ?, ?, ?, ?)`,
+		c.CatalogID, c.CatalogType, c.Title, c.Content, c.PolicyID,
+	)
+}
+
+// ListCatalogs returns all stored catalogs (without content for efficiency).
+func (s *Store) ListCatalogs(ctx context.Context) ([]Catalog, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT catalog_id, catalog_type, title, policy_id, imported_at FROM catalogs FINAL ORDER BY imported_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list catalogs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Catalog
+	for rows.Next() {
+		var c Catalog
+		if err := rows.Scan(&c.CatalogID, &c.CatalogType, &c.Title, &c.PolicyID, &c.ImportedAt); err != nil {
+			return nil, fmt.Errorf("scan catalog: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// GetCatalog returns a single catalog with full content.
+func (s *Store) GetCatalog(ctx context.Context, catalogID string) (*Catalog, error) {
+	row := s.conn.QueryRow(ctx,
+		`SELECT catalog_id, catalog_type, title, content, policy_id, imported_at FROM catalogs FINAL WHERE catalog_id = ?`, catalogID)
+	var c Catalog
+	if err := row.Scan(&c.CatalogID, &c.CatalogType, &c.Title, &c.Content, &c.PolicyID, &c.ImportedAt); err != nil {
+		return nil, fmt.Errorf("get catalog: %w", err)
+	}
+	return &c, nil
 }

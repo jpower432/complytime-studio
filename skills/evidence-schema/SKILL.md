@@ -5,7 +5,7 @@ description: ClickHouse table schemas, enum values, and query patterns for compl
 
 # Evidence Schema
 
-All data is queried via `run_select_query` through the clickhouse-mcp server.
+All data is in the `default` database, queried via `run_select_query` through the clickhouse-mcp server. Always use `database: "default"` when calling `list_tables` or `list_databases`.
 
 ## Tables
 
@@ -89,6 +89,91 @@ Cross-framework mapping documents linking internal criteria to external framewor
 | content | String | Full MappingDocument YAML |
 | imported_at | DateTime64(3) | Import timestamp |
 
+### mapping_entries
+
+Structured mapping entries parsed from mapping document YAML at import time. Each row is one control-to-framework-objective relationship. Enables SQL joins between evidence and framework objectives without YAML parsing.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| mapping_id | String | Parent mapping_documents row |
+| policy_id | String | Associated policy |
+| control_id | String | Source control entry ID (e.g., BP-1) |
+| requirement_id | String | Mapping entry ID from the Gemara MappingDocument |
+| framework | String | Target framework (e.g., SOC 2) |
+| reference | String | Framework objective (e.g., CC8.1) |
+| strength | UInt8 | Author's estimate of how completely the control satisfies the objective (1-10, 0=unset) |
+| confidence | String | Confidence level (Undetermined, Low, Medium, High) |
+| imported_at | DateTime64(3) | Import timestamp |
+
+### catalogs
+
+Raw catalog artifacts (ControlCatalog, ThreatCatalog) imported via `/api/catalogs/import`.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| catalog_id | String | Catalog identifier (from metadata.id) |
+| catalog_type | LowCardinality(String) | Artifact type: ControlCatalog, ThreatCatalog |
+| title | String | Catalog title |
+| content | String | Full catalog YAML |
+| policy_id | String | Policy that imported this catalog (provenance) |
+| imported_at | DateTime64(3) | Import timestamp |
+
+### controls
+
+Parsed L2 ControlCatalog entries. One row per control.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| catalog_id | String | Parent ControlCatalog ID |
+| control_id | String | Control identifier |
+| title | String | Control title |
+| objective | String | Control objective statement |
+| group_id | String | Catalog group this control belongs to |
+| state | LowCardinality(String) | Lifecycle state: Active, Draft, Deprecated, Retired |
+| policy_id | String | Policy that imported the catalog (provenance) |
+| imported_at | DateTime64(3) | Import timestamp |
+
+### assessment_requirements
+
+Parsed L2 assessment requirements. One row per requirement, linked to its parent control.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| catalog_id | String | Parent ControlCatalog ID |
+| control_id | String | Parent control ID |
+| requirement_id | String | Requirement identifier |
+| text | String | Requirement text (MUST condition) |
+| applicability | Array(String) | Applicability tags |
+| recommendation | String | Non-binding recommendation |
+| state | LowCardinality(String) | Lifecycle state |
+| imported_at | DateTime64(3) | Import timestamp |
+
+### control_threats
+
+Junction table linking controls to threats via `Control.threats` cross-references.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| catalog_id | String | Parent ControlCatalog ID |
+| control_id | String | Control that mitigates the threat |
+| threat_reference_id | String | Reference to the ThreatCatalog mapping reference |
+| threat_entry_id | String | Specific threat ID within the referenced catalog |
+| imported_at | DateTime64(3) | Import timestamp |
+
+### threats
+
+Parsed L2 ThreatCatalog entries. One row per threat.
+
+| Column | Type | Description |
+|:--|:--|:--|
+| catalog_id | String | Parent ThreatCatalog ID |
+| threat_id | String | Threat identifier |
+| title | String | Threat title |
+| description | String | Threat description |
+| group_id | String | Catalog group this threat belongs to |
+| policy_id | String | Policy that imported the catalog (provenance) |
+| imported_at | DateTime64(3) | Import timestamp |
+
 ### audit_logs
 
 Completed L7 AuditLog artifacts produced by the assistant.
@@ -104,6 +189,8 @@ Completed L7 AuditLog artifacts produced by the assistant.
 | created_by | Nullable(String) | Creating user |
 | content | String | Full AuditLog YAML |
 | summary | String | Audit summary text |
+| model | Nullable(String) | LLM model that produced the artifact |
+| prompt_version | Nullable(String) | SHA256 prefix of the instruction string active at creation |
 
 ## Query Patterns
 
@@ -172,4 +259,101 @@ SELECT mapping_id, framework, content
 FROM mapping_documents
 WHERE policy_id = '{policy_id}'
 ORDER BY framework
+```
+
+### Impact / blast radius
+
+Join evidence failures against structured mapping entries to determine which framework objectives are affected. This is the primary query for answering "which certifications or ATOs are potentially affected by this failure?"
+
+```sql
+SELECT e.control_id, e.target_name, e.eval_result,
+       m.framework, m.reference, m.strength, m.confidence
+FROM evidence e
+JOIN mapping_entries m
+  ON e.policy_id = m.policy_id AND e.control_id = m.control_id
+WHERE e.policy_id = '{policy_id}'
+  AND e.eval_result IN ('Failed', 'Not Run')
+  AND e.collected_at BETWEEN '{start}' AND '{end}'
+ORDER BY m.framework, m.reference, m.strength DESC
+```
+
+### Threat impact traversal
+
+Find all evidence for controls that mitigate a specific threat (threat → control → evidence):
+
+```sql
+SELECT e.target_id, e.control_id, e.eval_result, e.collected_at
+FROM control_threats ct
+JOIN evidence e
+  ON e.control_id = ct.control_id
+WHERE ct.threat_entry_id = '{threat_id}'
+  AND e.policy_id = '{policy_id}'
+ORDER BY e.collected_at DESC
+```
+
+### Coverage completeness
+
+Find controls with no evidence (gap detection):
+
+```sql
+SELECT c.control_id, c.title, c.objective
+FROM controls c
+LEFT JOIN evidence e
+  ON e.control_id = c.control_id AND e.policy_id = '{policy_id}'
+WHERE c.catalog_id = '{catalog_id}'
+  AND e.control_id IS NULL
+ORDER BY c.control_id
+```
+
+### Requirement text enrichment
+
+Enrich evidence rows with the human-readable assessment requirement text:
+
+```sql
+SELECT e.control_id, e.requirement_id, e.eval_result,
+       ar.text AS requirement_text, ar.recommendation
+FROM evidence e
+JOIN assessment_requirements ar
+  ON ar.control_id = e.control_id
+  AND ar.requirement_id = e.requirement_id
+WHERE e.policy_id = '{policy_id}'
+ORDER BY e.control_id, e.requirement_id
+```
+
+### Framework-to-threat traversal
+
+Discover which threats are addressed by controls mapped to a framework (framework → mapping → control → threat):
+
+```sql
+SELECT DISTINCT t.threat_id, t.title, t.description
+FROM mapping_entries me
+JOIN controls c
+  ON c.control_id = me.control_id
+JOIN control_threats ct
+  ON ct.control_id = c.control_id AND ct.catalog_id = c.catalog_id
+JOIN threats t
+  ON t.threat_id = ct.threat_entry_id
+WHERE me.framework = '{framework}'
+  AND me.policy_id = '{policy_id}'
+ORDER BY t.threat_id
+```
+
+### Impact aggregation by framework objective
+
+Summarize the blast radius by grouping failed controls per framework objective:
+
+```sql
+SELECT m.framework, m.reference,
+       count(DISTINCT e.control_id) AS failed_controls,
+       count(DISTINCT e.target_name) AS affected_targets,
+       max(m.strength) AS max_strength,
+       groupArray(DISTINCT e.control_id) AS control_ids
+FROM evidence e
+JOIN mapping_entries m
+  ON e.policy_id = m.policy_id AND e.control_id = m.control_id
+WHERE e.policy_id = '{policy_id}'
+  AND e.eval_result IN ('Failed', 'Not Run')
+  AND e.collected_at BETWEEN '{start}' AND '{end}'
+GROUP BY m.framework, m.reference
+ORDER BY max_strength DESC, m.framework, m.reference
 ```

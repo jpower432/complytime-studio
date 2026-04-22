@@ -60,8 +60,9 @@ func (c *Client) Conn() driver.Conn {
 	return c.conn
 }
 
-// EnsureSchema creates required tables if they don't exist.
-// Safe to call on every startup — all statements use IF NOT EXISTS.
+// EnsureSchema creates required tables and applies incremental migrations.
+// Safe to call on every startup — CREATE uses IF NOT EXISTS, migrations
+// are tracked in schema_migrations and applied at most once.
 func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 	if retentionMonths <= 0 {
 		retentionMonths = 24
@@ -128,6 +129,19 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 		) ENGINE = ReplacingMergeTree(imported_at)
 		ORDER BY (mapping_id, policy_id)`,
 
+		`CREATE TABLE IF NOT EXISTS mapping_entries (
+			mapping_id String,
+			policy_id String,
+			control_id String,
+			requirement_id String DEFAULT '',
+			framework String,
+			reference String,
+			strength UInt8 DEFAULT 0,
+			confidence String DEFAULT '',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (policy_id, framework, control_id, reference)`,
+
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS audit_logs (
 			audit_id String,
 			policy_id String,
@@ -137,11 +151,67 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 			created_at DateTime64(3) DEFAULT now64(3),
 			created_by Nullable(String),
 			content String,
-			summary String
+			summary String,
+			model Nullable(String),
+			prompt_version Nullable(String)
 		) ENGINE = ReplacingMergeTree(created_at)
 		PARTITION BY toYYYYMM(audit_start)
 		ORDER BY (policy_id, audit_start, audit_id)
 		TTL toDateTime(audit_start) + INTERVAL %d MONTH`, retentionMonths),
+
+		`CREATE TABLE IF NOT EXISTS controls (
+			catalog_id String,
+			control_id String,
+			title String,
+			objective String,
+			group_id String,
+			state LowCardinality(String) DEFAULT 'Active',
+			policy_id String DEFAULT '',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, control_id)`,
+
+		`CREATE TABLE IF NOT EXISTS assessment_requirements (
+			catalog_id String,
+			control_id String,
+			requirement_id String,
+			text String,
+			applicability Array(String),
+			recommendation String DEFAULT '',
+			state LowCardinality(String) DEFAULT 'Active',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, control_id, requirement_id)`,
+
+		`CREATE TABLE IF NOT EXISTS control_threats (
+			catalog_id String,
+			control_id String,
+			threat_reference_id String,
+			threat_entry_id String,
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, control_id, threat_reference_id, threat_entry_id)`,
+
+		`CREATE TABLE IF NOT EXISTS threats (
+			catalog_id String,
+			threat_id String,
+			title String,
+			description String,
+			group_id String,
+			policy_id String DEFAULT '',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, threat_id)`,
+
+		`CREATE TABLE IF NOT EXISTS catalogs (
+			catalog_id String,
+			catalog_type LowCardinality(String),
+			title String,
+			content String,
+			policy_id String DEFAULT '',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id)`,
 	}
 
 	for _, stmt := range stmts {
@@ -149,6 +219,76 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 			return fmt.Errorf("ensure schema: %w", err)
 		}
 	}
+
+	if err := c.applyMigrations(ctx); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+
 	slog.Info("clickhouse schema verified")
 	return nil
+}
+
+type migration struct {
+	Version     int
+	Description string
+	SQL         string
+}
+
+func schemaMigrations() []migration {
+	return []migration{
+		{
+			Version:     1,
+			Description: "add provenance columns to audit_logs",
+			SQL:         `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS model Nullable(String), ADD COLUMN IF NOT EXISTS prompt_version Nullable(String)`,
+		},
+	}
+}
+
+func (c *Client) applyMigrations(ctx context.Context) error {
+	err := c.conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version UInt32,
+		description String,
+		applied_at DateTime64(3) DEFAULT now64(3)
+	) ENGINE = ReplacingMergeTree(applied_at)
+	ORDER BY (version)`)
+	if err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+
+	applied, err := c.appliedVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("read applied versions: %w", err)
+	}
+
+	for _, m := range schemaMigrations() {
+		if applied[m.Version] {
+			continue
+		}
+		slog.Info("applying migration", "version", m.Version, "description", m.Description)
+		if err := c.conn.Exec(ctx, m.SQL); err != nil {
+			return fmt.Errorf("migration %d (%s): %w", m.Version, m.Description, err)
+		}
+		if err := c.conn.Exec(ctx, `INSERT INTO schema_migrations (version, description) VALUES (?, ?)`, m.Version, m.Description); err != nil {
+			return fmt.Errorf("record migration %d (%s): %w", m.Version, m.Description, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) appliedVersions(ctx context.Context) (map[int]bool, error) {
+	rows, err := c.conn.Query(ctx, `SELECT version FROM schema_migrations FINAL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	applied := make(map[int]bool)
+	for rows.Next() {
+		var v uint32
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[int(v)] = true
+	}
+	return applied, rows.Err()
 }

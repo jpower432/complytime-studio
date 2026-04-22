@@ -20,6 +20,14 @@ data:
                 <quota>default</quota>
                 <access_management>1</access_management>
             </default>
+            <{{ .Values.clickhouse.auth.readerUser }}>
+                <password>{{ .Values.clickhouse.auth.readerPassword }}</password>
+                <networks>
+                    <ip>::/0</ip>
+                </networks>
+                <profile>readonly</profile>
+                <quota>default</quota>
+            </{{ .Values.clickhouse.auth.readerUser }}>
         </users>
     </clickhouse>
   low_resource_config.xml: |
@@ -164,6 +172,92 @@ data:
     ENGINE = ReplacingMergeTree(imported_at)
     ORDER BY (mapping_id, policy_id);
 
+    -- Structured mapping entries parsed from mapping_documents at import time.
+    -- Enables SQL joins between evidence and framework objectives.
+    CREATE TABLE IF NOT EXISTS mapping_entries
+    (
+        mapping_id            String,
+        policy_id             String,
+        control_id            String,
+        requirement_id        String DEFAULT '',
+        framework             String,
+        reference             String,
+        strength              UInt8 DEFAULT 0,
+        confidence            String DEFAULT '',
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (policy_id, framework, control_id, reference);
+
+    -- Parsed L2 ControlCatalog entries.
+    CREATE TABLE IF NOT EXISTS controls
+    (
+        catalog_id            String,
+        control_id            String,
+        title                 String,
+        objective             String,
+        group_id              String,
+        state                 LowCardinality(String) DEFAULT 'Active',
+        policy_id             String DEFAULT '',
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (catalog_id, control_id);
+
+    -- Parsed L2 assessment requirements linked to controls.
+    CREATE TABLE IF NOT EXISTS assessment_requirements
+    (
+        catalog_id            String,
+        control_id            String,
+        requirement_id        String,
+        text                  String,
+        applicability         Array(String),
+        recommendation        String DEFAULT '',
+        state                 LowCardinality(String) DEFAULT 'Active',
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (catalog_id, control_id, requirement_id);
+
+    -- Junction table: controls → threats cross-references.
+    CREATE TABLE IF NOT EXISTS control_threats
+    (
+        catalog_id            String,
+        control_id            String,
+        threat_reference_id   String,
+        threat_entry_id       String,
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (catalog_id, control_id, threat_reference_id, threat_entry_id);
+
+    -- Parsed L2 ThreatCatalog entries.
+    CREATE TABLE IF NOT EXISTS threats
+    (
+        catalog_id            String,
+        threat_id             String,
+        title                 String,
+        description           String,
+        group_id              String,
+        policy_id             String DEFAULT '',
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (catalog_id, threat_id);
+
+    -- Raw catalog artifacts for backfill.
+    CREATE TABLE IF NOT EXISTS catalogs
+    (
+        catalog_id            String,
+        catalog_type          LowCardinality(String),
+        title                 String,
+        content               String,
+        policy_id             String DEFAULT '',
+        imported_at           DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(imported_at)
+    ORDER BY (catalog_id);
+
     -- Historical AuditLog artifacts produced by the studio assistant.
     CREATE TABLE IF NOT EXISTS audit_logs
     (
@@ -175,10 +269,22 @@ data:
         created_at            DateTime64(3) DEFAULT now64(3),
         created_by            Nullable(String),
         content               String,
-        summary               String
+        summary               String,
+        model                 Nullable(String),
+        prompt_version        Nullable(String)
     )
     ENGINE = ReplacingMergeTree(created_at)
     PARTITION BY toYYYYMM(audit_start)
     ORDER BY (policy_id, audit_start, audit_id)
     TTL toDateTime(audit_start) + INTERVAL {{ .Values.clickhouse.retentionMonths }} MONTH;
+
+    -- Schema migration tracking.
+    CREATE TABLE IF NOT EXISTS schema_migrations
+    (
+        version               UInt32,
+        description           String,
+        applied_at            DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = ReplacingMergeTree(applied_at)
+    ORDER BY (version);
 {{- end }}
