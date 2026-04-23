@@ -85,6 +85,12 @@ func main() {
 
 	if chClient != nil {
 		st = store.New(chClient.Conn())
+
+		registryAddr := os.Getenv("REGISTRY_INSECURE")
+		if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, registryAddr); err != nil {
+			slog.Warn("catalog seed from registry failed", "error", err)
+		}
+
 		if err := store.PopulateMappingEntries(ctx, st); err != nil {
 			slog.Warn("mapping entries backfill failed", "error", err)
 		}
@@ -93,6 +99,9 @@ func main() {
 		}
 		if err := store.PopulateThreats(ctx, st, st); err != nil {
 			slog.Warn("threats backfill failed", "error", err)
+		}
+		if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+			slog.Warn("effective controls backfill failed", "error", err)
 		}
 		store.Register(mux, store.Stores{
 			Policies:  st,
