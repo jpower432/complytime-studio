@@ -11,15 +11,6 @@ data:
   users_override.xml: |
     <clickhouse>
         <users>
-            <default>
-                <password>{{ .Values.clickhouse.auth.password }}</password>
-                <networks>
-                    <ip>::/0</ip>
-                </networks>
-                <profile>default</profile>
-                <quota>default</quota>
-                <access_management>1</access_management>
-            </default>
             <{{ .Values.clickhouse.auth.readerUser }}>
                 <password>{{ .Values.clickhouse.auth.readerPassword }}</password>
                 <networks>

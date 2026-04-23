@@ -84,6 +84,9 @@ spec:
             - name: config-override
               mountPath: /etc/clickhouse-server/config.d/low_resource_config.xml
               subPath: low_resource_config.xml
+            - name: config-override
+              mountPath: /etc/clickhouse-server/users.d/users_override.xml
+              subPath: users_override.xml
           resources:
             requests:
               memory: {{ .Values.clickhouse.resources.requests.memory | quote }}
@@ -118,6 +121,8 @@ spec:
             items:
               - key: low_resource_config.xml
                 path: low_resource_config.xml
+              - key: users_override.xml
+                path: users_override.xml
   volumeClaimTemplates:
     - metadata:
         name: data
