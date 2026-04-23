@@ -93,7 +93,6 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 			steps_executed Nullable(UInt16),
 			compliance_status Enum8('Compliant'=0,'Non-Compliant'=1,'Exempt'=2,'Not Applicable'=3,'Unknown'=4),
 			risk_level Nullable(Enum8('Critical'=0,'High'=1,'Medium'=2,'Low'=3,'Informational'=4)),
-			frameworks Array(String),
 			requirements Array(String),
 			remediation_action Nullable(Enum8('Block'=0,'Allow'=1,'Remediate'=2,'Waive'=3,'Notify'=4,'Unknown'=5)),
 			remediation_status Nullable(Enum8('Success'=0,'Fail'=1,'Skipped'=2,'Unknown'=3)),
@@ -240,6 +239,11 @@ func schemaMigrations() []migration {
 			Version:     1,
 			Description: "add provenance columns to audit_logs",
 			SQL:         `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS model Nullable(String), ADD COLUMN IF NOT EXISTS prompt_version Nullable(String)`,
+		},
+		{
+			Version:     2,
+			Description: "drop denormalized frameworks from evidence",
+			SQL:         `ALTER TABLE evidence DROP COLUMN IF EXISTS frameworks`,
 		},
 	}
 }

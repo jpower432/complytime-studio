@@ -335,7 +335,6 @@ type EvidenceRecord struct {
 	RuleID        string    `json:"rule_id"`
 	EvalResult    string    `json:"eval_result"`
 	EngineVersion string    `json:"engine_version,omitempty"`
-	Frameworks    []string  `json:"frameworks,omitempty"`
 	Requirements  []string  `json:"requirements,omitempty"`
 	Owner         string    `json:"owner,omitempty"`
 	CollectedAt   time.Time `json:"collected_at"`
@@ -371,7 +370,6 @@ type EvidenceFilter struct {
 	TargetName       string
 	TargetType       string
 	TargetEnv        string
-	Framework        string
 	EngineVersion    string
 	Owner            string
 	Start            time.Time
@@ -388,7 +386,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		coalesce(target_env, '') AS target_env,
 		control_id, rule_id, eval_result,
 		coalesce(engine_version, '') AS engine_version,
-		frameworks, requirements,
+		requirements,
 		collected_at
 		FROM evidence WHERE 1=1`
 	var args []any
@@ -412,10 +410,6 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 	if f.TargetEnv != "" {
 		query += ` AND target_env = ?`
 		args = append(args, f.TargetEnv)
-	}
-	if f.Framework != "" {
-		query += ` AND has(frameworks, ?)`
-		args = append(args, f.Framework)
 	}
 	if f.EngineVersion != "" {
 		query += ` AND engine_version = ?`
@@ -455,7 +449,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 			&r.EvidenceID, &r.PolicyID, &r.TargetID,
 			&r.TargetName, &r.TargetType, &r.TargetEnv,
 			&r.ControlID, &r.RuleID, &r.EvalResult,
-			&r.EngineVersion, &r.Frameworks, &r.Requirements,
+			&r.EngineVersion, &r.Requirements,
 			&r.CollectedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan evidence: %w", err)

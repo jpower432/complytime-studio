@@ -315,7 +315,6 @@ func queryEvidenceHandler(s EvidenceStore) http.HandlerFunc {
 			TargetName:    q.Get("target_name"),
 			TargetType:    q.Get("target_type"),
 			TargetEnv:     q.Get("target_env"),
-			Framework:     q.Get("framework"),
 			EngineVersion: q.Get("engine_version"),
 			Owner:         q.Get("owner"),
 		}
