@@ -62,11 +62,63 @@ When referencing evidence in AuditResults, ground every claim in a specific evid
 | Low | Evidence is inferred from related controls, or collected outside the audit window |
 | Not Found | No evidence record can be located — classify as Gap |
 
-## AuditResult Structure
+## AuditLog Template
+
+Use this exact structure. Field names are schema-enforced — do not rename or rearrange.
+
+```yaml
+metadata:
+  type: AuditLog
+  id: audit-<policy>-<date>-<target-slug>
+  gemara-version: "1.0.0"
+  description: <one-line purpose>
+  date: "<ISO-8601 timestamp>"
+  author:
+    id: studio-assistant
+    name: ComplyTime Studio Assistant
+    type: Software Assisted
+  mapping-references:
+    - id: <catalog-ref-id>
+      title: <catalog title>
+      version: "<catalog version>"
+target:
+  id: <target-id from evidence>
+  name: <target display name>
+  type: Software
+summary: <one-sentence audit outcome>
+criteria:
+  - reference-id: <catalog-ref-id>
+results:
+  - id: <unique-result-id>
+    title: <control title>
+    type: Strength          # one of: Strength, Finding, Gap, Observation
+    description: <factual summary grounded in evidence>
+    criteria-reference:
+      reference-id: <catalog-ref-id>
+      entries:
+        - reference-id: <catalog-ref-id>   # MUST be reference-id, NOT entry-id
+    evidence:                               # optional but recommended
+      - type: EvaluationLog
+        collected: "<ISO-8601 of evidence collection>"
+        location:
+          reference-id: <catalog-ref-id>
+        description: <what was evaluated>
+    recommendations:                        # optional, for Findings and Gaps
+      - <actionable remediation step>
+```
+
+**Critical field rules:**
+- `criteria-reference.entries[].reference-id` — uses `reference-id`, never `entry-id`
+- `metadata.mapping-references` — required; declares every ref-id used in criteria and results
+- `criteria[].reference-id` — must match a `metadata.mapping-references[].id`
+- `results[].type` — exactly one of: `Strength`, `Finding`, `Gap`, `Observation`
+- `author.type` — exactly one of: `Human`, `Software`, `Software Assisted`
+
+## AuditResult Classification
 
 Each AuditResult in the AuditLog maps to one criteria entry and includes:
 
-- `criteria-reference`: The control + assessment requirement being assessed
+- `criteria-reference`: The control being assessed (uses `reference-id` in entries, not `entry-id`)
 - `type`: Strength, Finding, Gap, or Observation
 - `description`: Factual summary of what the evidence shows
 - `recommendations`: Actionable items (for Findings and Gaps)

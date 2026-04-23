@@ -5,7 +5,7 @@ description: Cross-framework coverage analysis using MappingDocuments with stren
 
 # Coverage Mapping
 
-Cross-framework coverage analysis translates internal AuditResults into external framework coverage using MappingDocuments. This analysis is **optional** — only performed when MappingDocuments are provided. If none are provided, state that cross-framework translation is skipped and proceed with internal-only analysis.
+Cross-framework coverage analysis translates internal AuditResults into external framework coverage using MappingDocuments. MappingDocuments are queried from the `mapping_documents` table by `policy_id` — do not ask the user to provide them. If no MappingDocuments exist for the policy, skip cross-framework analysis and state this clearly.
 
 ## MappingDocument Structure
 

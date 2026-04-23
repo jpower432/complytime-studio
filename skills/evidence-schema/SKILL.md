@@ -194,6 +194,8 @@ Completed L7 AuditLog artifacts produced by the assistant.
 
 ## Query Patterns
 
+**IMPORTANT:** The queries below use `<PLACEHOLDER>` syntax for values you must substitute. Replace each `<PLACEHOLDER>` with the actual value as a quoted string literal. Do NOT send curly braces `{...}` to ClickHouse — ClickHouse interprets `{name}` as a query parameter and will error with "Context variable not found."
+
 ### Target inventory
 
 Discover all targets with evidence for a policy within the audit window:
@@ -203,8 +205,8 @@ SELECT DISTINCT target_id, target_name, target_type,
        min(collected_at) AS earliest, max(collected_at) AS latest,
        count(*) AS evidence_count
 FROM evidence
-WHERE policy_id = '{policy_id}'
-  AND collected_at BETWEEN '{start}' AND '{end}'
+WHERE policy_id = '<POLICY_ID>'
+  AND collected_at BETWEEN '<START_DATE>' AND '<END_DATE>'
 GROUP BY target_id, target_name, target_type
 ORDER BY target_id
 ```
@@ -216,9 +218,9 @@ Retrieve evidence for a specific target, ordered for assessment:
 ```sql
 SELECT *
 FROM evidence
-WHERE policy_id = '{policy_id}'
-  AND target_id = '{target_id}'
-  AND collected_at BETWEEN '{start}' AND '{end}'
+WHERE policy_id = '<POLICY_ID>'
+  AND target_id = '<TARGET_ID>'
+  AND collected_at BETWEEN '<START_DATE>' AND '<END_DATE>'
 ORDER BY control_id, requirement_id, collected_at DESC
 ```
 
@@ -233,9 +235,9 @@ SELECT control_id, requirement_id,
        count(DISTINCT toDate(collected_at)) AS assessment_days,
        min(collected_at) AS first_seen, max(collected_at) AS last_seen
 FROM evidence
-WHERE policy_id = '{policy_id}'
-  AND target_id = '{target_id}'
-  AND collected_at BETWEEN '{start}' AND '{end}'
+WHERE policy_id = '<POLICY_ID>'
+  AND target_id = '<TARGET_ID>'
+  AND collected_at BETWEEN '<START_DATE>' AND '<END_DATE>'
 GROUP BY control_id, requirement_id
 ORDER BY control_id, requirement_id
 ```
@@ -247,7 +249,7 @@ Load the full Policy content for parsing:
 ```sql
 SELECT policy_id, title, version, content
 FROM policies
-WHERE policy_id = '{policy_id}'
+WHERE policy_id = '<POLICY_ID>'
 ORDER BY imported_at DESC
 LIMIT 1
 ```
@@ -257,7 +259,7 @@ LIMIT 1
 ```sql
 SELECT mapping_id, framework, content
 FROM mapping_documents
-WHERE policy_id = '{policy_id}'
+WHERE policy_id = '<POLICY_ID>'
 ORDER BY framework
 ```
 
@@ -271,9 +273,9 @@ SELECT e.control_id, e.target_name, e.eval_result,
 FROM evidence e
 JOIN mapping_entries m
   ON e.policy_id = m.policy_id AND e.control_id = m.control_id
-WHERE e.policy_id = '{policy_id}'
+WHERE e.policy_id = '<POLICY_ID>'
   AND e.eval_result IN ('Failed', 'Not Run')
-  AND e.collected_at BETWEEN '{start}' AND '{end}'
+  AND e.collected_at BETWEEN '<START_DATE>' AND '<END_DATE>'
 ORDER BY m.framework, m.reference, m.strength DESC
 ```
 
@@ -286,8 +288,8 @@ SELECT e.target_id, e.control_id, e.eval_result, e.collected_at
 FROM control_threats ct
 JOIN evidence e
   ON e.control_id = ct.control_id
-WHERE ct.threat_entry_id = '{threat_id}'
-  AND e.policy_id = '{policy_id}'
+WHERE ct.threat_entry_id = '<THREAT_ID>'
+  AND e.policy_id = '<POLICY_ID>'
 ORDER BY e.collected_at DESC
 ```
 
@@ -299,8 +301,8 @@ Find controls with no evidence (gap detection):
 SELECT c.control_id, c.title, c.objective
 FROM controls c
 LEFT JOIN evidence e
-  ON e.control_id = c.control_id AND e.policy_id = '{policy_id}'
-WHERE c.catalog_id = '{catalog_id}'
+  ON e.control_id = c.control_id AND e.policy_id = '<POLICY_ID>'
+WHERE c.catalog_id = '<CATALOG_ID>'
   AND e.control_id IS NULL
 ORDER BY c.control_id
 ```
@@ -316,7 +318,7 @@ FROM evidence e
 JOIN assessment_requirements ar
   ON ar.control_id = e.control_id
   AND ar.requirement_id = e.requirement_id
-WHERE e.policy_id = '{policy_id}'
+WHERE e.policy_id = '<POLICY_ID>'
 ORDER BY e.control_id, e.requirement_id
 ```
 
@@ -333,8 +335,8 @@ JOIN control_threats ct
   ON ct.control_id = c.control_id AND ct.catalog_id = c.catalog_id
 JOIN threats t
   ON t.threat_id = ct.threat_entry_id
-WHERE me.framework = '{framework}'
-  AND me.policy_id = '{policy_id}'
+WHERE me.framework = '<FRAMEWORK>'
+  AND me.policy_id = '<POLICY_ID>'
 ORDER BY t.threat_id
 ```
 
@@ -351,9 +353,9 @@ SELECT m.framework, m.reference,
 FROM evidence e
 JOIN mapping_entries m
   ON e.policy_id = m.policy_id AND e.control_id = m.control_id
-WHERE e.policy_id = '{policy_id}'
+WHERE e.policy_id = '<POLICY_ID>'
   AND e.eval_result IN ('Failed', 'Not Run')
-  AND e.collected_at BETWEEN '{start}' AND '{end}'
+  AND e.collected_at BETWEEN '<START_DATE>' AND '<END_DATE>'
 GROUP BY m.framework, m.reference
 ORDER BY max_strength DESC, m.framework, m.reference
 ```

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -100,6 +101,34 @@ def load_prompt() -> str:
     return base_prompt
 
 
+async def _fetch_gemara_resources(url: str) -> str:
+    """Preload all Gemara MCP resources and format them for prompt injection."""
+    ts = McpToolset(
+        connection_params=StreamableHTTPConnectionParams(url=url),
+        use_mcp_resources=True,
+    )
+    parts: list[str] = []
+    try:
+        names = await ts.list_resources()
+        for name in names:
+            try:
+                contents = await ts.read_resource(name)
+                for item in contents:
+                    uri = str(item.uri) if hasattr(item, "uri") else name
+                    text = item.text if hasattr(item, "text") else str(item)
+                    parts.append(f"### Resource: `{uri}`\n\n```\n{text}\n```")
+                    logger.info("preloaded resource %s (%d chars)", uri, len(text))
+            except Exception as e:
+                logger.warning("failed to read resource %s: %s", name, e)
+    except Exception as e:
+        logger.warning("failed to list gemara resources: %s", e)
+    finally:
+        await ts.close()
+    if not parts:
+        return ""
+    return "## Gemara Schema Reference\n\n" + "\n\n".join(parts)
+
+
 def build_tools() -> list:
     tools = []
 
@@ -108,10 +137,9 @@ def build_tools() -> list:
             McpToolset(
                 connection_params=StreamableHTTPConnectionParams(url=GEMARA_MCP_URL),
                 tool_filter=["validate_gemara_artifact", "migrate_gemara_artifact"],
-                use_mcp_resources=True,
             )
         )
-        logger.info("gemara-mcp toolset registered (http: %s, resources=True)", GEMARA_MCP_URL)
+        logger.info("gemara-mcp toolset registered (http: %s)", GEMARA_MCP_URL)
 
     if CLICKHOUSE_MCP_URL:
         tools.append(
@@ -130,7 +158,19 @@ def build_tools() -> list:
     return tools
 
 
-_INSTRUCTION = load_prompt()
+def _build_instruction() -> str:
+    base = load_prompt()
+    if GEMARA_MCP_URL:
+        try:
+            resources_text = asyncio.run(_fetch_gemara_resources(GEMARA_MCP_URL))
+            if resources_text:
+                base = f"{base}\n\n{resources_text}"
+        except Exception as e:
+            logger.warning("resource preload failed: %s", e)
+    return base
+
+
+_INSTRUCTION = _build_instruction()
 PROMPT_VERSION = hashlib.sha256(_INSTRUCTION.encode()).hexdigest()[:12]
 logger.info("prompt_version=%s model=%s", PROMPT_VERSION, MODEL_NAME)
 
@@ -150,15 +190,23 @@ root_agent = LlmAgent(
 
 
 # --- Manual A2aAgentExecutor setup (replaces to_a2a()) ---
+# Shared services must be singletons so multi-turn conversations
+# within the same task retain session and memory state.
+
+_session_service = InMemorySessionService()
+_artifact_service = InMemoryArtifactService()
+_memory_service = InMemoryMemoryService()
+_credential_service = InMemoryCredentialService()
+
 
 async def create_runner() -> Runner:
     return Runner(
         app_name="studio_assistant",
         agent=root_agent,
-        artifact_service=InMemoryArtifactService(),
-        session_service=InMemorySessionService(),
-        memory_service=InMemoryMemoryService(),
-        credential_service=InMemoryCredentialService(),
+        artifact_service=_artifact_service,
+        session_service=_session_service,
+        memory_service=_memory_service,
+        credential_service=_credential_service,
     )
 
 
