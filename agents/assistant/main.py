@@ -101,32 +101,30 @@ def load_prompt() -> str:
     return base_prompt
 
 
-async def _fetch_gemara_resources(url: str) -> str:
-    """Preload all Gemara MCP resources and format them for prompt injection."""
+LEXICON_RESOURCE = "gemara-lexicon"
+
+
+async def _fetch_gemara_lexicon(url: str) -> str:
+    """Preload only the Gemara lexicon for prompt injection.
+
+    The full schema/definitions (~44K chars) is deliberately excluded —
+    it causes attention dilution and field-name confusion in the LLM.
+    """
     ts = McpToolset(
         connection_params=StreamableHTTPConnectionParams(url=url),
         use_mcp_resources=True,
     )
-    parts: list[str] = []
     try:
-        names = await ts.list_resources()
-        for name in names:
-            try:
-                contents = await ts.read_resource(name)
-                for item in contents:
-                    uri = str(item.uri) if hasattr(item, "uri") else name
-                    text = item.text if hasattr(item, "text") else str(item)
-                    parts.append(f"### Resource: `{uri}`\n\n```\n{text}\n```")
-                    logger.info("preloaded resource %s (%d chars)", uri, len(text))
-            except Exception as e:
-                logger.warning("failed to read resource %s: %s", name, e)
+        contents = await ts.read_resource(LEXICON_RESOURCE)
+        for item in contents:
+            text = item.text if hasattr(item, "text") else str(item)
+            logger.info("preloaded resource %s (%d chars)", LEXICON_RESOURCE, len(text))
+            return f"## Gemara Lexicon\n\n```\n{text}\n```"
     except Exception as e:
-        logger.warning("failed to list gemara resources: %s", e)
+        logger.warning("failed to read lexicon: %s", e)
     finally:
         await ts.close()
-    if not parts:
-        return ""
-    return "## Gemara Schema Reference\n\n" + "\n\n".join(parts)
+    return ""
 
 
 def build_tools() -> list:
@@ -162,9 +160,9 @@ def _build_instruction() -> str:
     base = load_prompt()
     if GEMARA_MCP_URL:
         try:
-            resources_text = asyncio.run(_fetch_gemara_resources(GEMARA_MCP_URL))
-            if resources_text:
-                base = f"{base}\n\n{resources_text}"
+            lexicon_text = asyncio.run(_fetch_gemara_lexicon(GEMARA_MCP_URL))
+            if lexicon_text:
+                base = f"{base}\n\n{lexicon_text}"
         except Exception as e:
             logger.warning("resource preload failed: %s", e)
     return base
