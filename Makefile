@@ -49,13 +49,16 @@ sync-prompts:
 	@mkdir -p charts/complytime-studio/agents/assistant
 	@cp agents/assistant/prompt.md charts/complytime-studio/agents/assistant/prompt.md
 
+sync-skills:
+	@rsync -a --delete --exclude='.gitkeep' skills/ agents/assistant/skills/
+
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
 
 gateway-image: workbench-build
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
 
-assistant-image:
+assistant-image: sync-skills
 	docker build --no-cache -f agents/assistant/Dockerfile -t $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) agents/assistant/
 
 compose-up:
