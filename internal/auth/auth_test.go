@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
@@ -33,7 +34,7 @@ func testHandler(t *testing.T) *Handler {
 func createSession(t *testing.T, h *Handler, sess ServerSession) *http.Cookie {
 	t.Helper()
 	sid := generateSessionID()
-	if err := h.store.Put(nil, sid, sess); err != nil {
+	if err := h.store.Put(context.TODO(), sid, sess); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -464,10 +465,10 @@ func TestIsSecureRequest(t *testing.T) {
 func TestChatStore_PutGet(t *testing.T) {
 	store := NewMemorySessionStore()
 	chat := ChatSession{Messages: json.RawMessage(`[{"role":"user","text":"hello"}]`), TaskID: "t1"}
-	if err := store.PutChat(nil, "a@b.com", chat); err != nil {
+	if err := store.PutChat(context.TODO(), "a@b.com", chat); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.GetChat(nil, "a@b.com")
+	got, err := store.GetChat(context.TODO(), "a@b.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +479,7 @@ func TestChatStore_PutGet(t *testing.T) {
 
 func TestChatStore_NotFound(t *testing.T) {
 	store := NewMemorySessionStore()
-	_, err := store.GetChat(nil, "missing@b.com")
+	_, err := store.GetChat(context.TODO(), "missing@b.com")
 	if err != ErrSessionNotFound {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
@@ -486,9 +487,9 @@ func TestChatStore_NotFound(t *testing.T) {
 
 func TestChatStore_Delete(t *testing.T) {
 	store := NewMemorySessionStore()
-	_ = store.PutChat(nil, "a@b.com", ChatSession{TaskID: "t1"})
-	_ = store.DeleteChat(nil, "a@b.com")
-	_, err := store.GetChat(nil, "a@b.com")
+	_ = store.PutChat(context.TODO(), "a@b.com", ChatSession{TaskID: "t1"})
+	_ = store.DeleteChat(context.TODO(), "a@b.com")
+	_, err := store.GetChat(context.TODO(), "a@b.com")
 	if err != ErrSessionNotFound {
 		t.Fatalf("err = %v, want ErrSessionNotFound after delete", err)
 	}
@@ -515,7 +516,7 @@ func TestGetChatHistory_Empty(t *testing.T) {
 		Messages json.RawMessage
 		TaskID   *string
 	}
-	json.NewDecoder(rec.Body).Decode(&resp)
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	if string(resp.Messages) != "[]" {
 		t.Fatalf("messages = %s, want []", resp.Messages)
 	}
@@ -554,7 +555,7 @@ func TestPutGetChatHistory(t *testing.T) {
 		Messages json.RawMessage
 		TaskID   *string
 	}
-	json.NewDecoder(getRec.Body).Decode(&resp)
+	_ = json.NewDecoder(getRec.Body).Decode(&resp)
 	if resp.TaskID == nil || *resp.TaskID != "t123" {
 		t.Fatalf("taskId = %v, want t123", resp.TaskID)
 	}

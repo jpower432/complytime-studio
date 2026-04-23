@@ -19,10 +19,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: workbench/package.json
+          cache: npm
+          cache-dependency-path: workbench/package-lock.json
       - name: Vet
-        run: go vet ./...
+        run: go vet -tags dev ./...
       - name: Test
-        run: go test -v -race -cover ./...
+        run: go test -tags dev -v -race -cover ./...
+      - name: Build workbench
+        run: npm ci && npm run build
+        working-directory: workbench
       - name: Build gateway
         run: go build -o /dev/null ./cmd/gateway/
 
@@ -37,6 +45,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
+          args: --build-tags dev
 
   workbench:
     name: Workbench

@@ -37,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect to clickhouse: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	switch artifactType {
 	case gemara.EvaluationLogArtifact:
@@ -126,7 +126,7 @@ func detectType(ctx context.Context, f gemara.Fetcher, source string) (gemara.Ar
 	if err != nil {
 		return gemara.InvalidArtifact, fmt.Errorf("fetch source: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {

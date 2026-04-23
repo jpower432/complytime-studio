@@ -114,7 +114,7 @@ func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Policy
 	for rows.Next() {
@@ -165,7 +165,7 @@ func (s *Store) ListMappings(ctx context.Context, policyID string) ([]MappingDoc
 	if err != nil {
 		return nil, fmt.Errorf("list mappings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []MappingDocument
 	for rows.Next() {
@@ -185,7 +185,7 @@ func (s *Store) ListAllMappings(ctx context.Context) ([]MappingDocument, error) 
 	if err != nil {
 		return nil, fmt.Errorf("list all mappings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []MappingDocument
 	for rows.Next() {
@@ -446,7 +446,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 	if err != nil {
 		return nil, fmt.Errorf("query evidence: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []EvidenceRecord
 	for rows.Next() {
@@ -510,7 +510,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end t
 	if err != nil {
 		return nil, fmt.Errorf("list audit logs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []AuditLog
 	for rows.Next() {
@@ -559,7 +559,7 @@ func (s *Store) ListCatalogs(ctx context.Context) ([]Catalog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list catalogs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Catalog
 	for rows.Next() {

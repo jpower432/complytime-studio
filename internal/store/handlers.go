@@ -205,7 +205,7 @@ func uploadEvidenceHandler(s EvidenceStore) http.HandlerFunc {
 			http.Error(w, "file field required", http.StatusBadRequest)
 			return
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		var records []EvidenceRecord
 		var parseErrors []string

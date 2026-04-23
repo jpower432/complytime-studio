@@ -48,7 +48,7 @@ func (ai *artifactInterceptor) Write(p []byte) (int, error) {
 
 // Close signals the scanner goroutine to stop.
 func (ai *artifactInterceptor) Close() {
-	ai.pw.Close()
+	_ = ai.pw.Close()
 }
 
 // Flush supports streaming — delegates to the underlying ResponseWriter if
