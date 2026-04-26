@@ -3,11 +3,30 @@
 package httputil
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 )
+
+type contextKey string
+
+const identityKey contextKey = "identity"
+
+// WithIdentity returns a child context carrying the caller's identity string
+// (typically an email address). Auth middleware sets this; downstream packages
+// read it via IdentityFrom without importing the auth package.
+func WithIdentity(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, identityKey, id)
+}
+
+// IdentityFrom extracts the caller identity from request context.
+// Returns ("unknown", false) when no identity has been set.
+func IdentityFrom(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(identityKey).(string)
+	return id, ok && id != ""
+}
 
 // TokenProvider abstracts session-to-token extraction so modules can obtain
 // the user's Bearer token without importing the auth package directly.

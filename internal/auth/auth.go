@@ -251,6 +251,7 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 					Email: "api-token@internal",
 					Name:  "API Token",
 				})
+				ctx = httputil.WithIdentity(ctx, "api-token@internal")
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -276,6 +277,11 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			ExpiresAt: serverSess.ExpiresAt,
 		}
 		ctx := context.WithValue(r.Context(), sessionKey, sess)
+		if id := sess.Email; id != "" {
+			ctx = httputil.WithIdentity(ctx, id)
+		} else if id := sess.Login; id != "" {
+			ctx = httputil.WithIdentity(ctx, id)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

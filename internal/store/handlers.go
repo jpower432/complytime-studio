@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
 	"github.com/complytime/complytime-studio/internal/consts"
 	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
@@ -1077,11 +1076,8 @@ func promoteAuditLogHandler(s DraftAuditLogStore) http.HandlerFunc {
 }
 
 func authSessionEmail(ctx context.Context) string {
-	if sess, ok := auth.SessionFrom(ctx); ok && sess.Email != "" {
-		return sess.Email
-	}
-	if sess, ok := auth.SessionFrom(ctx); ok && sess.Login != "" {
-		return sess.Login
+	if id, ok := httputil.IdentityFrom(ctx); ok {
+		return id
 	}
 	return "unknown"
 }
