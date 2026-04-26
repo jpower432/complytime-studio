@@ -234,6 +234,20 @@ export function InboxView() {
   const parseSummary = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
   const editFor = (id: string): EditEntry => edits[id] || { type_override: "", note: "" };
 
+  const reasoningMap: Record<string, string> = (() => {
+    if (!selected?.agent_reasoning) return {};
+    try {
+      const parsed = JSON.parse(selected.agent_reasoning);
+      if (typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch { /* fall through */ }
+    const map: Record<string, string> = {};
+    for (const line of selected.agent_reasoning.split("\n")) {
+      const idx = line.indexOf(": ");
+      if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 2).trim();
+    }
+    return map;
+  })();
+
   return (
     <section class="inbox-view">
       <h2>Inbox</h2>
@@ -369,8 +383,8 @@ export function InboxView() {
                     </div>
                     <h4>{result.title}</h4>
                     <p class="result-description">{result.description}</p>
-                    {result["agent-reasoning"] && (
-                      <div class="agent-reasoning"><strong>Agent Reasoning:</strong><p>{result["agent-reasoning"]}</p></div>
+                    {(reasoningMap[result.id] || result["agent-reasoning"]) && (
+                      <div class="agent-reasoning"><strong>Agent Reasoning:</strong><p>{reasoningMap[result.id] || result["agent-reasoning"]}</p></div>
                     )}
                     {editable && (
                       <div class="result-controls">
