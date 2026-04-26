@@ -26,8 +26,14 @@ go.work.sum
 
 # Build output
 bin/
-gateway
-ingest
+/gateway
+/ingest
+
+# Synced skills (generated from skills/ by make sync-skills)
+agents/assistant/skills/*/
+
+# Python
+__pycache__/
 
 # env file
 .env

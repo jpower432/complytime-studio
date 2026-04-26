@@ -45,3 +45,16 @@ The `Job` interface SHALL include a `contextArtifacts` field listing artifact na
 #### Scenario: Job without context
 - **WHEN** a job is created without selecting any artifacts
 - **THEN** the job's `contextArtifacts` is an empty array or undefined
+
+### Requirement: Schema resource preloading limited to lexicon
+The agent startup SHALL preload only `gemara://lexicon` (~6K chars) from the Gemara MCP server. The `gemara://schema/definitions` resource (~44K chars) SHALL NOT be preloaded into the system prompt.
+
+#### Scenario: Agent starts with Gemara MCP available
+- **WHEN** the agent starts and `GEMARA_MCP_URL` is configured
+- **THEN** `_fetch_gemara_resources()` SHALL fetch and inject `gemara://lexicon`
+- **THEN** `_fetch_gemara_resources()` SHALL skip `gemara://schema/definitions`
+
+#### Scenario: Agent starts without Gemara MCP
+- **WHEN** the agent starts and `GEMARA_MCP_URL` is not configured
+- **THEN** no resources are preloaded
+- **THEN** the agent operates with prompt and skill knowledge only

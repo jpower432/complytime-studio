@@ -18,3 +18,6 @@
 | [Session Token Storage](session-token-storage.md) | Accepted — see [ADR-001](../../decisions/001-session-persistence-storage.md) | 2026-04-21 |
 | [Agent Interaction Model: HITL Chatbot](agent-interaction-model.md) | Accepted | 2026-04-22 |
 | [Artifact Auto-Persistence](artifact-auto-persistence.md) | Accepted — implemented | 2026-04-22 |
+| [Cloud-Native Posture Correction](cloud-native-posture-correction.md) | Proposed | 2026-04-24 |
+| [Enforcement Log Traceability](enforcement-log-traceability.md) | Exploratory | 2026-04-24 |
+| [Gemara-Native SDLC](gemara-native-sdlc.md) | Accepted | 2026-04-25 |

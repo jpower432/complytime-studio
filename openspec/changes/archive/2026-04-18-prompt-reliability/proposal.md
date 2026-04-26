@@ -1,8 +1,8 @@
 ## Why
 
-The assistant's prompt architecture has two reliability gaps exposed by comparison with the OllamaCrosswalker/Compliance Mapper project:
+The assistant's prompt architecture has two reliability gaps exposed:
 
-1. **No few-shot examples.** The assistant classifies evidence as Strength/Finding/Gap/Observation using prose rules in the `audit-methodology` skill. Mapper uses concrete few-shot examples with anti-patterns for every classification type, achieving measurably better consistency. Without examples, the assistant's classification accuracy depends entirely on the model's zero-shot capability.
+1. **No few-shot examples.** The assistant classifies evidence as Strength/Finding/Gap/Observation using prose rules in the `audit-methodology` skill. Uses oncrete few-shot examples with anti-patterns for every classification type, achieving measurably better consistency. Without examples, the assistant's classification accuracy depends entirely on the model's zero-shot capability.
 
 2. **No audit provenance on AuditLog artifacts.** The `audit_logs` table stores `created_by` but not *how* the artifact was produced — which model or prompt version generated it. When a classification is disputed, there is no way to reproduce the conditions that produced it.
 

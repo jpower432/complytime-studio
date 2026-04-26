@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY callbacks.py .
 COPY event_converter.py .
+COPY tools.py .
 COPY prompt.md .
 COPY prompts/ /app/prompts/
 

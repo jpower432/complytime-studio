@@ -1,4 +1,4 @@
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Enable kagent streaming
 
@@ -10,7 +10,7 @@ All Agent CRDs SHALL have `stream: true` set in the `declarative` block of `agen
 
 ### Requirement: Streaming text rendering
 
-The chat panel SHALL render partial text events as a "live" message that accumulates tokens. The live message SHALL display a typing cursor while streaming.
+The chat panel SHALL render partial text events as a "live" message that accumulates tokens. The live message SHALL display a typing cursor while streaming. The streaming message container SHALL be marked with `aria-live="polite"` so screen readers announce new agent responses without interrupting the user.
 
 #### Scenario: Partial text arrives
 - **WHEN** an SSE event contains a `TextPart` with metadata `kagent.adk_partial: true`
@@ -21,6 +21,10 @@ The chat panel SHALL render partial text events as a "live" message that accumul
 - **WHEN** an SSE event contains a `TextPart` with metadata `kagent.adk_partial: false`
 - **THEN** the live message SHALL finalize (cursor removed) and become a permanent message
 - **THEN** subsequent partial events SHALL start a new live message
+
+#### Scenario: Screen reader announces completed response
+- **WHEN** the agent finishes streaming a response
+- **THEN** the finalized message is announced by screen readers via the `aria-live` region
 
 ### Requirement: Tool call blocks
 
@@ -104,3 +108,21 @@ The "Save to Audit History" button SHALL remain available on artifact cards for 
 - **WHEN** an admin clicks "Save to Audit History" on an auto-persisted artifact
 - **THEN** the `POST /api/audit-logs` request SHALL succeed
 - **AND** `ReplacingMergeTree` SHALL deduplicate the row if content is unchanged
+
+### Requirement: Agent context reflects populated signals
+The dashboard context injected into agent messages SHALL include non-null values for all shared signals: `policy_id`, `time_range_start`, `time_range_end`, `control_id`, `requirement_id`, `eval_result`.
+
+#### Scenario: Full context after cross-view navigation
+- **WHEN** the user has navigated posture -> requirements (setting policy and time range) and opens chat
+- **THEN** the injected context JSON includes `policy_id`, `time_range_start`, and `time_range_end` with the values from the shared signals
+
+### Requirement: Chat pre-loads active policy context
+The chat assistant SHALL pre-load the active policy context when the user opens the chat from a policy detail view. The first message SHALL include the policy ID, active tab, and any selected filters as context for the agent.
+
+#### Scenario: Chat opened from posture detail
+- **WHEN** the user opens the chat FAB while viewing policy "ampel-branch-protection" on the Requirements tab
+- **THEN** the chat sends the first user message with context: `{"policy_id":"ampel-branch-protection","view":"requirements","filters":{...}}`
+
+#### Scenario: Chat opened from posture grid
+- **WHEN** the user opens the chat FAB from the top-level posture view (no policy selected)
+- **THEN** the chat sends no pre-loaded context and the agent asks which policy to work with

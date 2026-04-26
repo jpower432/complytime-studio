@@ -12,10 +12,9 @@ prompt: prompt.md
 
 skills:
   # Internal skills (this repo)
-  - path: skills/gemara-mcp
-  - path: skills/evidence-schema
-  - path: skills/audit-methodology
-  - path: skills/coverage-mapping
+  - path: skills/studio-audit
+  - path: skills/posture-check
+  - path: skills/attestation-verification
   # External skills (rhaml-23/prompt)
   - repo: https://github.com/rhaml-23/prompt.git
     ref: main
@@ -27,7 +26,7 @@ skills:
 # Default model preference. Helm values (agents.assistant.model.*) take precedence.
 model:
   provider: AnthropicVertexAI
-  name: claude-sonnet-4
+  name: claude-opus-4-6
 
 mcp:
   - server: studio-gemara-mcp

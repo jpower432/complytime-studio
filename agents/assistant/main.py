@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -32,11 +33,12 @@ from starlette.applications import Starlette
 
 from callbacks import after_agent, before_agent, before_tool
 from event_converter import convert_event_with_yaml_metadata
+from tools import publish_audit_log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-2.5-pro")
+MODEL_NAME = os.environ.get("MODEL_NAME", "claude-opus-4-6")
 PORT = int(os.environ.get("PORT", "8080"))
 
 GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
@@ -100,20 +102,74 @@ def load_prompt() -> str:
     return base_prompt
 
 
+LEXICON_RESOURCE = "gemara-lexicon"
+
+
+async def _fetch_gemara_lexicon(url: str) -> str:
+    """Preload only the Gemara lexicon for prompt injection.
+
+    The full schema/definitions (~44K chars) is deliberately excluded —
+    it causes attention dilution and field-name confusion in the LLM.
+    """
+    ts = McpToolset(
+        connection_params=StreamableHTTPConnectionParams(url=url),
+        use_mcp_resources=True,
+    )
+    try:
+        contents = await ts.read_resource(LEXICON_RESOURCE)
+        for item in contents:
+            text = item.text if hasattr(item, "text") else str(item)
+            logger.info("preloaded resource %s (%d chars)", LEXICON_RESOURCE, len(text))
+            return f"## Gemara Lexicon\n\n```\n{text}\n```"
+    except Exception as e:
+        logger.warning("failed to read lexicon: %s", e)
+    finally:
+        await ts.close()
+    return ""
+
+
+def _probe_mcp_sync(url: str, label: str, retries: int = 5, delay: float = 2.0) -> bool:
+    """Block until an MCP server responds. Runs at startup before the event loop."""
+    import time
+    import httpx
+
+    for attempt in range(1, retries + 1):
+        try:
+            resp = httpx.post(
+                url,
+                json={"jsonrpc": "2.0", "method": "initialize", "id": 0, "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "probe", "version": "0.0.1"},
+                }},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                timeout=5.0,
+            )
+            if resp.status_code < 500:
+                logger.info("%s reachable (attempt %d/%d, status=%d)", label, attempt, retries, resp.status_code)
+                return True
+        except Exception as e:
+            logger.warning("%s unreachable (attempt %d/%d): %s", label, attempt, retries, e)
+        time.sleep(delay)
+    logger.error("%s not reachable after %d attempts — toolset registered but tools may be empty", label, retries)
+    return False
+
+
 def build_tools() -> list:
     tools = []
 
     if GEMARA_MCP_URL:
+        reachable = _probe_mcp_sync(GEMARA_MCP_URL, "gemara-mcp")
         tools.append(
             McpToolset(
                 connection_params=StreamableHTTPConnectionParams(url=GEMARA_MCP_URL),
                 tool_filter=["validate_gemara_artifact", "migrate_gemara_artifact"],
-                use_mcp_resources=True,
             )
         )
-        logger.info("gemara-mcp toolset registered (http: %s, resources=True)", GEMARA_MCP_URL)
+        logger.info("gemara-mcp toolset registered (url=%s, reachable=%s)", GEMARA_MCP_URL, reachable)
 
     if CLICKHOUSE_MCP_URL:
+        reachable = _probe_mcp_sync(CLICKHOUSE_MCP_URL, "clickhouse-mcp")
         tools.append(
             McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
@@ -122,7 +178,7 @@ def build_tools() -> list:
                 tool_filter=["run_select_query", "list_databases", "list_tables"],
             )
         )
-        logger.info("clickhouse-mcp toolset registered (http: %s)", CLICKHOUSE_MCP_URL)
+        logger.info("clickhouse-mcp toolset registered (url=%s, reachable=%s)", CLICKHOUSE_MCP_URL, reachable)
 
     if not tools:
         logger.warning("No MCP URLs configured — agent running without tools")
@@ -130,7 +186,19 @@ def build_tools() -> list:
     return tools
 
 
-_INSTRUCTION = load_prompt()
+def _build_instruction() -> str:
+    base = load_prompt()
+    if GEMARA_MCP_URL:
+        try:
+            lexicon_text = asyncio.run(_fetch_gemara_lexicon(GEMARA_MCP_URL))
+            if lexicon_text:
+                base = f"{base}\n\n{lexicon_text}"
+        except Exception as e:
+            logger.warning("resource preload failed: %s", e)
+    return base
+
+
+_INSTRUCTION = _build_instruction()
 PROMPT_VERSION = hashlib.sha256(_INSTRUCTION.encode()).hexdigest()[:12]
 logger.info("prompt_version=%s model=%s", PROMPT_VERSION, MODEL_NAME)
 
@@ -138,7 +206,7 @@ root_agent = LlmAgent(
     name="studio_assistant",
     model=MODEL_NAME,
     instruction=_INSTRUCTION,
-    tools=build_tools(),
+    tools=[*build_tools(), publish_audit_log],
     description=(
         "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
         "cross-framework coverage analysis, and compliance guidance"
@@ -150,15 +218,23 @@ root_agent = LlmAgent(
 
 
 # --- Manual A2aAgentExecutor setup (replaces to_a2a()) ---
+# Shared services must be singletons so multi-turn conversations
+# within the same task retain session and memory state.
+
+_session_service = InMemorySessionService()
+_artifact_service = InMemoryArtifactService()
+_memory_service = InMemoryMemoryService()
+_credential_service = InMemoryCredentialService()
+
 
 async def create_runner() -> Runner:
     return Runner(
         app_name="studio_assistant",
         agent=root_agent,
-        artifact_service=InMemoryArtifactService(),
-        session_service=InMemorySessionService(),
-        memory_service=InMemoryMemoryService(),
-        credential_service=InMemoryCredentialService(),
+        artifact_service=_artifact_service,
+        session_service=_session_service,
+        memory_service=_memory_service,
+        credential_service=_credential_service,
     )
 
 

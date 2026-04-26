@@ -3,15 +3,13 @@
 """Deterministic gates for the BYO gap analyst agent.
 
 before_agent_callback: input validation — policy reference + audit timeline detection
-after_agent_callback: output validation — AuditLog YAML extraction + save_artifact
+after_agent_callback: reserved for future post-processing
 before_tool_callback: SQL sanitization — DDL/DML deny-list for run_select_query
 """
 
 import logging
 import re
 from typing import Any, Optional
-
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -52,49 +50,7 @@ async def before_agent(callback_context) -> Optional[Any]:
 
 
 async def after_agent(callback_context) -> Optional[Any]:
-    """Scan agent output for AuditLog YAML and save as artifact."""
-    invocation = getattr(callback_context, "invocation_context", None)
-    agent_output = ""
-
-    if hasattr(callback_context, "state") and hasattr(callback_context.state, "get"):
-        pass
-
-    events = getattr(invocation, "intermediate_data", None) or []
-    for event in events:
-        content = getattr(event, "content", None)
-        if content and hasattr(content, "parts"):
-            for part in content.parts:
-                if hasattr(part, "text") and part.text:
-                    agent_output += part.text
-
-    if not agent_output:
-        return None
-
-    yaml_blocks = _extract_yaml_blocks(agent_output)
-    for i, block in enumerate(yaml_blocks):
-        try:
-            parsed = yaml.safe_load(block)
-            if not isinstance(parsed, dict):
-                continue
-
-            is_audit_log = (
-                parsed.get("metadata", {}).get("type") == "AuditLog"
-                or "audit-results" in parsed
-                or "results" in parsed
-            )
-
-            if is_audit_log:
-                filename = f"audit-log-{i}.yaml"
-                logger.info("Valid AuditLog detected, saving artifact: %s", filename)
-                if hasattr(callback_context, "save_artifact"):
-                    await callback_context.save_artifact(
-                        filename=filename,
-                        artifact=block.encode("utf-8"),
-                        mime_type="application/yaml",
-                    )
-        except yaml.YAMLError as e:
-            logger.warning("YAML parse error in output block %d: %s", i, e)
-
+    """Post-processing hook. AuditLogs are published via the publish_audit_log tool."""
     return None
 
 
@@ -117,33 +73,3 @@ async def before_tool(
     return None
 
 
-def _extract_yaml_blocks(text: str) -> list[str]:
-    """Extract YAML content from fenced code blocks or raw YAML."""
-    fenced = re.findall(
-        r"```(?:yaml|yml)?\s*\n(.*?)```",
-        text,
-        re.DOTALL,
-    )
-    if fenced:
-        return fenced
-
-    blocks: list[str] = []
-    lines = text.split("\n")
-    current: list[str] = []
-    in_yaml = False
-    for line in lines:
-        if not in_yaml and re.match(
-            r"^(metadata|title|groups|risks|results|audit-results):", line
-        ):
-            in_yaml = True
-            current = [line]
-        elif in_yaml:
-            if line.strip() == "" and current and not current[-1].strip().endswith(":"):
-                blocks.append("\n".join(current))
-                current = []
-                in_yaml = False
-            else:
-                current.append(line)
-    if current:
-        blocks.append("\n".join(current))
-    return blocks

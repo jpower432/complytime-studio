@@ -15,6 +15,10 @@ The canonical `agent.yaml` SHALL include a `skills` array where each entry refer
 - **WHEN** an agent.yaml omits the `skills` field
 - **THEN** Helm renders the Agent CRD without a `spec.skills` block and the agent operates with prompt-only knowledge
 
+#### Scenario: Posture-check skill registered
+- **WHEN** the assistant `agent.yaml` includes `skills: [{ path: "skills/posture-check" }]`
+- **THEN** Helm renders a kagent `gitRefs` entry for `skills/posture-check` and the agent can load the posture-check skill at runtime
+
 ### Requirement: Skill packs use SKILL.md format
 Each skill pack directory SHALL contain a `SKILL.md` file with YAML frontmatter (`name`, `description`) followed by markdown instructions. kagent's init container loads these into `/skills` at runtime.
 
@@ -42,11 +46,11 @@ The agent prompt SHALL instruct the assistant to read the `gemara://schema/defin
 - **THEN** the agent SHALL first read `gemara://schema/definitions` to obtain the `#AuditLog` schema definition
 
 ### Requirement: Agent validates AuditLog via MCP tool
-The agent prompt SHALL instruct the assistant to call the `validate_gemara_artifact` MCP tool with `definition: "#AuditLog"` on every generated AuditLog YAML block before returning it to the user. The agent SHALL fix validation errors and re-validate up to 3 times.
+The agent prompt SHALL instruct the assistant to call the `validate_gemara_artifact` MCP tool with `definition: "#AuditLog"` on every generated AuditLog YAML block before publishing it. The agent SHALL fix validation errors and re-validate up to 3 times.
 
 #### Scenario: Agent produces valid AuditLog
 - **WHEN** the agent generates an AuditLog YAML artifact
-- **THEN** the agent SHALL call `validate_gemara_artifact` with the YAML content and `definition: "#AuditLog"` before returning it
+- **THEN** the agent SHALL call `validate_gemara_artifact` before calling `publish_audit_log`
 
 #### Scenario: Validation fails on first attempt
 - **WHEN** `validate_gemara_artifact` returns errors
