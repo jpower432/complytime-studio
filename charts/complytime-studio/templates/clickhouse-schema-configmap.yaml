@@ -8,19 +8,6 @@ metadata:
   labels:
     {{- include "studio.labels" . | nindent 4 }}
 data:
-  users_override.xml: |
-    <clickhouse>
-        <users>
-            <{{ .Values.clickhouse.auth.readerUser }}>
-                <password>{{ .Values.clickhouse.auth.readerPassword }}</password>
-                <networks>
-                    <ip>::/0</ip>
-                </networks>
-                <profile>readonly</profile>
-                <quota>default</quota>
-            </{{ .Values.clickhouse.auth.readerUser }}>
-        </users>
-    </clickhouse>
   low_resource_config.xml: |
     <clickhouse>
         <max_thread_pool_size>1000</max_thread_pool_size>
