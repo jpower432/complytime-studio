@@ -40,9 +40,11 @@ type fakeRiskStore struct {
 	lastLimit   int
 }
 
-func (f *fakeRiskStore) InsertRisks(_ context.Context, _ []gemarapkg.RiskRow) error            { return nil }
-func (f *fakeRiskStore) InsertRiskThreats(_ context.Context, _ []gemarapkg.RiskThreatRow) error { return nil }
-func (f *fakeRiskStore) CountRisks(_ context.Context, _ string) (int, error)                    { return 0, nil }
+func (f *fakeRiskStore) InsertRisks(_ context.Context, _ []gemarapkg.RiskRow) error { return nil }
+func (f *fakeRiskStore) InsertRiskThreats(_ context.Context, _ []gemarapkg.RiskThreatRow) error {
+	return nil
+}
+func (f *fakeRiskStore) CountRisks(_ context.Context, _ string) (int, error) { return 0, nil }
 func (f *fakeRiskStore) GetPolicyRiskSeverity(_ context.Context, _ string) ([]RiskSeverityRow, error) {
 	return nil, nil
 }
