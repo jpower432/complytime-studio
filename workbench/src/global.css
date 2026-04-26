@@ -483,7 +483,7 @@ table tr:focus-visible { outline-offset: -2px; }
 .inbox-card:hover { border-color: var(--accent); }
 .inbox-card-type { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
 .inbox-card-draft .inbox-card-type { color: var(--accent); }
-.inbox-card-notification.unread { border-left: 3px solid var(--accent); }
+.inbox-card.unread { border-left: 3px solid var(--accent); }
 .inbox-card-header { display: flex; justify-content: space-between; align-items: center; }
 .inbox-card-date { font-size: 12px; color: var(--text-muted); }
 .inbox-card-period { font-size: 12px; color: var(--text-muted); margin-top: 2px; }

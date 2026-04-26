@@ -152,6 +152,8 @@ export function InboxView() {
     scheduleAutoSave(selected.draft_id, next);
   };
 
+  const detailRef = useRef<HTMLDivElement>(null);
+
   const openDraft = (draft: DraftAuditLog) => {
     apiFetch(`/api/draft-audit-logs/${encodeURIComponent(draft.draft_id)}`)
       .then((r) => r.json())
@@ -160,8 +162,12 @@ export function InboxView() {
         if (d.content) setResults(parseYAMLContent(d.content));
         setEdits(parseEdits(d.reviewer_edits));
         setSaveState("idle");
+        requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
       })
-      .catch(() => setSelected(draft));
+      .catch(() => {
+        setSelected(draft);
+        requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      });
   };
 
   const markRead = (notifId: string) => {
@@ -223,7 +229,7 @@ export function InboxView() {
               const draft = item.data;
               const summary = parseSummary(draft.summary);
               return (
-                <article key={draft.draft_id} class="inbox-card inbox-card-draft" onClick={() => openDraft(draft)}>
+                <article key={draft.draft_id} class={`inbox-card inbox-card-draft ${draft.status === "pending_review" ? "unread" : ""}`} onClick={() => openDraft(draft)}>
                   <div class="inbox-card-type">Draft Audit Log</div>
                   <div class="inbox-card-header">
                     <strong>{draft.policy_id}</strong>
@@ -278,7 +284,7 @@ export function InboxView() {
       )}
 
       {selected && (
-        <div class="draft-detail">
+        <div class="draft-detail" ref={detailRef}>
           <div class="detail-header">
             <h3>Review Draft</h3>
             <div class="detail-actions">
