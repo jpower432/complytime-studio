@@ -488,6 +488,14 @@ table tr:focus-visible { outline-offset: -2px; }
 .inbox-card-date { font-size: 12px; color: var(--text-muted); }
 .inbox-card-period { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .inbox-card-message { font-size: 13px; color: var(--text); margin-top: 4px; }
+.inbox-card-type-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.inbox-status-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.status-pending_review { background: var(--accent); color: #fff; }
+.inbox-card-framework { font-size: 12px; color: var(--text-muted); }
+.inbox-card-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.inbox-card-delta { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.btn-dismiss { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.btn-dismiss:hover { color: var(--text); }
 
 /* ── Posture Card Header ── */
 .posture-card-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }

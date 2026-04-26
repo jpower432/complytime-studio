@@ -175,6 +175,11 @@ export function InboxView() {
     setNotifications((prev) => prev.map((n) => n.notification_id === notifId ? { ...n, read: true } : n));
   };
 
+  const dismissNotification = (notifId: string) => {
+    apiFetch(`/api/notifications/${encodeURIComponent(notifId)}/read`, { method: "PATCH" }).catch(() => {});
+    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
+  };
+
   const closeDetail = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setSelected(null);
@@ -230,11 +235,17 @@ export function InboxView() {
               const summary = parseSummary(draft.summary);
               return (
                 <article key={draft.draft_id} class={`inbox-card inbox-card-draft ${draft.status === "pending_review" ? "unread" : ""}`} onClick={() => openDraft(draft)}>
-                  <div class="inbox-card-type">Draft Audit Log</div>
+                  <div class="inbox-card-type-row">
+                    <span class="inbox-card-type">Draft Audit Log</span>
+                    <span class={`inbox-status-badge status-${draft.status}`}>
+                      {draft.status === "pending_review" ? "Needs Review" : draft.status}
+                    </span>
+                  </div>
                   <div class="inbox-card-header">
                     <strong>{draft.policy_id}</strong>
                     <span class="inbox-card-date">{new Date(draft.created_at).toLocaleDateString()}</span>
                   </div>
+                  {draft.framework && <div class="inbox-card-framework">{draft.framework}</div>}
                   <div class="inbox-card-period">
                     {new Date(draft.audit_start).toLocaleDateString()} — {new Date(draft.audit_end).toLocaleDateString()}
                   </div>
@@ -245,6 +256,7 @@ export function InboxView() {
                       <span class="count-gap">{summary.gaps ?? 0} gaps</span>
                     </div>
                   )}
+                  {summary?.message && <p class="inbox-card-message">{summary.message}</p>}
                 </article>
               );
             }
@@ -269,14 +281,23 @@ export function InboxView() {
                     <span>{(payload.current_rate * 100).toFixed(0)}%</span>
                   </div>
                 )}
-                {notif.policy_id && (
+                <div class="inbox-card-actions">
+                  {notif.policy_id && (
+                    <button
+                      class="btn btn-sm btn-link"
+                      onClick={(e) => { e.stopPropagation(); navigateToPolicy(notif.policy_id); }}
+                    >
+                      View Policy →
+                    </button>
+                  )}
                   <button
-                    class="btn btn-sm btn-link"
-                    onClick={(e) => { e.stopPropagation(); navigateToPolicy(notif.policy_id); }}
+                    class="btn btn-sm btn-dismiss"
+                    onClick={(e) => { e.stopPropagation(); dismissNotification(notif.notification_id); }}
+                    title="Dismiss"
                   >
-                    View Policy →
+                    ✕
                   </button>
-                )}
+                </div>
               </article>
             );
           })}

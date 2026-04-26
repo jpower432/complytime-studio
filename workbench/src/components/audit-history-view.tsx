@@ -31,8 +31,6 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   const [endFilter, setEndFilter] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-  const [compareA, setCompareA] = useState<string | null>(null);
-  const [compareB, setCompareB] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -94,9 +92,6 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
       .catch(() => setSelectedLog(log));
   };
 
-  const logA = compareA ? logs.find((l) => l.audit_id === compareA) : null;
-  const logB = compareB ? logs.find((l) => l.audit_id === compareB) : null;
-
   return (
     <section class="audit-history-view">
       {!embedded && <h2>Audit History</h2>}
@@ -137,27 +132,18 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
                   </div>
                   {summary && (
                     <div class="posture-counts">
-                      <span class="count-pass">{summary.strengths ?? 0}</span>
-                      <span class="count-finding">{summary.findings ?? 0}</span>
-                      <span class="count-gap">{summary.gaps ?? 0}</span>
+                      <span class="count-pass">{summary.strengths ?? 0} strengths</span>
+                      <span class="count-finding">{summary.findings ?? 0} findings</span>
+                      <span class="count-gap">{summary.gaps ?? 0} gaps</span>
                     </div>
                   )}
-                  <div class="audit-card-actions">
-                    <label>
-                      <input type="radio" name="compareA" onChange={() => setCompareA(log.audit_id)} checked={compareA === log.audit_id} /> A
-                    </label>
-                    <label>
-                      <input type="radio" name="compareB" onChange={() => setCompareB(log.audit_id)} checked={compareB === log.audit_id} /> B
-                    </label>
+                  <div class="audit-card-meta">
+                    {log.created_by && <span class="audit-card-author">{log.created_by}</span>}
                   </div>
                 </article>
               );
             })}
           </div>
-
-          {logA && logB && (
-            <ComparisonView a={logA} b={logB} parseSummary={parseSummary} />
-          )}
 
           {selectedLog && (
             <div class="audit-detail">
@@ -184,49 +170,3 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   );
 }
 
-function ComparisonView({
-  a, b, parseSummary,
-}: {
-  a: AuditLog;
-  b: AuditLog;
-  parseSummary: (s: string) => any;
-}) {
-  const sa = parseSummary(a.summary);
-  const sb = parseSummary(b.summary);
-  if (!sa || !sb) return null;
-
-  const fields = ["strengths", "findings", "gaps", "observations"];
-
-  return (
-    <div class="comparison-view">
-      <h3>Comparison</h3>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Metric</th>
-            <th>Period A</th>
-            <th>Period B</th>
-            <th>Delta</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fields.map((f) => {
-            const va = sa[f] ?? 0;
-            const vb = sb[f] ?? 0;
-            const delta = vb - va;
-            return (
-              <tr key={f}>
-                <td>{f}</td>
-                <td>{va}</td>
-                <td>{vb}</td>
-                <td class={delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : ""}>
-                  {delta > 0 ? `+${delta}` : delta}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
