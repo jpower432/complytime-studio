@@ -206,16 +206,34 @@ html, body, #root {
 .evidence-filters input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-surface); color: var(--text); }
 .evidence-filters select { min-width: 180px; }
 .evidence-filters-extra { margin-top: -4px; }
-.evidence-upload { border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; background: var(--bg-surface); }
-.manual-entry-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.manual-entry-row input,
-.manual-entry-row select { flex: 1; min-width: 140px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-surface); color: var(--text); }
-.manual-extras { margin: 8px 0; }
-.manual-extras summary { cursor: pointer; font-size: 0.85rem; color: var(--text-muted); }
-.upload-status { font-size: 13px; color: var(--text-muted); }
 .eval-badge { padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
 .eval-passed { background: rgba(34,197,94,0.15); color: #22c55e; }
 .eval-failed { background: rgba(239,68,68,0.15); color: #ef4444; }
+
+/* ── Certification badges & bar ── */
+.cert-badge { font-size: 14px; cursor: default; }
+.cert-pass { color: var(--text); opacity: 0.85; }
+.cert-warn { color: var(--text-muted); opacity: 0.7; }
+.cert-pending { color: var(--text-muted); opacity: 0.5; }
+.certification-bar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  margin-bottom: 8px; background: var(--border);
+}
+.cert-bar-segment { cursor: pointer; transition: opacity 0.15s; }
+.cert-bar-segment:hover { opacity: 0.8; }
+.cert-bar-certified { background: var(--text); opacity: 0.6; }
+.cert-bar-uncertified { background: var(--text-muted); opacity: 0.25; }
+.cert-detail-table { width: 100%; font-size: 12px; margin-top: 8px; }
+.cert-detail-table th {
+  text-align: left; padding: 4px 8px;
+  border-bottom: 1px solid var(--border); color: var(--text-muted);
+}
+.cert-detail-table td { padding: 4px 8px; }
+.cert-result { font-weight: 600; font-size: 11px; }
+.cert-result-pass { color: var(--text); opacity: 0.85; }
+.cert-result-fail { color: var(--text-muted); text-decoration: line-through; }
+.cert-result-skip { color: var(--text-muted); opacity: 0.6; }
+.cert-result-error { color: var(--text-muted); opacity: 0.5; font-style: italic; }
 
 .audit-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
 .audit-filters select, .audit-filters input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-surface); color: var(--text); }
@@ -411,25 +429,6 @@ html, body, #root {
 /* ── Posture latest ── */
 .posture-latest { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
 .posture-actions { display: flex; gap: 8px; margin-top: 12px; }
-
-/* ── Evidence upload form ── */
-.evidence-upload { margin-bottom: 16px; }
-.upload-toggle { display: flex; gap: 4px; margin-bottom: 10px; }
-.upload-file-row { display: flex; gap: 8px; align-items: center; }
-.manual-entry-form {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px;
-  padding: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
-}
-.manual-entry-form input,
-.manual-entry-form select {
-  padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg-input); color: var(--text); font-size: 13px; width: 100%;
-}
-.file-attachment { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
-.file-attachment label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-.manual-entry-form .btn { grid-column: 1 / -1; justify-self: start; }
-.upload-warnings { margin-top: 6px; }
-.warning-msg { font-size: 12px; color: var(--warning); padding: 2px 0; }
 
 /* ── Accessibility ── */
 .skip-link {

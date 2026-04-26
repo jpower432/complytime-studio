@@ -353,6 +353,31 @@ func schemaMigrations() []migration {
 			ORDER BY (notification_id)
 			TTL toDateTime(created_at) + INTERVAL 90 DAY`,
 		},
+		{
+			Version:     11,
+			Description: "add certified column to evidence",
+			SQL: `ALTER TABLE evidence
+				ADD COLUMN IF NOT EXISTS certified Bool DEFAULT false`,
+		},
+		{
+			Version:     12,
+			Description: "add certifications table",
+			SQL: `CREATE TABLE IF NOT EXISTS certifications (
+				evidence_id       String,
+				certifier         LowCardinality(String),
+				certifier_version LowCardinality(String),
+				result            Enum8(
+				  'pass' = 1,
+				  'fail' = 2,
+				  'skip' = 3,
+				  'error' = 4
+				),
+				reason            String,
+				certified_at      DateTime64(3) DEFAULT now64(3)
+			) ENGINE = MergeTree()
+			PARTITION BY toYYYYMM(certified_at)
+			ORDER BY (evidence_id, certifier, certified_at)`,
+		},
 	}
 }
 

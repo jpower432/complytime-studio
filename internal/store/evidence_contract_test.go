@@ -3,11 +3,8 @@
 package store
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/json"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,9 +13,6 @@ import (
 
 //go:embed testdata/golden/post_evidence_created.json
 var goldenPostEvidenceCreated []byte
-
-//go:embed testdata/golden/post_evidence_upload.json
-var goldenPostEvidenceUpload []byte
 
 func normJSON(t *testing.T, b []byte) string {
 	t.Helper()
@@ -54,30 +48,17 @@ func TestContract_POST_api_evidence_JSONResponseGolden(t *testing.T) {
 	}
 }
 
-func TestContract_POST_api_evidence_upload_JSONGolden(t *testing.T) {
+func TestContract_POST_api_evidence_upload_Returns410(t *testing.T) {
 	t.Parallel()
-	fake := &fakeEvidenceStore{}
 	mux := http.NewServeMux()
-	Register(mux, Stores{Evidence: fake})
+	Register(mux, Stores{})
 
-	csv := "policy_id,eval_result,collected_at,target_id,control_id,rule_id\n" +
-		"pol-g,Passed,2026-04-25T12:00:00Z,tg,cg,rg\n"
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	part, _ := w.CreateFormFile("file", "rows.csv")
-	_, _ = io.WriteString(part, csv)
-	_ = w.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/evidence/upload", &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
+	req := httptest.NewRequest(
+		http.MethodPost, "/api/evidence/upload", nil,
+	)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
-	}
-	want := normJSON(t, goldenPostEvidenceUpload)
-	got := normJSON(t, rec.Body.Bytes())
-	if got != want {
-		t.Fatalf("got %s want %s", got, want)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone, got %d %s", rec.Code, rec.Body.String())
 	}
 }

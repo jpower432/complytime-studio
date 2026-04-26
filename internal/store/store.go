@@ -83,6 +83,16 @@ type EvidenceAssessmentStore interface {
 	InsertEvidenceAssessments(ctx context.Context, assessments []EvidenceAssessment) error
 }
 
+// CertificationStore defines read/write operations for evidence certifications.
+type CertificationStore interface {
+	InsertCertifications(ctx context.Context, rows []CertificationRow) error
+	UpdateEvidenceCertified(ctx context.Context, evidenceID string, certified bool) error
+	QueryCertifications(ctx context.Context, evidenceID string) ([]CertificationRow, error)
+	QueryRecentEvidence(
+		ctx context.Context, policyID string, since time.Time,
+	) ([]EvidenceRowLite, error)
+}
+
 // PostureStore defines read operations for compliance posture aggregates.
 type PostureStore interface {
 	ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error)
@@ -135,6 +145,7 @@ var (
 	_ RequirementStore        = (*Store)(nil)
 	_ PostureStore            = (*Store)(nil)
 	_ NotificationStore       = (*Store)(nil)
+	_ CertificationStore      = (*Store)(nil)
 )
 
 // New wraps an existing ClickHouse connection.
@@ -651,6 +662,8 @@ type EvidenceRecord struct {
 	SourceRegistry string `json:"source_registry,omitempty"`
 	BlobRef        string `json:"blob_ref,omitempty"`
 
+	Certified bool `json:"certified"`
+
 	Owner       string    `json:"owner,omitempty"`
 	CollectedAt time.Time `json:"collected_at"`
 }
@@ -790,6 +803,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		coalesce(attestation_ref, '') AS attestation_ref,
 		coalesce(source_registry, '') AS source_registry,
 		coalesce(blob_ref, '') AS blob_ref,
+		certified,
 		collected_at
 		FROM evidence WHERE 1=1`
 	var args []any
@@ -858,6 +872,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 			&r.RiskLevel, &r.Requirements,
 			&r.EnrichmentStatus,
 			&r.AttestationRef, &r.SourceRegistry, &r.BlobRef,
+			&r.Certified,
 			&r.CollectedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan evidence: %w", err)
@@ -865,6 +880,119 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// CertificationRow represents a single certification verdict.
+type CertificationRow struct {
+	EvidenceID       string    `json:"evidence_id"`
+	Certifier        string    `json:"certifier"`
+	CertifierVersion string    `json:"certifier_version"`
+	Result           string    `json:"result"`
+	Reason           string    `json:"reason"`
+	CertifiedAt      time.Time `json:"certified_at,omitempty"`
+}
+
+// EvidenceRowLite is a lightweight evidence projection for the certifier pipeline.
+type EvidenceRowLite struct {
+	EvidenceID       string    `json:"evidence_id"`
+	TargetID         string    `json:"target_id"`
+	RuleID           string    `json:"rule_id"`
+	EvalResult       string    `json:"eval_result"`
+	ComplianceStatus string    `json:"compliance_status"`
+	EngineName       string    `json:"engine_name"`
+	SourceRegistry   string    `json:"source_registry"`
+	AttestationRef   string    `json:"attestation_ref"`
+	EnrichmentStatus string    `json:"enrichment_status"`
+	CollectedAt      time.Time `json:"collected_at"`
+}
+
+// InsertCertifications batch-inserts certification verdicts.
+func (s *Store) InsertCertifications(ctx context.Context, rows []CertificationRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason)`)
+	if err != nil {
+		return fmt.Errorf("prepare certifications batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.EvidenceID, r.Certifier, r.CertifierVersion,
+			r.Result, r.Reason,
+		); err != nil {
+			return fmt.Errorf("append certification: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+// UpdateEvidenceCertified sets the denormalized certified flag on an evidence row.
+func (s *Store) UpdateEvidenceCertified(
+	ctx context.Context, evidenceID string, certified bool,
+) error {
+	return s.conn.Exec(ctx,
+		`ALTER TABLE evidence UPDATE certified = ? WHERE evidence_id = ?`,
+		certified, evidenceID)
+}
+
+// QueryCertifications returns certification verdicts for a given evidence row.
+func (s *Store) QueryCertifications(
+	ctx context.Context, evidenceID string,
+) ([]CertificationRow, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT evidence_id, certifier, certifier_version, result, reason, certified_at
+		 FROM certifications WHERE evidence_id = ? ORDER BY certified_at DESC`, evidenceID)
+	if err != nil {
+		return nil, fmt.Errorf("query certifications: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []CertificationRow
+	for rows.Next() {
+		var r CertificationRow
+		if err := rows.Scan(
+			&r.EvidenceID, &r.Certifier, &r.CertifierVersion,
+			&r.Result, &r.Reason, &r.CertifiedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan certification: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// QueryRecentEvidence returns lightweight evidence rows for a policy ingested after since.
+func (s *Store) QueryRecentEvidence(
+	ctx context.Context, policyID string, since time.Time,
+) ([]EvidenceRowLite, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT evidence_id, target_id, rule_id, eval_result, compliance_status,
+			coalesce(engine_name, '') AS engine_name,
+			coalesce(source_registry, '') AS source_registry,
+			coalesce(attestation_ref, '') AS attestation_ref,
+			enrichment_status, collected_at
+		 FROM evidence
+		 WHERE policy_id = ? AND ingested_at >= ?
+		 ORDER BY ingested_at DESC`, policyID, since)
+	if err != nil {
+		return nil, fmt.Errorf("query recent evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []EvidenceRowLite
+	for rows.Next() {
+		var r EvidenceRowLite
+		if err := rows.Scan(
+			&r.EvidenceID, &r.TargetID, &r.RuleID, &r.EvalResult,
+			&r.ComplianceStatus, &r.EngineName, &r.SourceRegistry,
+			&r.AttestationRef, &r.EnrichmentStatus, &r.CollectedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan recent evidence: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // AuditLog represents a stored audit log artifact.

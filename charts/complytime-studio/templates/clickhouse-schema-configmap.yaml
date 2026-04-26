@@ -131,6 +131,9 @@ data:
         source_registry       Nullable(String),
         blob_ref              Nullable(String),
 
+        -- Certification status (denormalized from certifications table)
+        certified             Bool DEFAULT false,
+
         -- Timestamps
         collected_at          DateTime64(3),
         ingested_at           DateTime64(3) DEFAULT now64(3),
@@ -305,6 +308,25 @@ data:
     ENGINE = MergeTree()
     PARTITION BY toYYYYMM(assessed_at)
     ORDER BY (policy_id, plan_id, evidence_id, assessed_at);
+
+    -- Evidence certification verdicts produced by the certifier pipeline.
+    CREATE TABLE IF NOT EXISTS certifications
+    (
+        evidence_id       String,
+        certifier         LowCardinality(String),
+        certifier_version LowCardinality(String),
+        result            Enum8(
+                            'pass' = 1,
+                            'fail' = 2,
+                            'skip' = 3,
+                            'error' = 4
+                          ),
+        reason            String,
+        certified_at      DateTime64(3) DEFAULT now64(3)
+    )
+    ENGINE = MergeTree()
+    PARTITION BY toYYYYMM(certified_at)
+    ORDER BY (evidence_id, certifier, certified_at);
 
     -- Schema migration tracking.
     CREATE TABLE IF NOT EXISTS schema_migrations

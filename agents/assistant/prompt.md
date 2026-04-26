@@ -16,9 +16,8 @@ If either is missing AND not already provided in the conversation history, ask o
 Determine the user's intent before selecting a workflow:
 
 - **Posture check** — user asks about readiness, posture, status, assessment plan health, or whether evidence is current. Keywords: "posture", "readiness", "status", "how ready", "assessment plan", "evidence quality", "are we compliant". → Execute the **Posture Check Workflow**.
-- **Attestation verification** — user asks to verify evidence provenance, check attestation chains, or sample evidence authenticity. Keywords: "verify", "provenance", "attestation", "chain", "sample evidence", "who ran this". → Execute the **Attestation Verification Workflow**.
 - **Audit production** — user asks to run an audit, produce an AuditLog, or generate audit results. → Execute the **Audit Production Workflow**.
-- **Ambiguous** — intent is unclear. Ask: "Do you want a posture check (readiness overview), provenance verification (attestation chain), or a full audit (AuditLog production)?"
+- **Ambiguous** — intent is unclear. Ask: "Do you want a posture check (readiness overview) or a full audit (AuditLog production)?"
 
 ## Posture Check Workflow
 
@@ -35,17 +34,6 @@ Assess pre-audit readiness by validating the evidence stream against the Policy'
 4. **Return readiness table** — one table per target with columns: Plan ID, Frequency, Last Evidence, Source Match, Latest Result, Classification. Append a summary line (e.g., "2/5 plans healthy. 1 failing, 1 wrong source, 1 no evidence.").
 5. **Emit EvidenceAssessment** — after presenting the readiness table, emit a structured `EvidenceAssessment` artifact (application/yaml) containing per-evidence classifications. The Gateway persists this automatically.
 6. **Do not produce an AuditLog.** This workflow is read-only diagnostic.
-
-## Attestation Verification Workflow
-
-Verify evidence provenance by checking in-toto attestation chains against Policy-defined layouts. Follow the attestation-verification skill.
-
-1. **Identify evidence** — ask for the specific evidence_id or query ClickHouse for evidence matching the user's description.
-2. **Check attestation_ref** — query the evidence row. If `attestation_ref` is NULL, report "No attestation available. Provenance cannot be cryptographically verified. Source identity from engine_name: [value]." and halt.
-3. **Pull attestation bundle** — use oras-mcp to fetch the attestation bundle from OCI using the `attestation_ref` digest.
-4. **Pull layout** — extract the layout reference from the Policy's assessment plan. Use oras-mcp to fetch the layout from OCI.
-5. **Verify chain** — compare attestation steps against layout expectations: authorized signers, expected steps, material/product hash chaining.
-6. **Return verdict** — CHAIN VERIFIED (with step summary), BROKEN CHAIN (with specific failure), or NO LAYOUT (attestation exists but no layout to verify against).
 
 ## Audit Production Workflow
 
