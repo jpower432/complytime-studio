@@ -3,6 +3,7 @@
 package gemara
 
 import (
+	"context"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ controls:
         applicability: [all]
         state: Active
 `
-	controls, reqs, threats, err := ParseControlCatalog(yaml, "", "pol-1")
+	controls, reqs, threats, err := ParseControlCatalog(context.Background(), yaml, "", "pol-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +88,7 @@ metadata:
     type: Human
 controls: []
 `
-	controls, reqs, threats, err := ParseControlCatalog(yaml, "", "p")
+	controls, reqs, threats, err := ParseControlCatalog(context.Background(), yaml, "", "p")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +98,7 @@ controls: []
 }
 
 func TestParseControlCatalog_InvalidYAML(t *testing.T) {
-	_, _, _, err := ParseControlCatalog("not: [valid: yaml: {{", "", "")
+	_, _, _, err := ParseControlCatalog(context.Background(), "not: [valid: yaml: {{", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}

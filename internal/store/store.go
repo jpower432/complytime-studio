@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -43,6 +44,8 @@ type ControlStore interface {
 type ThreatStore interface {
 	InsertThreats(ctx context.Context, rows []gemara.ThreatRow) error
 	CountThreats(ctx context.Context, catalogID string) (int, error)
+	QueryThreats(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.ThreatRow, error)
+	QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error)
 }
 
 // RiskStore defines read/write operations for parsed risk catalog entries.
@@ -51,6 +54,8 @@ type RiskStore interface {
 	InsertRiskThreats(ctx context.Context, rows []gemara.RiskThreatRow) error
 	CountRisks(ctx context.Context, catalogID string) (int, error)
 	GetPolicyRiskSeverity(ctx context.Context, policyID string) ([]RiskSeverityRow, error)
+	QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error)
+	QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error)
 }
 
 // CatalogStore defines read/write operations for raw catalog artifacts.
@@ -80,7 +85,7 @@ type EvidenceAssessmentStore interface {
 
 // PostureStore defines read operations for compliance posture aggregates.
 type PostureStore interface {
-	ListPosture(ctx context.Context) ([]PostureRow, error)
+	ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error)
 	QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error)
 }
 
@@ -375,6 +380,63 @@ func (s *Store) CountThreats(ctx context.Context, catalogID string) (int, error)
 	return int(count), nil
 }
 
+func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.ThreatRow, error) {
+	where, args := buildCatalogPolicyFilter(catalogID, policyID)
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, threat_id, title, description, group_id, policy_id FROM threats`+where+` ORDER BY catalog_id, threat_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.ThreatRow
+	for rows.Next() {
+		var r gemara.ThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.ThreatID, &r.Title, &r.Description, &r.GroupID, &r.PolicyID); err != nil {
+			return nil, fmt.Errorf("scan threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if controlID != "" {
+		clauses = append(clauses, "control_id = ?")
+		args = append(args, controlID)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, control_id, threat_reference_id, threat_entry_id FROM control_threats`+where+` ORDER BY catalog_id, control_id, threat_reference_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query control threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.ControlThreatRow
+	for rows.Next() {
+		var r gemara.ControlThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.ControlID, &r.ThreatReferenceID, &r.ThreatEntryID); err != nil {
+			return nil, fmt.Errorf("scan control threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) InsertRisks(ctx context.Context, rows []gemara.RiskRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -421,6 +483,81 @@ func (s *Store) CountRisks(ctx context.Context, catalogID string) (int, error) {
 		return 0, fmt.Errorf("count risks: %w", err)
 	}
 	return int(count), nil
+}
+
+func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error) {
+	where, args := buildCatalogPolicyFilter(catalogID, policyID)
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, risk_id, title, description, severity, group_id, impact, policy_id FROM risks`+where+` ORDER BY catalog_id, risk_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query risks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.RiskRow
+	for rows.Next() {
+		var r gemara.RiskRow
+		if err := rows.Scan(&r.CatalogID, &r.RiskID, &r.Title, &r.Description, &r.Severity, &r.GroupID, &r.Impact, &r.PolicyID); err != nil {
+			return nil, fmt.Errorf("scan risk: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if riskID != "" {
+		clauses = append(clauses, "risk_id = ?")
+		args = append(args, riskID)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, risk_id, threat_reference_id, threat_entry_id FROM risk_threats`+where+` ORDER BY catalog_id, risk_id, threat_reference_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query risk threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.RiskThreatRow
+	for rows.Next() {
+		var r gemara.RiskThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.RiskID, &r.ThreatReferenceID, &r.ThreatEntryID); err != nil {
+			return nil, fmt.Errorf("scan risk threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// buildCatalogPolicyFilter builds a WHERE clause for optional catalog_id and policy_id filters.
+func buildCatalogPolicyFilter(catalogID, policyID string) (string, []any) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if policyID != "" {
+		clauses = append(clauses, "policy_id = ?")
+		args = append(args, policyID)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
 // RiskSeverityRow maps a control to its highest-severity risk for a given policy.
@@ -1046,7 +1183,24 @@ type PostureRow struct {
 }
 
 // ListPosture returns per-policy evidence posture aggregates with inventory context.
-func (s *Store) ListPosture(ctx context.Context) ([]PostureRow, error) {
+// When start or end are non-zero the evidence window is restricted to that range.
+func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error) {
+	var (
+		evidenceFilter string
+		args           []any
+	)
+	if !start.IsZero() || !end.IsZero() {
+		evidenceFilter = " WHERE 1=1"
+		if !start.IsZero() {
+			evidenceFilter += " AND collected_at >= ?"
+			args = append(args, start)
+		}
+		if !end.IsZero() {
+			evidenceFilter += " AND collected_at <= ?"
+			args = append(args, end)
+		}
+	}
+
 	query := `
 		SELECT
 			p.policy_id,
@@ -1061,11 +1215,11 @@ func (s *Store) ListPosture(ctx context.Context) ([]PostureRow, error) {
 			uniqIf(e.control_id, e.control_id != '') AS control_count,
 			if(count(e.evidence_id) > 0, toString(max(e.collected_at)), '') AS latest_evidence_at
 		FROM (SELECT policy_id, title, version FROM policies FINAL) AS p
-		LEFT JOIN evidence e ON e.policy_id = p.policy_id
+		LEFT JOIN (SELECT * FROM evidence` + evidenceFilter + `) e ON e.policy_id = p.policy_id
 		GROUP BY p.policy_id, p.title, policy_version
 		ORDER BY p.title`
 
-	rows, err := s.conn.Query(ctx, query)
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list posture: %w", err)
 	}

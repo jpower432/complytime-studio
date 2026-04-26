@@ -77,8 +77,14 @@ func Register(mux *http.ServeMux, s Stores) {
 		mux.HandleFunc("PATCH /api/draft-audit-logs/{id}", updateDraftEditsHandler(s.DraftAuditLogs))
 		mux.HandleFunc("POST /api/audit-logs/promote", promoteAuditLogHandler(s.DraftAuditLogs))
 	}
+	if s.Threats != nil {
+		mux.HandleFunc("GET /api/threats", listThreatsHandler(s.Threats))
+		mux.HandleFunc("GET /api/control-threats", listControlThreatsHandler(s.Threats))
+	}
 	if s.Risks != nil {
+		mux.HandleFunc("GET /api/risks", listRisksHandler(s.Risks))
 		mux.HandleFunc("GET /api/risks/severity", riskSeverityHandler(s.Risks))
+		mux.HandleFunc("GET /api/risk-threats", listRiskThreatsHandler(s.Risks))
 	}
 	if s.Notifications != nil {
 		mux.HandleFunc("GET /api/notifications", listNotificationsHandler(s.Notifications))
@@ -681,7 +687,7 @@ func parseCatalogStructuredRows(ctx context.Context, catalogType, content, catal
 		if ctrlS == nil {
 			return
 		}
-		controls, reqs, threats, err := gemarapkg.ParseControlCatalog(content, catalogID, policyID)
+		controls, reqs, threats, err := gemarapkg.ParseControlCatalog(ctx, content, catalogID, policyID)
 		if err != nil {
 			slog.Warn("control catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
 			return
@@ -707,7 +713,7 @@ func parseCatalogStructuredRows(ctx context.Context, catalogType, content, catal
 		if threatS == nil {
 			return
 		}
-		rows, err := gemarapkg.ParseThreatCatalog(content, catalogID, policyID)
+		rows, err := gemarapkg.ParseThreatCatalog(ctx, content, catalogID, policyID)
 		if err != nil {
 			slog.Warn("threat catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
 			return
@@ -723,7 +729,7 @@ func parseCatalogStructuredRows(ctx context.Context, catalogType, content, catal
 		if riskS == nil {
 			return
 		}
-		riskRows, linkRows, err := gemarapkg.ParseRiskCatalog(content, catalogID, policyID)
+		riskRows, linkRows, err := gemarapkg.ParseRiskCatalog(ctx, content, catalogID, policyID)
 		if err != nil {
 			slog.Warn("risk catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
 			return
@@ -1084,7 +1090,12 @@ func authSessionEmail(ctx context.Context) string {
 
 func listPostureHandler(s PostureStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := s.ListPosture(r.Context())
+		start, end, err := parseOptionalTimeRange(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		rows, err := s.ListPosture(r.Context(), start, end)
 		if err != nil {
 			slog.Error("list posture failed", "error", err)
 			http.Error(w, "query failed", http.StatusInternalServerError)
@@ -1092,6 +1103,129 @@ func listPostureHandler(s PostureStore) http.HandlerFunc {
 		}
 		if rows == nil {
 			rows = []PostureRow{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, rows)
+	}
+}
+
+// parseQueryLimit extracts an optional "limit" query parameter and clamps it
+// to the project-wide range [DefaultQueryLimit, MaxQueryLimit].
+func parseQueryLimit(r *http.Request) int {
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return consts.ClampLimit(n)
+		}
+	}
+	return consts.ClampLimit(0)
+}
+
+// parseOptionalTimeRange extracts optional start/end query parameters.
+// Accepts date-only (2006-01-02) or RFC 3339 formats.
+func parseOptionalTimeRange(r *http.Request) (start, end time.Time, err error) {
+	if v := r.URL.Query().Get("start"); v != "" {
+		start, err = parseFlexibleTime(v, false)
+		if err != nil {
+			return time.Time{}, time.Time{}, errInvalidStart
+		}
+	}
+	if v := r.URL.Query().Get("end"); v != "" {
+		end, err = parseFlexibleTime(v, true)
+		if err != nil {
+			return time.Time{}, time.Time{}, errInvalidEnd
+		}
+	}
+	return start, end, nil
+}
+
+var (
+	errInvalidStart = errors.New("invalid start parameter")
+	errInvalidEnd   = errors.New("invalid end parameter")
+)
+
+// parseFlexibleTime parses RFC 3339 or date-only (YYYY-MM-DD) strings.
+// Date-only values are treated as end-of-day (next day at 00:00 minus 1ns)
+// when used as an upper bound so that the full calendar day is included.
+func parseFlexibleTime(s string, endOfDay bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		if endOfDay {
+			t = t.AddDate(0, 0, 1).Add(-time.Nanosecond)
+		}
+		return t, nil
+	}
+	return time.Time{}, errInvalidDateFormat
+}
+
+var errInvalidDateFormat = errors.New("expected YYYY-MM-DD or RFC 3339 format")
+func listThreatsHandler(s ThreatStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		catalogID := r.URL.Query().Get("catalog_id")
+		policyID := r.URL.Query().Get("policy_id")
+		limit := parseQueryLimit(r)
+		rows, err := s.QueryThreats(r.Context(), catalogID, policyID, limit)
+		if err != nil {
+			slog.Error("query threats failed", "error", err)
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		if rows == nil {
+			rows = []gemarapkg.ThreatRow{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, rows)
+	}
+}
+
+func listControlThreatsHandler(s ThreatStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		catalogID := r.URL.Query().Get("catalog_id")
+		controlID := r.URL.Query().Get("control_id")
+		limit := parseQueryLimit(r)
+		rows, err := s.QueryControlThreats(r.Context(), catalogID, controlID, limit)
+		if err != nil {
+			slog.Error("query control threats failed", "error", err)
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		if rows == nil {
+			rows = []gemarapkg.ControlThreatRow{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, rows)
+	}
+}
+
+func listRisksHandler(s RiskStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		catalogID := r.URL.Query().Get("catalog_id")
+		policyID := r.URL.Query().Get("policy_id")
+		limit := parseQueryLimit(r)
+		rows, err := s.QueryRisks(r.Context(), catalogID, policyID, limit)
+		if err != nil {
+			slog.Error("query risks failed", "error", err)
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		if rows == nil {
+			rows = []gemarapkg.RiskRow{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, rows)
+	}
+}
+
+func listRiskThreatsHandler(s RiskStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		catalogID := r.URL.Query().Get("catalog_id")
+		riskID := r.URL.Query().Get("risk_id")
+		limit := parseQueryLimit(r)
+		rows, err := s.QueryRiskThreats(r.Context(), catalogID, riskID, limit)
+		if err != nil {
+			slog.Error("query risk threats failed", "error", err)
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		if rows == nil {
+			rows = []gemarapkg.RiskThreatRow{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, rows)
 	}

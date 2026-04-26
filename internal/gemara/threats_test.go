@@ -3,6 +3,7 @@
 package gemara
 
 import (
+	"context"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ threats:
         entries:
           - reference-id: CAP-1
 `
-	rows, err := ParseThreatCatalog(yaml, "", "pol-1")
+	rows, err := ParseThreatCatalog(context.Background(), yaml, "", "pol-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,7 +62,7 @@ metadata:
     type: Human
 threats: []
 `
-	rows, err := ParseThreatCatalog(yaml, "", "p")
+	rows, err := ParseThreatCatalog(context.Background(), yaml, "", "p")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +72,7 @@ threats: []
 }
 
 func TestParseThreatCatalog_InvalidYAML(t *testing.T) {
-	_, err := ParseThreatCatalog("not: [valid: yaml: {{", "", "")
+	_, err := ParseThreatCatalog(context.Background(), "not: [valid: yaml: {{", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}

@@ -49,6 +49,10 @@ Multiple controls mapping to the same external entry: use strongest coverage. No
 **validate_gemara_artifact**: `artifact_content` (YAML string), `definition` (e.g. `#AuditLog`), `version` (optional)
 **migrate_gemara_artifact**: `artifact_content` (YAML string), `artifact_type` (optional), `gemara_version` (optional)
 
+## Workbench posture list vs. SQL
+
+The workbench calls `GET /api/posture` with optional `start` and `end` query parameters to limit rows to evidence whose `collected_at` falls in that window (omitting both parameters includes all evidence). When you run ad-hoc SQL that should match the on-screen posture numbers, apply the same `collected_at` range the user selected (including workbench time presets: 7d, 30d, 90d, or all-time).
+
 ## ClickHouse Tables
 
 Database: `default`. Query via `run_select_query`. Use `DESCRIBE TABLE <name>` for column types.

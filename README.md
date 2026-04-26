@@ -8,7 +8,7 @@ Studio is the aggregation point in a decoupled compliance ecosystem -- policies 
 
 | Capability | Description |
 |:--|:--|
-| **Compliance Posture** | Per-policy cards with pass/fail/other counts, pass rate, target/control inventory, evidence freshness, RACI-style owner, optional risk severity overlay |
+| **Compliance Posture** | Per-policy cards with stacked pass/fail/other bar, freshness border (7d / 30d / stale / none), optional time presets (7d / 30d / 90d / All) on evidence collection date, summary strip (policy count, pass rate, aggregate bar, stale warning count), target/control inventory, RACI-style owner, optional risk severity overlay; **View Details** opens drill-down |
 | **Posture Drill-down** | Breadcrumb + tabbed **Requirements** / **Evidence** / **History** per policy (`#posture/{id}`) |
 | **Requirement Matrix** | Control → requirement → evidence with classifications (**No Evidence** replaces legacy "Blind"), filters, severity context |
 | **Inbox** | Notifications from posture/evidence events (when NATS enabled) plus draft audit logs awaiting promotion |
@@ -126,7 +126,11 @@ gemara-mcp / clickhouse-mcp / oras-mcp
 
 | Method | Path | Description |
 |:--|:--|:--|
-| `GET` | `/api/posture` | Per-policy compliance posture aggregates |
+| `GET` | `/api/posture` | Per-policy compliance posture aggregates; optional `start` and `end` (date-only or RFC 3339) filter by evidence `collected_at` |
+| `GET` | `/api/threats` | List threats; optional `catalog_id`, `policy_id`, `limit` |
+| `GET` | `/api/control-threats` | Control-to-threat junctions; optional `catalog_id`, `control_id`, `limit` |
+| `GET` | `/api/risks` | List risks; optional `catalog_id`, `policy_id`, `limit` |
+| `GET` | `/api/risk-threats` | Risk-to-threat junctions; optional `catalog_id`, `risk_id`, `limit` |
 | `GET` | `/api/risks/severity` | Risk severity rows for policy scope |
 | `GET` | `/api/requirements` | Requirement matrix with evidence counts |
 | `GET` | `/api/requirements/{id}/evidence` | Evidence drill-down for a requirement |
