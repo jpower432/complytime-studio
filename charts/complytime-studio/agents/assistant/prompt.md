@@ -58,10 +58,15 @@ Verify evidence provenance by checking in-toto attestation chains against Policy
 
 ### Phase 2: Draft Classification (judgment — requires human review)
 
-5. **Classify per target** — for each target, classify each criteria entry (Strength/Finding/Gap/Observation). For every classification, include `agent-reasoning` explaining the judgment: which evidence was used, why the classification was chosen, what was missing.
+5. **Classify per target** — for each target, classify each criteria entry (Strength/Finding/Gap/Observation). For every classification, track your reasoning internally: which evidence was used, why the classification was chosen, what was missing. You will pass this reasoning to `publish_audit_log` in step 8.
 6. **Cross-framework coverage** — only when step 2 returned mappings. Join results with `mapping_entries`.
 7. **Author Draft AuditLog** — one per target. Use the template below. Call `validate_gemara_artifact` with `definition: "#AuditLog"`. Fix and retry up to 3 times. If still failing, report errors and halt.
-8. **Publish as Draft** — after validation succeeds, call `publish_audit_log` with the validated YAML AND the `policy_id` from the policies table (e.g. `ampel-branch-protection`). Do NOT omit the `policy_id` parameter. This creates a **draft** that a human reviewer must promote to an official record. Tell the user: "Draft AuditLog saved for review. A reviewer must promote it to the official audit history."
+8. **Publish as Draft** — after validation succeeds, call `publish_audit_log` with:
+   - `yaml_content`: the validated YAML
+   - `policy_id`: from the policies table (e.g. `ampel-branch-protection`) — do NOT omit
+   - `reasoning`: a JSON object mapping each result id to your classification reasoning (e.g. `{"bp-1-result": "Classified as Strength because 3/3 evidence records show Passed with correct engine provenance within the 30-day cadence window."}`)
+   
+   Do NOT put `agent-reasoning` in the YAML — it is not in the Gemara schema. Pass reasoning through the `reasoning` parameter instead. Tell the user: "Draft AuditLog saved for review. A reviewer must promote it to the official audit history."
 9. **Return** — end with a coverage summary.
 
 ## AuditLog Template
@@ -95,8 +100,6 @@ results:
     title: <control title>
     type: Strength              # Strength | Finding | Gap | Observation
     description: <factual summary>
-    agent-reasoning: >-          # REQUIRED — explain the classification
-      <why this classification was chosen, referencing specific evidence>
     criteria-reference:
       reference-id: <catalog-ref-id>
       entries:

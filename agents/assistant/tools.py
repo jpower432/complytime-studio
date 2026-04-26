@@ -32,6 +32,7 @@ async def publish_audit_log(
     yaml_content: str,
     tool_context: ToolContext,
     policy_id: str = "",
+    reasoning: str = "",
 ) -> dict:
     """Publish a validated AuditLog YAML as a draft for human review.
 
@@ -44,6 +45,9 @@ async def publish_audit_log(
         tool_context: Injected by ADK — provides save_artifact.
         policy_id: The policy_id from the policies table (e.g. 'ampel-branch-protection').
                    When provided, used directly instead of guessing from YAML metadata.
+        reasoning: JSON object mapping result IDs to classification reasoning.
+                   Stored separately from the YAML since agent-reasoning is not
+                   in the Gemara schema.
 
     Returns:
         dict with status, filename, and draft_id.
@@ -68,11 +72,11 @@ async def publish_audit_log(
 
     if not policy_id:
         policy_id = _extract_policy_id(doc)
-    reasoning = _extract_reasoning(doc)
+    agent_reasoning = reasoning if reasoning else _extract_reasoning(doc)
     payload = {
         "policy_id": policy_id,
         "content": yaml_content,
-        "agent_reasoning": reasoning,
+        "agent_reasoning": agent_reasoning,
         "model": MODEL_NAME,
         "prompt_version": PROMPT_VERSION,
     }
