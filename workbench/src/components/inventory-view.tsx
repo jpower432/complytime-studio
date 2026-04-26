@@ -64,7 +64,11 @@ function groupByControl(rows: EvidenceRow[]): ControlSummary[] {
     .sort((a, b) => a.controlId.localeCompare(b.controlId));
 }
 
-export function InventoryView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
+export function InventoryView({ policyIdOverride, onTargetClick, onControlClick }: {
+  policyIdOverride?: string;
+  onTargetClick?: (targetId: string, targetName: string) => void;
+  onControlClick?: (controlId: string) => void;
+} = {}) {
   const [rows, setRows] = useState<EvidenceRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -97,7 +101,11 @@ export function InventoryView({ policyIdOverride }: { policyIdOverride?: string 
           <h3>Targets ({targets.length})</h3>
           <div class="inventory-list">
             {targets.map((t) => (
-              <div key={t.targetId} class="inventory-item">
+              <div
+                key={t.targetId}
+                class={`inventory-item ${onTargetClick ? "inventory-item-clickable" : ""}`}
+                onClick={onTargetClick ? () => onTargetClick(t.targetId, t.name) : undefined}
+              >
                 <span class="inventory-item-name" title={t.targetId}>{t.name}</span>
                 <span class="inventory-item-stats">{t.total} records</span>
                 <div class="posture-bar" style={{ width: "80px" }}>
@@ -118,7 +126,11 @@ export function InventoryView({ policyIdOverride }: { policyIdOverride?: string 
           <h3>Controls ({controls.length})</h3>
           <div class="inventory-list">
             {controls.map((c) => (
-              <div key={c.controlId} class="inventory-item">
+              <div
+                key={c.controlId}
+                class={`inventory-item ${onControlClick ? "inventory-item-clickable" : ""}`}
+                onClick={onControlClick ? () => onControlClick(c.controlId) : undefined}
+              >
                 <span class="inventory-item-name mono">{c.controlId}</span>
                 <span class="inventory-item-stats">{c.total} records</span>
                 <span class="inventory-item-stats">{c.passRate}% pass</span>

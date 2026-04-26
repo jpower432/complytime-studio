@@ -44,13 +44,30 @@ function parseSummary(s: string): SummaryData | null {
   }
 }
 
-function DeltaCell({ current, previous, warnOnIncrease }: { current: number; previous: number | null; warnOnIncrease: boolean }) {
+function deltaTooltip(delta: number): string {
+  if (delta === 0) return "No change from prior audit";
+  const abs = Math.abs(delta);
+  return delta > 0 ? `${abs} more than prior audit` : `${abs} fewer than prior audit`;
+}
+
+function DeltaCell({ current, previous, warnOnIncrease }: {
+  current: number;
+  previous: number | null;
+  warnOnIncrease: boolean;
+}) {
   if (previous === null) return <>{current}</>;
   const delta = current - previous;
-  if (delta === 0) return <>{current} <span class="delta-zero">(0)</span></>;
-  const cls = (delta > 0 && warnOnIncrease) || (delta < 0 && !warnOnIncrease) ? "delta-positive" : "delta-negative";
+  const tip = deltaTooltip(delta);
+  if (delta === 0) {
+    return <>{current} <span class="delta-zero" title={tip}>(0)</span></>;
+  }
+  const isWarn = (delta > 0 && warnOnIncrease)
+    || (delta < 0 && !warnOnIncrease);
+  const cls = isWarn ? "delta-positive" : "delta-negative";
   const sign = delta > 0 ? "+" : "";
-  return <>{current} <span class={cls}>({sign}{delta})</span></>;
+  return (
+    <>{current} <span class={cls} title={tip}>({sign}{delta})</span></>
+  );
 }
 
 export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: string } = {}) {

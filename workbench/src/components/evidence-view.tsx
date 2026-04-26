@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Fragment } from "preact";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
 import { currentUser, viewInvalidation, selectedPolicyId, updateHash } from "../app";
-import { evidenceRecencyClass, ageDays, STALE_THRESHOLD_DAYS } from "../lib/freshness";
+import {
+  type FreshnessBucket,
+  freshnessFromFrequency,
+  defaultFreshnessBucket,
+  freshnessRowClass,
+  parsePolicyFrequencies,
+} from "../lib/freshness";
+import { createFilterChips, FilterChips } from "./filter-chip";
+import { FreshnessBar } from "./freshness-bar";
+import { AddFilterMenu } from "./add-filter-menu";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -103,7 +112,27 @@ function EvidenceSummary({ records }: { records: EvidenceRecord[] }) {
   );
 }
 
-export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
+const CHIP_FIELD_MAP: Record<string, string> = {
+  Target: "target_name_or_id",
+  Result: "eval_result",
+  Engine: "engine_name",
+  "Compliance Status": "compliance_status",
+  Owner: "owner",
+  "Enrichment Status": "enrichment_status",
+};
+
+const FRESHNESS_LABELS: Record<string, FreshnessBucket> = {
+  Current: "current",
+  Aging: "aging",
+  Stale: "stale",
+  "Very Stale": "very-stale",
+};
+
+export function EvidenceView({ policyIdOverride, initialTargetFilter, initialControlFilter }: {
+  policyIdOverride?: string;
+  initialTargetFilter?: string;
+  initialControlFilter?: string;
+} = {}) {
   const embedded = !!policyIdOverride;
   const [records, setRecords] = useState<EvidenceRecord[]>([]);
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
@@ -119,6 +148,32 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
+  const [chipState] = useState(() => createFilterChips());
+  const [policyContent, setPolicyContent] = useState("");
+
+  useEffect(() => {
+    if (initialTargetFilter) {
+      chipState.remove("Target");
+      chipState.remove("Control");
+      chipState.add("Target", initialTargetFilter);
+    }
+  }, [initialTargetFilter]);
+
+  useEffect(() => {
+    if (initialControlFilter) {
+      chipState.remove("Control");
+      chipState.remove("Target");
+      chipState.add("Control", initialControlFilter);
+    }
+  }, [initialControlFilter]);
+
+  useEffect(() => {
+    if (!policyIdOverride) return;
+    apiFetch(`/api/policies/${encodeURIComponent(policyIdOverride)}`)
+      .then((r) => r.json())
+      .then((d: { policy: { content?: string } }) => setPolicyContent(d.policy.content || ""))
+      .catch(() => setPolicyContent(""));
+  }, [policyIdOverride]);
 
   useEffect(() => {
     apiFetch("/api/policies")
@@ -241,11 +296,81 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
     setManual({ ...manual, [field]: (e.target as HTMLInputElement).value });
   };
 
+  const freqMap = useMemo(() => parsePolicyFrequencies(policyContent), [policyContent]);
+
+  const computeBucket = (r: EvidenceRecord): FreshnessBucket => {
+    const reqId = r.requirement_id || r.control_id;
+    const cycleDays = freqMap.get(reqId);
+    if (cycleDays !== undefined) return freshnessFromFrequency(r.collected_at, cycleDays);
+    return defaultFreshnessBucket(r.collected_at);
+  };
+
+  const recordsWithBuckets = useMemo(() =>
+    records.map((r) => ({
+      ...r,
+      _bucket: computeBucket(r),
+      target_name_or_id: r.target_name || r.target_id,
+    })),
+    [records, freqMap]
+  );
+
+  const filteredRecords = useMemo(() => {
+    const chips = chipState.filters.value;
+    return recordsWithBuckets.filter((r) => {
+      for (const [key, value] of chips) {
+        if (key === "Freshness") {
+          const expected = FRESHNESS_LABELS[value];
+          if (expected && r._bucket !== expected) return false;
+        } else if (key === "Control") {
+          if (r.control_id.toLowerCase() !== value.toLowerCase()) return false;
+        } else {
+          const fieldName = CHIP_FIELD_MAP[key];
+          if (fieldName) {
+            const actual = String((r as Record<string, unknown>)[fieldName] ?? "");
+            if (actual.toLowerCase() !== value.toLowerCase()) return false;
+          }
+        }
+      }
+      return true;
+    });
+  }, [recordsWithBuckets, chipState.filters.value]);
+
+  const freshnessCounts = useMemo(() => {
+    const counts: Record<FreshnessBucket, number> = {
+      current: 0, aging: 0, stale: 0, "very-stale": 0,
+    };
+    for (const r of recordsWithBuckets) counts[r._bucket]++;
+    return counts;
+  }, [recordsWithBuckets]);
+
+  const distinctValues = (field: keyof EvidenceRecord) => () =>
+    [...new Set(records.map((r) => r[field]).filter(Boolean) as string[])].sort();
+
+  const filterFields = [
+    { key: "Target", label: "Target", options: distinctValues("target_name") },
+    { key: "Result", label: "Result", options: ["Passed", "Failed", "Unknown"] },
+    {
+      key: "Compliance Status",
+      label: "Compliance Status",
+      options: [
+        "Compliant", "Non-Compliant", "Exempt",
+        "Not Applicable", "Unknown",
+      ],
+    },
+    { key: "Engine", label: "Engine", options: distinctValues("engine_name") },
+    { key: "Owner", label: "Owner", options: distinctValues("owner") },
+    {
+      key: "Enrichment Status",
+      label: "Enrichment Status",
+      options: distinctValues("enrichment_status"),
+    },
+  ];
+
   return (
     <section class="evidence-view">
       <div class="evidence-header">
         {!embedded && <h2>Evidence</h2>}
-        {currentUser.value?.role === "admin" && (
+        {!embedded && currentUser.value?.role === "admin" && (
           <button class="btn btn-sm" onClick={() => setShowUpload(!showUpload)}>
             {showUpload ? "Hide Upload" : "Upload Evidence"}
           </button>
@@ -264,8 +389,11 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
         <input placeholder="Control ID" value={controlId} onInput={(e) => setControlId((e.target as HTMLInputElement).value)} />
         <input type="date" value={start} onInput={(e) => setStart((e.target as HTMLInputElement).value)} />
         <input type="date" value={end} onInput={(e) => setEnd((e.target as HTMLInputElement).value)} />
+        <AddFilterMenu fields={filterFields} chipState={chipState} />
         <button class="btn btn-primary" onClick={search}>Search</button>
       </div>
+
+      <FilterChips state={chipState} />
 
       {showUpload && (
         <div class="evidence-upload">
@@ -347,7 +475,8 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
         </div>
       ) : (
         <>
-          <EvidenceSummary records={records} />
+          <FreshnessBar buckets={freshnessCounts} chipState={chipState} />
+          <EvidenceSummary records={filteredRecords} />
           <table class="data-table evidence-table">
             <thead>
               <tr>
@@ -360,14 +489,12 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
               </tr>
             </thead>
             <tbody>
-              {records.map((r) => {
+              {filteredRecords.map((r) => {
                 const rowKey = evidenceRowKey(r);
                 const open = expandedKey === rowKey;
-                const recency = evidenceRecencyClass(r.collected_at);
-                const showBadge = ageDays(r.collected_at) > STALE_THRESHOLD_DAYS;
                 return (
                   <Fragment key={rowKey}>
-                    <tr data-evidence-id={r.evidence_id} class={`${recency} ${open ? "evidence-row-open" : ""}`}>
+                    <tr data-evidence-id={r.evidence_id} class={`${freshnessRowClass(r._bucket)} ${open ? "evidence-row-open" : ""}`}>
                       <td class="evidence-expand-cell">
                         <button
                           type="button"
@@ -383,10 +510,7 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
                       <td>{r.control_id}</td>
                       <td><span class={`eval-badge eval-${r.eval_result?.toLowerCase().replace(/ /g, "-")}`}>{r.eval_result}</span></td>
                       <td>{r.engine_name || "---"}</td>
-                      <td>
-                        {new Date(r.collected_at).toLocaleString()}
-                        {showBadge && <span class="stale-indicator">stale</span>}
-                      </td>
+                      <td>{new Date(r.collected_at).toLocaleString()}</td>
                     </tr>
                     {open && (
                       <tr class="evidence-detail-row" aria-label="Evidence details">

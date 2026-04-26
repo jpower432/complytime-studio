@@ -27,6 +27,20 @@ export function PolicyDetailView() {
   const policyId = selectedPolicyDetail.value;
   const tab = activeTab.value;
   const [policy, setPolicy] = useState<PolicyInfo | null>(null);
+  const [evidenceTargetFilter, setEvidenceTargetFilter] = useState<string | undefined>();
+  const [evidenceControlFilter, setEvidenceControlFilter] = useState<string | undefined>();
+
+  const handleTargetClick = (targetId: string, targetName: string) => {
+    setEvidenceTargetFilter(targetName || targetId);
+    setEvidenceControlFilter(undefined);
+    switchTab("evidence");
+  };
+
+  const handleControlClick = (controlId: string) => {
+    setEvidenceControlFilter(controlId);
+    setEvidenceTargetFilter(undefined);
+    switchTab("evidence");
+  };
 
   useEffect(() => {
     if (!policyId) return;
@@ -70,8 +84,20 @@ export function PolicyDetailView() {
 
       <div class="tab-content" role="tabpanel">
         {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} />}
-        {tab === "inventory" && <InventoryView policyIdOverride={policyId} />}
-        {tab === "evidence" && <EvidenceView policyIdOverride={policyId} />}
+        {tab === "inventory" && (
+          <InventoryView
+            policyIdOverride={policyId}
+            onTargetClick={handleTargetClick}
+            onControlClick={handleControlClick}
+          />
+        )}
+        {tab === "evidence" && (
+          <EvidenceView
+            policyIdOverride={policyId}
+            initialTargetFilter={evidenceTargetFilter}
+            initialControlFilter={evidenceControlFilter}
+          />
+        )}
         {tab === "history" && <AuditHistoryView policyIdOverride={policyId} />}
       </div>
     </section>

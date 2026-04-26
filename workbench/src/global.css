@@ -606,3 +606,84 @@ tr.recency-very-stale { opacity: 0.35; }
 .delta-positive { color: var(--error); font-size: 11px; font-weight: 600; }
 .delta-negative { color: var(--success); font-size: 11px; font-weight: 600; }
 .delta-zero { color: var(--text-muted); font-size: 11px; }
+
+/* ── Filter Chips ── */
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--accent-subtle); border: 1px solid var(--border);
+  font-size: 12px; font-weight: 500; color: var(--text);
+}
+.filter-chip-label { white-space: nowrap; }
+.filter-chip-dismiss {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; line-height: 1;
+  padding: 0 2px; margin-left: 2px;
+}
+.filter-chip-dismiss:hover { color: var(--error); }
+
+/* ── Freshness Bar ── */
+:root {
+  --freshness-current: hsla(210, 15%, 88%, 0.5);
+  --freshness-aging: hsla(30, 10%, 75%, 0.5);
+  --freshness-stale: hsla(220, 8%, 58%, 0.5);
+  --freshness-very-stale: hsla(220, 10%, 35%, 0.6);
+  --freshness-row-current: hsla(210, 15%, 88%, 0.08);
+  --freshness-row-aging: hsla(30, 10%, 68%, 0.10);
+  --freshness-row-stale: hsla(220, 8%, 52%, 0.12);
+  --freshness-row-very-stale: hsla(220, 10%, 35%, 0.16);
+}
+[data-theme="dark"] {
+  --freshness-current: hsla(180, 8%, 30%, 0.5);
+  --freshness-aging: hsla(30, 8%, 42%, 0.5);
+  --freshness-stale: hsla(220, 6%, 58%, 0.5);
+  --freshness-very-stale: hsla(220, 5%, 78%, 0.6);
+  --freshness-row-current: hsla(180, 8%, 40%, 0.08);
+  --freshness-row-aging: hsla(30, 8%, 50%, 0.10);
+  --freshness-row-stale: hsla(220, 6%, 62%, 0.12);
+  --freshness-row-very-stale: hsla(220, 5%, 78%, 0.16);
+}
+
+.freshness-bar-container { margin-bottom: 16px; }
+.freshness-bar-segments {
+  display: flex; height: 8px; border-radius: 4px;
+  overflow: hidden; background: var(--bg-input); cursor: pointer;
+}
+.freshness-segment { height: 100%; transition: opacity 0.15s; position: relative; }
+.freshness-segment:hover { opacity: 0.75; }
+.freshness-segment-current    { background: var(--freshness-current); }
+.freshness-segment-aging      { background: var(--freshness-aging); }
+.freshness-segment-stale      { background: var(--freshness-stale); }
+.freshness-segment-very-stale { background: var(--freshness-very-stale); }
+
+/* ── Evidence Row Freshness Tinting ── */
+tr.freshness-row-current    { background-color: var(--freshness-row-current); }
+tr.freshness-row-aging      { background-color: var(--freshness-row-aging); }
+tr.freshness-row-stale      { background-color: var(--freshness-row-stale); }
+tr.freshness-row-very-stale { background-color: var(--freshness-row-very-stale); }
+
+/* ── Add Filter Menu ── */
+.add-filter-wrapper { position: relative; display: inline-block; }
+.add-filter-menu {
+  position: absolute; top: 100%; left: 0; z-index: 10; margin-top: 4px;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-md); min-width: 180px; padding: 4px 0;
+}
+.add-filter-option {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: 8px 14px; font-size: 13px; color: var(--text); cursor: pointer;
+  font-family: inherit;
+}
+.add-filter-option:hover { background: var(--bg-hover); }
+.add-filter-value-row {
+  display: flex; gap: 6px; align-items: center; margin-top: 4px;
+}
+.add-filter-value-row select {
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-surface); color: var(--text); font-size: 12px;
+}
+
+/* ── Inventory Clickable Items ── */
+.inventory-item-clickable { cursor: pointer; transition: border-color 0.15s, background 0.1s; }
+.inventory-item-clickable:hover { border-color: var(--accent); background: var(--bg-hover); }

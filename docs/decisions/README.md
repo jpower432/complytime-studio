@@ -23,5 +23,8 @@
 | [Internal Endpoint Isolation](internal-endpoint-isolation.md) | Accepted | 2026-04-25 |
 | [Default Admin & Token Hardening](default-admin-token-hardening.md) | Accepted | 2026-04-25 |
 | [Query Limit Cap](query-limit-cap.md) | Accepted | 2026-04-25 |
+| [Filter Chip Pattern](filter-chip-pattern.md) | Accepted | 2026-04-26 |
+| [Evidence Staleness Model](evidence-staleness-model.md) | Accepted | 2026-04-26 |
+| [Evidence Filter Bar](evidence-filter-bar.md) | Accepted | 2026-04-26 |
 
 > **Related:** [Session Token Storage](session-token-storage.md) discusses OAuth access-token storage; [ADR-001](session-persistence-storage.md) covers server-side **conversation** persistence (`GET/PUT /api/chat/history`).

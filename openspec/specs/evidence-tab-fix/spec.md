@@ -28,19 +28,15 @@ The Evidence tab SHALL display a summary strip above the table showing: total re
 - **THEN** the summary strip SHALL NOT render
 
 ### Requirement: Row-level recency fading
-Each evidence row SHALL have a visual treatment based on the age of its `collected_at` timestamp. Rows SHALL progressively fade and display a stale indicator as they age. Thresholds: ≤7d full opacity, 8–30d slightly faded, 31–90d faded with stale badge, >90d very faded with stale badge.
+Each evidence row SHALL have a background tint based on its freshness bucket as determined by the frequency-aware staleness model. The previous opacity-based fading is replaced with neutral background tints. The "stale" text badge is removed — the background tint is the signal.
 
 #### Scenario: Recent evidence row
-- **WHEN** an evidence row has `collected_at` within the last 7 days
-- **THEN** the row SHALL render at full opacity with no stale indicator
-
-#### Scenario: Aging evidence row
-- **WHEN** an evidence row has `collected_at` 15 days ago
-- **THEN** the row SHALL render at reduced opacity (0.75)
+- **WHEN** an evidence row is classified as Current
+- **THEN** the row SHALL render with a minimal neutral tint and no stale badge
 
 #### Scenario: Stale evidence row
-- **WHEN** an evidence row has `collected_at` 60 days ago
-- **THEN** the row SHALL render at low opacity (0.5) with a visible stale badge
+- **WHEN** an evidence row is classified as Stale
+- **THEN** the row SHALL render with a prominent neutral tint and no stale text badge
 
 ### Requirement: Shared freshness utility
 Freshness thresholds and classification functions SHALL be extracted from `posture-view.tsx` into a shared utility module so that both posture cards and evidence rows use the same constants and logic.
@@ -48,3 +44,25 @@ Freshness thresholds and classification functions SHALL be extracted from `postu
 #### Scenario: Consistent thresholds
 - **WHEN** `STALE_THRESHOLD_DAYS` is changed in the shared utility
 - **THEN** both posture card borders and evidence row fading SHALL reflect the new value
+
+### Requirement: Evidence tab hides upload controls when embedded
+The Evidence tab SHALL NOT display the "Upload Evidence" button or manual entry form when rendered inside the policy detail view (embedded mode). Upload and manual entry SHALL only be available on the main Evidence page.
+
+#### Scenario: Embedded evidence tab
+- **WHEN** the Evidence tab is rendered at `#posture/{id}?tab=evidence`
+- **THEN** the "Upload Evidence" button and manual entry form SHALL NOT be visible, regardless of user role
+
+#### Scenario: Main evidence page
+- **WHEN** the Evidence page is rendered from the sidebar navigation
+- **THEN** the "Upload Evidence" button SHALL be visible for admin users
+
+### Requirement: Evidence rows use neutral background tint for freshness
+Each evidence row SHALL have a background tint based on its freshness bucket. Tints SHALL use neutral HSL shades at low opacity (~8%), mode-adaptive via CSS custom properties. No primary colors.
+
+#### Scenario: Current evidence row in light mode
+- **WHEN** an evidence row is classified as Current and light mode is active
+- **THEN** the row background SHALL use a soft gray-blue tint, barely visible
+
+#### Scenario: Very stale evidence row in dark mode
+- **WHEN** an evidence row is classified as Very Stale and dark mode is active
+- **THEN** the row background SHALL use a near-white gray tint, prominent against the dark background
