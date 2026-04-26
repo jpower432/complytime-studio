@@ -28,4 +28,56 @@ const (
 
 	// GemaraVersion is the default Gemara version stamped on OCI bundles.
 	GemaraVersion = "v1.0.0"
+
+	// EvalMessageWarnBytes triggers a warning when eval_message exceeds this
+	// length, indicating the field may contain raw data rather than a summary.
+	EvalMessageWarnBytes = 4096
+
+	// MaxExportRequirementRows caps matrix rows for auditor exports (CSV, Excel,
+	// PDF). Requests that would exceed this return 413.
+	MaxExportRequirementRows = 10000
+
+	// MaxExportEvidenceRows caps evidence rows on the Excel Evidence Inventory
+	// sheet. Exceeding this returns 413.
+	MaxExportEvidenceRows = 50000
+
+	// ExportHandlerTimeout bounds work for export handlers (kept under
+	// ServerWriteTimeout).
+	ExportHandlerTimeout = 90 * time.Second
+
+	// DefaultQueryLimit is the default row limit for list endpoints when
+	// the caller omits the limit parameter.
+	DefaultQueryLimit = 100
+
+	// MaxQueryLimit is the maximum allowed limit for list endpoints.
+	// Requests exceeding this are silently clamped.
+	MaxQueryLimit = 1000
+
+	// DefaultInternalPort is the default port for the internal (agent-only)
+	// HTTP listener. Override via INTERNAL_PORT env var.
+	DefaultInternalPort = "8081"
+
+	// DefaultDevAPIToken is the well-known dev seed token shipped in
+	// values.yaml. The gateway warns at startup if this value is still in use.
+	DefaultDevAPIToken = "dev-seed-token"
+)
+
+// ClampLimit applies the default and max query limit policy.
+// Zero or negative values get DefaultQueryLimit; values above MaxQueryLimit
+// are silently clamped.
+func ClampLimit(n int) int {
+	if n <= 0 {
+		return DefaultQueryLimit
+	}
+	if n > MaxQueryLimit {
+		return MaxQueryLimit
+	}
+	return n
+}
+
+// Blob / manual evidence enrichment
+const (
+	// MsgBlobStorageNotConfigured is returned when a request includes a file
+	// attachment but BLOB_ENDPOINT is not configured.
+	MsgBlobStorageNotConfigured = "file upload not supported: blob storage not configured"
 )

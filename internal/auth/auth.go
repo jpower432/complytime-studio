@@ -247,7 +247,11 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 
 		if h.apiToken != "" {
 			if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
-				next.ServeHTTP(w, r)
+				ctx := context.WithValue(r.Context(), sessionKey, &Session{
+					Email: "api-token@internal",
+					Name:  "API Token",
+				})
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 		}
@@ -469,7 +473,7 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -508,7 +512,7 @@ func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
