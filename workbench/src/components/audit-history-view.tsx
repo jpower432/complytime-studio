@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect } from "preact/hooks";
-import { selectedPolicyId } from "../app";
+import { selectedPolicyId, selectedTimeRange, viewInvalidation, updateHash } from "../app";
 import { apiFetch } from "../api/fetch";
+import { downloadYaml, auditLogFilename } from "../lib/download";
 
 interface AuditLog {
   audit_id: string;
@@ -21,9 +22,10 @@ interface PolicyOption {
   title: string;
 }
 
-export function AuditHistoryView() {
+export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
+  const embedded = !!policyIdOverride;
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
-  const [policyId, setPolicyId] = useState(selectedPolicyId.value || "");
+  const [policyId, setPolicyId] = useState(policyIdOverride || selectedPolicyId.value || "");
   const [auditIdFilter, setAuditIdFilter] = useState("");
   const [startFilter, setStartFilter] = useState("");
   const [endFilter, setEndFilter] = useState("");
@@ -46,7 +48,17 @@ export function AuditHistoryView() {
     }
   }, [selectedPolicyId.value]);
 
+  useEffect(() => {
+    if (selectedTimeRange.value) {
+      if (selectedTimeRange.value.start && !startFilter) setStartFilter(selectedTimeRange.value.start);
+      if (selectedTimeRange.value.end && !endFilter) setEndFilter(selectedTimeRange.value.end);
+    }
+  }, []);
+
   const fetchLogs = () => {
+    if (policyId) selectedPolicyId.value = policyId;
+    selectedTimeRange.value = (startFilter || endFilter) ? { start: startFilter, end: endFilter } : null;
+    updateHash();
     if (auditIdFilter.trim()) {
       setLoading(true);
       apiFetch(`/api/audit-logs/${encodeURIComponent(auditIdFilter.trim())}`)
@@ -69,25 +81,35 @@ export function AuditHistoryView() {
   };
 
   useEffect(fetchLogs, [policyId]);
+  useEffect(() => { if (policyId) fetchLogs(); }, [viewInvalidation.value]);
 
   const parseSummary = (s: string) => {
     try { return JSON.parse(s); } catch { return null; }
+  };
+
+  const loadDetail = (log: AuditLog) => {
+    apiFetch(`/api/audit-logs/${encodeURIComponent(log.audit_id)}`)
+      .then((r) => { if (!r.ok) throw new Error("not found"); return r.json(); })
+      .then((full: AuditLog) => setSelectedLog(full))
+      .catch(() => setSelectedLog(log));
   };
 
   const logA = compareA ? logs.find((l) => l.audit_id === compareA) : null;
   const logB = compareB ? logs.find((l) => l.audit_id === compareB) : null;
 
   return (
-    <div class="audit-history-view">
-      <h2>Audit History</h2>
+    <section class="audit-history-view">
+      {!embedded && <h2>Audit History</h2>}
 
       <div class="audit-filters">
-        <select value={policyId} onChange={(e) => setPolicyId((e.target as HTMLSelectElement).value)}>
-          <option value="">Select a policy...</option>
-          {policies.map((p) => (
-            <option key={p.policy_id} value={p.policy_id}>{p.title}</option>
-          ))}
-        </select>
+        {!embedded && (
+          <select value={policyId} onChange={(e) => setPolicyId((e.target as HTMLSelectElement).value)}>
+            <option value="">Select a policy...</option>
+            {policies.map((p) => (
+              <option key={p.policy_id} value={p.policy_id}>{p.title}</option>
+            ))}
+          </select>
+        )}
         <input placeholder="Audit ID" value={auditIdFilter} onInput={(e) => setAuditIdFilter((e.target as HTMLInputElement).value)} />
         <input type="date" value={startFilter} onInput={(e) => setStartFilter((e.target as HTMLInputElement).value)} title="Start date" />
         <input type="date" value={endFilter} onInput={(e) => setEndFilter((e.target as HTMLInputElement).value)} title="End date" />
@@ -106,7 +128,7 @@ export function AuditHistoryView() {
             {logs.map((log) => {
               const summary = parseSummary(log.summary);
               return (
-                <div key={log.audit_id} class="audit-card" onClick={() => setSelectedLog(log)}>
+                <article key={log.audit_id} class="audit-card" onClick={() => loadDetail(log)}>
                   <div class="audit-card-header">
                     <span class="audit-period">
                       {new Date(log.audit_start).toLocaleDateString()} — {new Date(log.audit_end).toLocaleDateString()}
@@ -128,7 +150,7 @@ export function AuditHistoryView() {
                       <input type="radio" name="compareB" onChange={() => setCompareB(log.audit_id)} checked={compareB === log.audit_id} /> B
                     </label>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
@@ -141,14 +163,24 @@ export function AuditHistoryView() {
             <div class="audit-detail">
               <div class="detail-header">
                 <h3>Audit Detail</h3>
-                <button class="btn btn-sm" onClick={() => setSelectedLog(null)}>Close</button>
+                <div class="detail-actions">
+                  {selectedLog.content && (
+                    <button
+                      class="btn btn-sm btn-secondary"
+                      onClick={() => downloadYaml(selectedLog.content!, auditLogFilename(selectedLog.policy_id, selectedLog.audit_start))}
+                    >
+                      Download YAML
+                    </button>
+                  )}
+                  <button class="btn btn-sm" onClick={() => setSelectedLog(null)}>Close</button>
+                </div>
               </div>
               <pre class="yaml-viewer">{selectedLog.content || selectedLog.summary}</pre>
             </div>
           )}
         </>
       )}
-    </div>
+    </section>
   );
 }
 

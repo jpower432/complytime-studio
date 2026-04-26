@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useRef, useEffect } from "preact/hooks";
-import { currentView, selectedPolicyId, selectedTimeRange, currentUser } from "../app";
+import {
+  currentView, selectedPolicyId, selectedTimeRange, currentUser,
+  selectedControlId, selectedRequirementId, selectedEvalResult,
+  selectedPolicyDetail, activeTab,
+  invalidateViews,
+} from "../app";
 import { streamMessage, streamReply, type StreamCallbacks } from "../api/a2a";
 import { apiFetch } from "../api/fetch";
 import { fetchConfig } from "../api/config";
@@ -157,11 +162,16 @@ export function ChatAssistant() {
 
   const buildDashboardContext = (): Record<string, string> => {
     const ctx: Record<string, string> = { view: currentView.value };
-    if (selectedPolicyId.value) ctx.policy_id = selectedPolicyId.value;
+    const policyId = selectedPolicyDetail.value || selectedPolicyId.value;
+    if (policyId) ctx.policy_id = policyId;
+    if (selectedPolicyDetail.value) ctx.active_tab = activeTab.value;
     if (selectedTimeRange.value) {
       ctx.start = selectedTimeRange.value.start;
       ctx.end = selectedTimeRange.value.end;
     }
+    if (selectedControlId.value) ctx.control_id = selectedControlId.value;
+    if (selectedRequirementId.value) ctx.requirement_id = selectedRequirementId.value;
+    if (selectedEvalResult.value) ctx.eval_result = selectedEvalResult.value;
     return ctx;
   };
 
@@ -215,6 +225,7 @@ export function ChatAssistant() {
     },
     onArtifact: (artifact: any) => {
       const parts = artifact?.parts || [];
+      let shouldInvalidate = false;
       for (const part of parts) {
         if (part.metadata?.mimeType === "application/yaml") {
           const name = part.metadata?.name || "artifact.yaml";
@@ -225,7 +236,14 @@ export function ChatAssistant() {
             ...prev,
             { role: "agent", text: `Artifact produced: ${name}`, artifact: { content, name, mimeType: "application/yaml", model, promptVersion, autoSaved: autoPersistRef.current } },
           ]);
+          const lname = name.toLowerCase();
+          if (lname.includes("auditlog") || lname.includes("assessment") || lname.includes("evidence") || lname.includes("posture")) {
+            shouldInvalidate = true;
+          }
         }
+      }
+      if (shouldInvalidate) {
+        setTimeout(() => invalidateViews(), 500);
       }
     },
     onError: (err) => {
@@ -235,6 +253,10 @@ export function ChatAssistant() {
     onDone: () => finalize("done"),
   };
 
+  // New tasks use streamMessage with context prefixed to the user text. Follow-up turns use
+  // streamReply: dashboard + sticky notes are embedded once in `history` (first text part),
+  // and `text` is only the new user utterance — no second buildInjectedContext on the message
+  // tail, so context is not double-injected. See streamReply in api/a2a.ts.
   const send = () => {
     if (!input.trim() || streaming) return;
     const text = input.trim();
@@ -244,7 +266,14 @@ export function ChatAssistant() {
     setStreamBuffer("");
 
     if (taskIdRef.current) {
-      abortRef.current = streamReply(taskIdRef.current, text, callbacks, AGENT_NAME);
+      const recentMsgs = messages.filter((m) => !m.isContextIndicator).slice(-20);
+      const historyLines = recentMsgs.map(
+        (m) => `[${m.role === "user" ? "USER" : "ASSISTANT"}]\n${m.text}`
+      );
+      const ctx = buildDashboardContext();
+      const contextPrefix = ctx ? `[DASHBOARD CONTEXT]\n${buildInjectedContext(ctx, stickyNotes)}\n\n` : "";
+      const history = contextPrefix + "--- Conversation so far ---\n" + historyLines.join("\n\n");
+      abortRef.current = streamReply(taskIdRef.current, text, callbacks, AGENT_NAME, { history });
     } else {
       const injected = buildInjectedContext(buildDashboardContext(), stickyNotes);
       const hasMemoryContext = stickyNotes.length > 0;
@@ -285,7 +314,7 @@ export function ChatAssistant() {
 
   return (
     <>
-      <button class="chat-fab" onClick={() => setOpen(!open)} title="Chat with Studio Assistant">
+      <button class="chat-fab" onClick={() => setOpen(!open)} title="Chat with Studio Assistant" aria-expanded={open}>
         {open ? "\u2715" : "\u{1F4AC}"}
       </button>
 
@@ -314,7 +343,7 @@ export function ChatAssistant() {
             <StickyNotesPanel notes={stickyNotes} onAdd={addStickyNote} onDelete={deleteStickyNote} />
           )}
 
-          <div class="chat-overlay-messages" ref={messagesContainer}>
+          <div class="chat-overlay-messages" ref={messagesContainer} role="log" aria-live="polite">
             {loading && <div class="view-loading">Loading chat...</div>}
             {messages.map((msg, i) => {
               if (msg.isContextIndicator) {
@@ -360,6 +389,24 @@ export function ChatAssistant() {
             )}
             <div ref={messagesEnd} />
           </div>
+
+          {!streaming && messages.length === 0 && (
+            <div class="canned-queries">
+              {[
+                { label: "Run posture check", text: "Run a posture check for the current policy. Summarize pass/fail counts and highlight gaps." },
+                { label: "Generate AuditLog", text: "Generate an AuditLog artifact for the current policy and audit window." },
+                { label: "Summarize gaps", text: "Summarize the compliance gaps: which requirements have no evidence or failing evidence?" },
+              ].map((q) => (
+                <button
+                  key={q.label}
+                  class="btn btn-xs canned-btn"
+                  onClick={() => { setInput(q.text); }}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div class="chat-overlay-input">
             <input
