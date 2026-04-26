@@ -9,6 +9,7 @@ ASSISTANT_IMAGE ?= studio-assistant
 ASSISTANT_TAG ?= local
 
 CLICKHOUSE ?= true
+NATS ?= false
 
 HELM_AUTH_FLAGS :=
 ifdef GOOGLE_CLIENT_ID
@@ -26,7 +27,7 @@ ifdef ASSISTANT_MODEL_NAME
 HELM_AGENT_FLAGS += --set agents.assistant.model.name=$(ASSISTANT_MODEL_NAME)
 endif
 
-HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE)
+HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=$(NATS)
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
