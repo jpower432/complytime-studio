@@ -19,6 +19,9 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://studio-gateway:8080")
+INTERNAL_GATEWAY_URL = os.environ.get(
+    "INTERNAL_GATEWAY_URL", "http://studio-gateway-internal:8081"
+)
 
 
 def _slugify(text: str) -> str:
@@ -78,7 +81,7 @@ async def publish_audit_log(
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{GATEWAY_URL}/internal/draft-audit-logs",
+                f"{INTERNAL_GATEWAY_URL}/internal/draft-audit-logs",
                 content=json.dumps(payload),
                 headers={"Content-Type": "application/json"},
             )
