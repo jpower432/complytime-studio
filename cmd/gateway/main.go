@@ -129,6 +129,19 @@ func main() {
 		if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
 			slog.Warn("policy criteria backfill failed", "error", err)
 		}
+		bus, busErr := events.Connect(os.Getenv("NATS_URL"))
+		if busErr != nil {
+			slog.Warn("nats connection failed — event-driven posture checks disabled", "error", busErr)
+		}
+		if bus != nil {
+			defer bus.Close()
+		}
+
+		var pub store.EvidencePublisher
+		if bus != nil {
+			pub = bus
+		}
+
 		stores := store.Stores{
 			Policies:            st,
 			Mappings:            st,
@@ -144,35 +157,29 @@ func main() {
 			EvidenceAssessments: st,
 			Posture:             st,
 			Notifications:       st,
+			EventPublisher:      pub,
 		}
 		store.Register(mux, stores)
 		store.RegisterInternal(internalMux, stores)
 		slog.Info("store API registered", "routes", []string{
 			"/api/policies", "/api/evidence", "/api/audit-logs", "/api/mappings",
 		})
-	}
 
-	bus, busErr := events.Connect(os.Getenv("NATS_URL"))
-	if busErr != nil {
-		slog.Warn("nats connection failed — event-driven posture checks disabled", "error", busErr)
-	}
-	if bus != nil && st != nil {
-		adapter := &notificationAdapter{store: st}
-		rateCache := events.NewRateCache()
-		handler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
-		debouncer := events.NewDebouncer(30*time.Second, handler)
-		sub, err := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
-			debouncer.Push(evt)
-		})
-		if err != nil {
-			slog.Warn("nats subscribe failed", "error", err)
-		} else if sub != nil {
-			defer func() { _ = sub.Unsubscribe() }()
-			slog.Info("nats evidence subscription active", "subject", events.SubjectPrefix+".>")
+		if bus != nil {
+			adapter := &notificationAdapter{store: st}
+			rateCache := events.NewRateCache()
+			handler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
+			debouncer := events.NewDebouncer(30*time.Second, handler)
+			sub, err := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
+				debouncer.Push(evt)
+			})
+			if err != nil {
+				slog.Warn("nats subscribe failed", "error", err)
+			} else if sub != nil {
+				defer func() { _ = sub.Unsubscribe() }()
+				slog.Info("nats evidence subscription active", "subject", events.SubjectPrefix+".>")
+			}
 		}
-		defer bus.Close()
-	} else if bus != nil {
-		defer bus.Close()
 	}
 
 	authCfg := auth.Config{

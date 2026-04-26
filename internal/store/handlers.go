@@ -23,6 +23,12 @@ import (
 	"github.com/complytime/complytime-studio/internal/httputil"
 )
 
+// EvidencePublisher emits events after evidence is ingested.
+// Implemented by *events.Bus; nil-safe (callers check before use).
+type EvidencePublisher interface {
+	PublishEvidence(policyID string, count int)
+}
+
 // Stores groups all domain store interfaces for handler registration.
 type Stores struct {
 	Policies            PolicyStore
@@ -39,6 +45,7 @@ type Stores struct {
 	EvidenceAssessments EvidenceAssessmentStore
 	Posture             PostureStore
 	Notifications       NotificationStore
+	EventPublisher      EvidencePublisher
 }
 
 // Register mounts all public store API endpoints on the mux.
@@ -49,7 +56,7 @@ func Register(mux *http.ServeMux, s Stores) {
 	mux.HandleFunc("POST /api/policies/import", importPolicyHandler(s.Policies))
 	mux.HandleFunc("POST /api/mappings/import", importMappingHandler(s.Mappings))
 	mux.HandleFunc("GET /api/evidence", queryEvidenceHandler(s.Evidence))
-	mux.HandleFunc("POST /api/evidence", ingestEvidenceHandler(s.Evidence, s.Blob))
+	mux.HandleFunc("POST /api/evidence", ingestEvidenceHandler(s.Evidence, s.Blob, s.EventPublisher))
 	mux.HandleFunc("POST /api/evidence/upload", uploadEvidenceHandler(s.Evidence))
 	mux.HandleFunc("GET /api/audit-logs/{id}", getAuditLogHandler(s.AuditLogs))
 	mux.HandleFunc("GET /api/audit-logs", listAuditLogsHandler(s.AuditLogs))
@@ -217,7 +224,7 @@ func importMappingHandler(s MappingStore) http.HandlerFunc {
 	}
 }
 
-func ingestEvidenceHandler(s EvidenceStore, blobs blob.BlobStore) http.HandlerFunc {
+func ingestEvidenceHandler(s EvidenceStore, blobs blob.BlobStore, pub EvidencePublisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var records []EvidenceRecord
 		ct := r.Header.Get("Content-Type")
@@ -288,6 +295,17 @@ func ingestEvidenceHandler(s EvidenceStore, blobs blob.BlobStore) http.HandlerFu
 			slog.Error("insert evidence failed", "error", err)
 			http.Error(w, "insert failed", http.StatusInternalServerError)
 			return
+		}
+		if pub != nil && count > 0 {
+			policyIDs := make(map[string]int)
+			for _, rec := range records {
+				if rec.PolicyID != "" {
+					policyIDs[rec.PolicyID]++
+				}
+			}
+			for pid, n := range policyIDs {
+				pub.PublishEvidence(pid, n)
+			}
 		}
 		httputil.WriteJSON(w, http.StatusCreated, map[string]int{"inserted": count})
 	}
