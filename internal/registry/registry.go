@@ -104,7 +104,7 @@ func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("registry %s: %s", u, resp.Status)
 	}
@@ -208,7 +208,7 @@ func (rp *proxy) toolCall(w http.ResponseWriter, r *http.Request, toolName strin
 		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable: " + err.Error()})
 		return
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	res, err := sess.CallTool(r.Context(), &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,

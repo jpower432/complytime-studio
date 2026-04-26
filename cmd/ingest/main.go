@@ -15,6 +15,7 @@ import (
 	"github.com/gemaraproj/go-gemara/fetcher"
 	"github.com/goccy/go-yaml"
 
+	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/ingest"
 )
@@ -37,15 +38,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect to clickhouse: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
+
+	bus, err := events.Connect(os.Getenv("NATS_URL"))
+	if err != nil {
+		log.Printf("warning: nats connect failed (events disabled): %v", err)
+	}
+	defer func() {
+		if bus != nil {
+			bus.Close()
+		}
+	}()
 
 	switch artifactType {
 	case gemara.EvaluationLogArtifact:
-		if err := ingestEvaluationLog(ctx, f, source, w); err != nil {
+		if err := ingestEvaluationLog(ctx, f, source, w, bus); err != nil {
 			log.Fatalf("ingest evaluation log: %v", err)
 		}
 	case gemara.EnforcementLogArtifact:
-		if err := ingestEnforcementLog(ctx, f, source, w); err != nil {
+		if err := ingestEnforcementLog(ctx, f, source, w, bus); err != nil {
 			log.Fatalf("ingest enforcement log: %v", err)
 		}
 	default:
@@ -53,7 +64,7 @@ func main() {
 	}
 }
 
-func ingestEvaluationLog(ctx context.Context, f gemara.Fetcher, source string, w *ingest.Writer) error {
+func ingestEvaluationLog(ctx context.Context, f gemara.Fetcher, source string, w *ingest.Writer, bus *events.Bus) error {
 	evalLog, err := gemara.Load[gemara.EvaluationLog](ctx, f, source)
 	if err != nil {
 		return fmt.Errorf("load EvaluationLog: %w", err)
@@ -71,10 +82,13 @@ func ingestEvaluationLog(ctx context.Context, f gemara.Fetcher, source string, w
 	}
 
 	log.Printf("ingested %d evidence rows from %s", len(rows), evalLog.Metadata.Id)
+	if bus != nil && policyID != "" {
+		bus.PublishEvidence(policyID, len(rows))
+	}
 	return nil
 }
 
-func ingestEnforcementLog(ctx context.Context, f gemara.Fetcher, source string, w *ingest.Writer) error {
+func ingestEnforcementLog(ctx context.Context, f gemara.Fetcher, source string, w *ingest.Writer, bus *events.Bus) error {
 	enfLog, err := gemara.Load[gemara.EnforcementLog](ctx, f, source)
 	if err != nil {
 		return fmt.Errorf("load EnforcementLog: %w", err)
@@ -92,6 +106,9 @@ func ingestEnforcementLog(ctx context.Context, f gemara.Fetcher, source string, 
 	}
 
 	log.Printf("ingested %d evidence rows from %s", len(rows), enfLog.Metadata.Id)
+	if bus != nil && policyID != "" {
+		bus.PublishEvidence(policyID, len(rows))
+	}
 	return nil
 }
 
@@ -126,7 +143,7 @@ func detectType(ctx context.Context, f gemara.Fetcher, source string) (gemara.Ar
 	if err != nil {
 		return gemara.InvalidArtifact, fmt.Errorf("fetch source: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {

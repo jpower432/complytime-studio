@@ -13,7 +13,6 @@ import (
 
 	"github.com/complytime/complytime-studio/internal/consts"
 	studiohttp "github.com/complytime/complytime-studio/internal/httputil"
-	"github.com/complytime/complytime-studio/internal/store"
 )
 
 // CardModel describes the LLM provider and model backing an agent.
@@ -52,11 +51,6 @@ type Options struct {
 	// AgentNamespace is the Kubernetes namespace where agents are deployed.
 	// Used with KagentA2AURL to build the controller proxy path.
 	AgentNamespace string
-	// AutoPersistArtifacts enables server-side interception and persistence
-	// of AuditLog artifacts from the A2A SSE stream.
-	AutoPersistArtifacts bool
-	// AuditLogStore is used by the artifact interceptor to persist audit logs.
-	AuditLogStore store.AuditLogStore
 }
 
 // ParseDirectory parses the AGENT_DIRECTORY JSON into a slice of Cards.
@@ -200,13 +194,7 @@ func registerA2AProxy(mux *http.ServeMux, opts Options) {
 			},
 		}
 
-		if opts.AutoPersistArtifacts && opts.AuditLogStore != nil {
-			ai := newArtifactInterceptor(w, opts.AuditLogStore)
-			defer ai.Close()
-			rp.ServeHTTP(ai, r)
-		} else {
-			rp.ServeHTTP(w, r)
-		}
+		rp.ServeHTTP(w, r)
 	})
 
 	mode := "direct (per-agent URL)"

@@ -17,9 +17,11 @@ import (
 
 	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
+	"github.com/complytime/complytime-studio/internal/blob"
 	chclient "github.com/complytime/complytime-studio/internal/clickhouse"
 	"github.com/complytime/complytime-studio/internal/config"
 	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	"github.com/complytime/complytime-studio/internal/proxy"
 	"github.com/complytime/complytime-studio/internal/publish"
@@ -83,8 +85,32 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	internalPort := httputil.EnvOr("INTERNAL_PORT", consts.DefaultInternalPort)
+	internalMux := http.NewServeMux()
+
 	if chClient != nil {
 		st = store.New(chClient.Conn())
+
+		var blobStore blob.BlobStore
+		if cfg, ok := blob.ConfigFromEnv(); ok {
+			if cfg.AccessKey == "" || cfg.SecretKey == "" {
+				slog.Error("blob storage enabled but BLOB_ACCESS_KEY / BLOB_SECRET_KEY missing")
+				os.Exit(1)
+			}
+			bs, err := blob.NewMinioBlobStore(ctx, cfg)
+			if err != nil {
+				slog.Error("blob storage init failed", "error", err)
+				os.Exit(1)
+			}
+			blobStore = bs
+			slog.Info("blob storage configured", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
+		}
+
+		registryAddr := os.Getenv("REGISTRY_INSECURE")
+		if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, registryAddr); err != nil {
+			slog.Warn("catalog seed from registry failed", "error", err)
+		}
+
 		if err := store.PopulateMappingEntries(ctx, st); err != nil {
 			slog.Warn("mapping entries backfill failed", "error", err)
 		}
@@ -94,18 +120,59 @@ func main() {
 		if err := store.PopulateThreats(ctx, st, st); err != nil {
 			slog.Warn("threats backfill failed", "error", err)
 		}
-		store.Register(mux, store.Stores{
-			Policies:  st,
-			Mappings:  st,
-			Evidence:  st,
-			AuditLogs: st,
-			Controls:  st,
-			Threats:   st,
-			Catalogs:  st,
-		})
+		if err := store.PopulateRisks(ctx, st, st); err != nil {
+			slog.Warn("risks backfill failed", "error", err)
+		}
+		if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+			slog.Warn("effective controls backfill failed", "error", err)
+		}
+		if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
+			slog.Warn("policy criteria backfill failed", "error", err)
+		}
+		stores := store.Stores{
+			Policies:            st,
+			Mappings:            st,
+			Evidence:            st,
+			Blob:                blobStore,
+			AuditLogs:           st,
+			DraftAuditLogs:      st,
+			Requirements:        st,
+			Controls:            st,
+			Threats:             st,
+			Risks:               st,
+			Catalogs:            st,
+			EvidenceAssessments: st,
+			Posture:             st,
+			Notifications:       st,
+		}
+		store.Register(mux, stores)
+		store.RegisterInternal(internalMux, stores)
 		slog.Info("store API registered", "routes", []string{
 			"/api/policies", "/api/evidence", "/api/audit-logs", "/api/mappings",
 		})
+	}
+
+	bus, busErr := events.Connect(os.Getenv("NATS_URL"))
+	if busErr != nil {
+		slog.Warn("nats connection failed — event-driven posture checks disabled", "error", busErr)
+	}
+	if bus != nil && st != nil {
+		adapter := &notificationAdapter{store: st}
+		rateCache := events.NewRateCache()
+		handler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
+		debouncer := events.NewDebouncer(30*time.Second, handler)
+		sub, err := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
+			debouncer.Push(evt)
+		})
+		if err != nil {
+			slog.Warn("nats subscribe failed", "error", err)
+		} else if sub != nil {
+			defer func() { _ = sub.Unsubscribe() }()
+			slog.Info("nats evidence subscription active", "subject", events.SubjectPrefix+".>")
+		}
+		defer bus.Close()
+	} else if bus != nil {
+		defer bus.Close()
 	}
 
 	authCfg := auth.Config{
@@ -129,13 +196,16 @@ func main() {
 	if len(admins) > 0 {
 		slog.Info("admin allowlist configured", "count", len(admins))
 	} else {
-		slog.Info("no admin allowlist — all users are admin")
+		slog.Warn("ADMIN_EMAILS is empty — all authenticated users have admin access")
 	}
 	authHandler.Register(mux)
 	authHandler.RegisterChatHistory(mux, sessionStore)
 
 	if apiToken := os.Getenv("STUDIO_API_TOKEN"); apiToken != "" {
 		authHandler.SetAPIToken(apiToken)
+		if apiToken == consts.DefaultDevAPIToken {
+			slog.Warn("STUDIO_API_TOKEN is the default dev value — rotate before production use")
+		}
 		slog.Info("api token auth enabled for seed/CI scripts")
 	}
 
@@ -160,17 +230,11 @@ func main() {
 	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
 		agents.RegisterA2AForward(mux, a2aProxyURL)
 	} else {
-		autoPersist := httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true") == "true"
-		if autoPersist && st != nil {
-			slog.Info("artifact auto-persist enabled")
-		}
 		agents.RegisterA2AProxy(mux, agents.Options{
-			Cards:                agentCards,
-			TokenProvider:        authHandler,
-			KagentA2AURL:         os.Getenv("KAGENT_A2A_URL"),
-			AgentNamespace:       os.Getenv("KAGENT_AGENT_NAMESPACE"),
-			AutoPersistArtifacts: autoPersist && st != nil,
-			AuditLogStore:        st,
+			Cards:          agentCards,
+			TokenProvider:  authHandler,
+			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
+			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
 		})
 		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
 	}
@@ -205,7 +269,8 @@ func main() {
 	handler = httputil.SecurityHeaders(handler)
 
 	addr := net.JoinHostPort("0.0.0.0", port)
-	slog.Info("gateway starting", "addr", addr)
+	internalAddr := net.JoinHostPort("0.0.0.0", internalPort)
+
 	srv := &http.Server{
 		Addr:           addr,
 		Handler:        handler,
@@ -214,12 +279,36 @@ func main() {
 		IdleTimeout:    consts.ServerIdleTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
+	internalSrv := &http.Server{
+		Addr:           internalAddr,
+		Handler:        internalMux,
+		ReadTimeout:    consts.ServerReadTimeout,
+		WriteTimeout:   consts.ServerWriteTimeout,
+		IdleTimeout:    consts.ServerIdleTimeout,
+		MaxHeaderBytes: 1 << 20,
+	}
+
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
+		_ = internalSrv.Shutdown(shutdownCtx)
 	}()
+
+	if os.Getenv("NETWORKPOLICY_ENFORCED") == "" {
+		slog.Warn("NETWORKPOLICY_ENFORCED is unset — internal port has no auth; ensure a NetworkPolicy restricts access in production",
+			"internal_addr", internalAddr)
+	}
+	go func() {
+		slog.Info("internal listener starting", "addr", internalAddr)
+		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("internal http server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	slog.Info("gateway starting", "addr", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("http server failed", "error", err)
 		os.Exit(1)
@@ -267,9 +356,15 @@ func splitComma(raw string) []string {
 
 // writeProtect wraps a handler so that POST/PUT/PATCH/DELETE requests to /api/*
 // pass through the adminGuard middleware first. GET and non-API requests are unaffected.
+// /internal/* paths are served on the internal port only — reject on the public mux.
+// See docs/decisions/internal-endpoint-isolation.md.
 func writeProtect(next http.Handler, adminGuard func(http.Handler) http.Handler) http.Handler {
 	guarded := adminGuard(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/internal/") {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet {
 			if r.URL.Path == "/api/chat/history" {
 				next.ServeHTTP(w, r)
@@ -279,6 +374,22 @@ func writeProtect(next http.Handler, adminGuard func(http.Handler) http.Handler)
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// notificationAdapter adapts store.Store to events.NotificationWriter.
+type notificationAdapter struct {
+	store interface {
+		InsertNotification(ctx context.Context, n store.Notification) error
+	}
+}
+
+func (a *notificationAdapter) InsertNotification(ctx context.Context, n events.Notification) error {
+	return a.store.InsertNotification(ctx, store.Notification{
+		NotificationID: n.NotificationID,
+		Type:           n.Type,
+		PolicyID:       n.PolicyID,
+		Payload:        n.Payload,
 	})
 }
 
