@@ -93,7 +93,6 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 			steps_executed Nullable(UInt16),
 			compliance_status Enum8('Compliant'=0,'Non-Compliant'=1,'Exempt'=2,'Not Applicable'=3,'Unknown'=4),
 			risk_level Nullable(Enum8('Critical'=0,'High'=1,'Medium'=2,'Low'=3,'Informational'=4)),
-			frameworks Array(String),
 			requirements Array(String),
 			remediation_action Nullable(Enum8('Block'=0,'Allow'=1,'Remediate'=2,'Waive'=3,'Notify'=4,'Unknown'=5)),
 			remediation_status Nullable(Enum8('Success'=0,'Fail'=1,'Skipped'=2,'Unknown'=3)),
@@ -101,6 +100,9 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 			exception_id Nullable(String),
 			exception_active Nullable(Bool),
 			enrichment_status Enum8('Success'=0,'Unmapped'=1,'Partial'=2,'Unknown'=3,'Skipped'=4),
+			attestation_ref Nullable(String),
+			source_registry Nullable(String),
+			blob_ref Nullable(String),
 			collected_at DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now64(3),
 			row_key String MATERIALIZED concat(evidence_id,'/',control_id,'/',requirement_id)
@@ -203,6 +205,28 @@ func (c *Client) EnsureSchema(ctx context.Context, retentionMonths int) error {
 		) ENGINE = ReplacingMergeTree(imported_at)
 		ORDER BY (catalog_id, threat_id)`,
 
+		`CREATE TABLE IF NOT EXISTS risks (
+			catalog_id String,
+			risk_id String,
+			title String,
+			description String,
+			severity LowCardinality(String) DEFAULT '',
+			group_id String DEFAULT '',
+			impact String DEFAULT '',
+			policy_id String DEFAULT '',
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, risk_id)`,
+
+		`CREATE TABLE IF NOT EXISTS risk_threats (
+			catalog_id String,
+			risk_id String,
+			threat_reference_id String,
+			threat_entry_id String,
+			imported_at DateTime64(3) DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(imported_at)
+		ORDER BY (catalog_id, risk_id, threat_reference_id, threat_entry_id)`,
+
 		`CREATE TABLE IF NOT EXISTS catalogs (
 			catalog_id String,
 			catalog_type LowCardinality(String),
@@ -240,6 +264,94 @@ func schemaMigrations() []migration {
 			Version:     1,
 			Description: "add provenance columns to audit_logs",
 			SQL:         `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS model Nullable(String), ADD COLUMN IF NOT EXISTS prompt_version Nullable(String)`,
+		},
+		{
+			Version:     2,
+			Description: "drop denormalized frameworks from evidence",
+			SQL:         `ALTER TABLE evidence DROP COLUMN IF EXISTS frameworks`,
+		},
+		{
+			Version:     3,
+			Description: "add attestation_ref to evidence",
+			SQL:         `ALTER TABLE evidence ADD COLUMN IF NOT EXISTS attestation_ref Nullable(String)`,
+		},
+		{
+			Version:     4,
+			Description: "add noncompliant_evidence materialized view",
+			SQL: `CREATE MATERIALIZED VIEW IF NOT EXISTS noncompliant_evidence
+				ENGINE = ReplacingMergeTree(ingested_at)
+				ORDER BY (policy_id, control_id, target_id, collected_at)
+				AS SELECT * FROM evidence
+				WHERE eval_result IN ('Failed', 'Needs Review')
+				   OR compliance_status = 'Non-Compliant'`,
+		},
+		{
+			Version:     5,
+			Description: "add evidence_assessments table",
+			SQL: `CREATE TABLE IF NOT EXISTS evidence_assessments (
+				evidence_id String,
+				policy_id String,
+				plan_id String,
+				classification Enum8('Healthy'=1,'Failing'=2,'Wrong Source'=3,'Wrong Method'=4,'Unfit Evidence'=5,'Stale'=6,'No Evidence'=7),
+				reason String,
+				assessed_at DateTime64(3),
+				assessed_by String
+			) ENGINE = MergeTree()
+			PARTITION BY toYYYYMM(assessed_at)
+			ORDER BY (policy_id, plan_id, evidence_id, assessed_at)`,
+		},
+		{
+			Version:     6,
+			Description: "add source_registry to evidence",
+			SQL:         `ALTER TABLE evidence ADD COLUMN IF NOT EXISTS source_registry Nullable(String)`,
+		},
+		{
+			Version:     7,
+			Description: "add draft_audit_logs table",
+			SQL: `CREATE TABLE IF NOT EXISTS draft_audit_logs (
+				draft_id String,
+				policy_id String,
+				audit_start DateTime64(3),
+				audit_end DateTime64(3),
+				framework Nullable(String),
+				created_at DateTime64(3) DEFAULT now64(3),
+				status Enum8('pending_review'=1,'promoted'=2,'expired'=3),
+				content String,
+				summary String,
+				agent_reasoning String DEFAULT '',
+				model Nullable(String),
+				prompt_version Nullable(String),
+				reviewed_by Nullable(String),
+				promoted_at Nullable(DateTime64(3)),
+				reviewer_edits String DEFAULT '{}'
+			) ENGINE = ReplacingMergeTree(created_at)
+			PARTITION BY toYYYYMM(audit_start)
+			ORDER BY (policy_id, audit_start, draft_id)
+			TTL toDateTime(created_at) + INTERVAL 30 DAY`,
+		},
+		{
+			Version:     8,
+			Description: "add blob_ref to evidence",
+			SQL:         `ALTER TABLE evidence ADD COLUMN IF NOT EXISTS blob_ref Nullable(String)`,
+		},
+		{
+			Version:     9,
+			Description: "add reviewer_edits to draft_audit_logs",
+			SQL:         `ALTER TABLE draft_audit_logs ADD COLUMN IF NOT EXISTS reviewer_edits String DEFAULT '{}'`,
+		},
+		{
+			Version:     10,
+			Description: "add notifications table",
+			SQL: `CREATE TABLE IF NOT EXISTS notifications (
+				notification_id String,
+				type LowCardinality(String),
+				policy_id String,
+				payload String DEFAULT '{}',
+				read UInt8 DEFAULT 0,
+				created_at DateTime64(3) DEFAULT now64(3)
+			) ENGINE = ReplacingMergeTree(created_at)
+			ORDER BY (notification_id)
+			TTL toDateTime(created_at) + INTERVAL 90 DAY`,
 		},
 	}
 }
@@ -280,7 +392,7 @@ func (c *Client) appliedVersions(ctx context.Context) (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := make(map[int]bool)
 	for rows.Next() {
