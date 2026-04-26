@@ -66,6 +66,7 @@ spec:
       CLICKHOUSE_SECURE: "false"
       CLICKHOUSE_USER: {{ .Values.clickhouse.auth.readerUser | quote }}
       CLICKHOUSE_PASSWORD: {{ .Values.clickhouse.auth.readerPassword | quote }}
+      OPENBLAS_NUM_THREADS: "1"
     secretRefs:
       - name: studio-clickhouse-credentials
 {{- end }}

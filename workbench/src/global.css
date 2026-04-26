@@ -215,14 +215,6 @@ html, body, #root {
 .cert-pass { color: var(--text); opacity: 0.85; }
 .cert-warn { color: var(--text-muted); opacity: 0.7; }
 .cert-pending { color: var(--text-muted); opacity: 0.5; }
-.certification-bar {
-  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
-  margin-bottom: 8px; background: var(--border);
-}
-.cert-bar-segment { cursor: pointer; transition: opacity 0.15s; }
-.cert-bar-segment:hover { opacity: 0.8; }
-.cert-bar-certified { background: var(--text); opacity: 0.6; }
-.cert-bar-uncertified { background: var(--text-muted); opacity: 0.25; }
 .cert-detail-table { width: 100%; font-size: 12px; margin-top: 8px; }
 .cert-detail-table th {
   text-align: left; padding: 4px 8px;
@@ -644,17 +636,6 @@ tr.recency-very-stale { opacity: 0.35; }
   --freshness-row-very-stale: hsla(220, 5%, 78%, 0.16);
 }
 
-.freshness-bar-container { margin-bottom: 16px; }
-.freshness-bar-segments {
-  display: flex; height: 8px; border-radius: 4px;
-  overflow: hidden; background: var(--bg-input); cursor: pointer;
-}
-.freshness-segment { height: 100%; transition: opacity 0.15s; position: relative; }
-.freshness-segment:hover { opacity: 0.75; }
-.freshness-segment-current    { background: var(--freshness-current); }
-.freshness-segment-aging      { background: var(--freshness-aging); }
-.freshness-segment-stale      { background: var(--freshness-stale); }
-.freshness-segment-very-stale { background: var(--freshness-very-stale); }
 
 /* ── Evidence Row Freshness Tinting ── */
 tr.freshness-row-current    { background-color: var(--freshness-row-current); }

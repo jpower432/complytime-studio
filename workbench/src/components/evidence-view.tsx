@@ -12,7 +12,6 @@ import {
   parsePolicyFrequencies,
 } from "../lib/freshness";
 import { createFilterChips, FilterChips } from "./filter-chip";
-import { FreshnessBar } from "./freshness-bar";
 import { AddFilterMenu } from "./add-filter-menu";
 
 interface EvidenceRecord {
@@ -144,40 +143,6 @@ function CertificationDetail({ evidenceId }: { evidenceId: string }) {
         ))}
       </tbody>
     </table>
-  );
-}
-
-function CertificationBar(
-  { records, chipState }: {
-    records: EvidenceRecord[];
-    chipState: ReturnType<typeof createFilterChips>;
-  },
-) {
-  const certified = records.filter((r) => r.certified === true).length;
-  const uncertified = records.length - certified;
-  const total = records.length;
-  if (total === 0) return null;
-
-  const click = (label: string) => () => {
-    chipState.remove("Certification");
-    chipState.add("Certification", label);
-  };
-
-  return (
-    <div class="certification-bar">
-      <div
-        class="cert-bar-segment cert-bar-certified"
-        style={{ width: `${(certified / total) * 100}%` }}
-        onClick={click("Certified")}
-        title={`${certified} certified`}
-      />
-      <div
-        class="cert-bar-segment cert-bar-uncertified"
-        style={{ width: `${(uncertified / total) * 100}%` }}
-        onClick={click("Uncertified")}
-        title={`${uncertified} uncertified`}
-      />
-    </div>
   );
 }
 
@@ -408,8 +373,6 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
         </div>
       ) : (
         <>
-          <FreshnessBar buckets={freshnessCounts} chipState={chipState} />
-          <CertificationBar records={filteredRecords} chipState={chipState} />
           <EvidenceSummary records={filteredRecords} />
           <table class="data-table evidence-table">
             <thead>
