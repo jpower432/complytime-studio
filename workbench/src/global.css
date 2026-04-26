@@ -221,10 +221,10 @@ html, body, #root {
 .audit-filters select, .audit-filters input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-surface); color: var(--text); }
 .audit-filters select { min-width: 200px; }
 .audit-timeline { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
-.audit-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 200px; cursor: pointer; }
+.audit-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; min-width: 200px; cursor: pointer; }
 .audit-card:hover { border-color: var(--accent); }
-.audit-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.audit-period { font-size: 13px; font-weight: 600; }
+.audit-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.audit-period { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .audit-framework { font-size: 11px; padding: 2px 6px; background: var(--accent); color: white; border-radius: 3px; }
 .audit-card-actions { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; }
 .comparison-view { margin-top: 16px; }
