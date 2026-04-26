@@ -4,6 +4,7 @@ import { Fragment } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
 import { currentUser, viewInvalidation, selectedPolicyId, updateHash } from "../app";
+import { evidenceRecencyClass, ageDays, STALE_THRESHOLD_DAYS } from "../lib/freshness";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -74,6 +75,34 @@ const ALLOWED_TYPES = [
   "application/pdf", "text/plain", "text/csv", "application/gzip",
 ];
 
+function EvidenceSummary({ records }: { records: EvidenceRecord[] }) {
+  const total = records.length;
+  const passed = records.filter((r) => r.eval_result?.toLowerCase() === "passed").length;
+  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const engines = new Set(records.map((r) => r.engine_name).filter(Boolean)).size;
+  const targets = new Set(records.map((r) => r.target_id)).size;
+  const failed = records.filter((r) => r.eval_result?.toLowerCase() === "failed").length;
+  const other = total - passed - failed;
+
+  return (
+    <div class="evidence-summary">
+      <span class="summary-stat">{total} records</span>
+      <span class="summary-stat">{passRate}% pass</span>
+      <span class="summary-stat">{engines} engines</span>
+      <span class="summary-stat">{targets} targets</span>
+      <div class="posture-bar">
+        {total > 0 && (
+          <>
+            <div class="bar-pass" style={{ width: `${(passed / total) * 100}%` }} />
+            <div class="bar-fail" style={{ width: `${(failed / total) * 100}%` }} />
+            <div class="bar-other" style={{ width: `${(other / total) * 100}%` }} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
   const embedded = !!policyIdOverride;
   const [records, setRecords] = useState<EvidenceRecord[]>([]);
@@ -83,9 +112,6 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
   const [controlId, setControlId] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
-  const [targetName, setTargetName] = useState("");
-  const [framework, setFramework] = useState("");
   const [uploadStatus, setUploadStatus] = useState("");
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
   const [showUpload, setShowUpload] = useState(false);
@@ -112,8 +138,6 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
     const params = new URLSearchParams();
     if (policyId) params.set("policy_id", policyId);
     if (controlId) params.set("control_id", controlId);
-    if (targetName) params.set("target_name", targetName);
-    if (framework) params.set("framework", framework);
     if (start) params.set("start", start);
     if (end) params.set("end", end);
     params.set("limit", "200");
@@ -241,17 +265,7 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
         <input type="date" value={start} onInput={(e) => setStart((e.target as HTMLInputElement).value)} />
         <input type="date" value={end} onInput={(e) => setEnd((e.target as HTMLInputElement).value)} />
         <button class="btn btn-primary" onClick={search}>Search</button>
-        <button class="btn btn-xs" onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters}>
-          {showFilters ? "Less" : "More Filters"}
-        </button>
       </div>
-
-      {showFilters && (
-        <div class="evidence-filters evidence-filters-extra">
-          <input placeholder="Target name" value={targetName} onInput={(e) => setTargetName((e.target as HTMLInputElement).value)} />
-          <input placeholder="Framework" value={framework} onInput={(e) => setFramework((e.target as HTMLInputElement).value)} />
-        </div>
-      )}
 
       {showUpload && (
         <div class="evidence-upload">
@@ -332,59 +346,67 @@ export function EvidenceView({ policyIdOverride }: { policyIdOverride?: string }
           <p>No evidence found. Adjust filters or upload evidence.</p>
         </div>
       ) : (
-        <table class="data-table evidence-table">
-          <thead>
-            <tr>
-              <th class="evidence-expand-col" aria-hidden="true" />
-              <th>Target</th>
-              <th>Control</th>
-              <th>Result</th>
-              <th>Engine</th>
-              <th>Collected</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((r) => {
-              const rowKey = evidenceRowKey(r);
-              const open = expandedKey === rowKey;
-              return (
-                <Fragment key={rowKey}>
-                  <tr data-evidence-id={r.evidence_id} class={open ? "evidence-row-open" : ""}>
-                    <td class="evidence-expand-cell">
-                      <button
-                        type="button"
-                        class="btn btn-xs"
-                        aria-expanded={open}
-                        aria-label={open ? "Hide evidence details" : "Show evidence details"}
-                        onClick={() => setExpandedKey(open ? null : rowKey)}
-                      >
-                        {open ? "−" : "+"}
-                      </button>
-                    </td>
-                    <td title={r.target_id}>{r.target_name || r.target_id}</td>
-                    <td>{r.control_id}</td>
-                    <td><span class={`eval-badge eval-${r.eval_result?.toLowerCase().replace(/ /g, "-")}`}>{r.eval_result}</span></td>
-                    <td>{r.engine_name || "---"}</td>
-                    <td>{new Date(r.collected_at).toLocaleString()}</td>
-                  </tr>
-                  {open && (
-                    <tr class="evidence-detail-row" aria-label="Evidence details">
-                      <td colSpan={6}>
-                        <div class="evidence-detail-panel">
-                          {r.source_registry?.trim() ? (
-                            <SourceRegistryDetail value={r.source_registry} />
-                          ) : (
-                            <p class="evidence-detail-muted">No source registry on this row.</p>
-                          )}
-                        </div>
+        <>
+          <EvidenceSummary records={records} />
+          <table class="data-table evidence-table">
+            <thead>
+              <tr>
+                <th class="evidence-expand-col" aria-hidden="true" />
+                <th>Target</th>
+                <th>Control</th>
+                <th>Result</th>
+                <th>Engine</th>
+                <th>Collected</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((r) => {
+                const rowKey = evidenceRowKey(r);
+                const open = expandedKey === rowKey;
+                const recency = evidenceRecencyClass(r.collected_at);
+                const showBadge = ageDays(r.collected_at) > STALE_THRESHOLD_DAYS;
+                return (
+                  <Fragment key={rowKey}>
+                    <tr data-evidence-id={r.evidence_id} class={`${recency} ${open ? "evidence-row-open" : ""}`}>
+                      <td class="evidence-expand-cell">
+                        <button
+                          type="button"
+                          class="btn btn-xs"
+                          aria-expanded={open}
+                          aria-label={open ? "Hide evidence details" : "Show evidence details"}
+                          onClick={() => setExpandedKey(open ? null : rowKey)}
+                        >
+                          {open ? "−" : "+"}
+                        </button>
+                      </td>
+                      <td title={r.target_id}>{r.target_name || r.target_id}</td>
+                      <td>{r.control_id}</td>
+                      <td><span class={`eval-badge eval-${r.eval_result?.toLowerCase().replace(/ /g, "-")}`}>{r.eval_result}</span></td>
+                      <td>{r.engine_name || "---"}</td>
+                      <td>
+                        {new Date(r.collected_at).toLocaleString()}
+                        {showBadge && <span class="stale-indicator">stale</span>}
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {open && (
+                      <tr class="evidence-detail-row" aria-label="Evidence details">
+                        <td colSpan={6}>
+                          <div class="evidence-detail-panel">
+                            {r.source_registry?.trim() ? (
+                              <SourceRegistryDetail value={r.source_registry} />
+                            ) : (
+                              <p class="evidence-detail-muted">No source registry on this row.</p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
       )}
     </section>
   );

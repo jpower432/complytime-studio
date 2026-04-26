@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { Fragment } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { selectedPolicyId, selectedTimeRange, viewInvalidation, updateHash } from "../app";
 import { apiFetch } from "../api/fetch";
@@ -22,6 +23,36 @@ interface PolicyOption {
   title: string;
 }
 
+interface SummaryData {
+  strengths: number;
+  findings: number;
+  gaps: number;
+  observations: number;
+}
+
+function parseSummary(s: string): SummaryData | null {
+  try {
+    const parsed = JSON.parse(s);
+    return {
+      strengths: parsed.strengths ?? 0,
+      findings: parsed.findings ?? 0,
+      gaps: parsed.gaps ?? 0,
+      observations: parsed.observations ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function DeltaCell({ current, previous, warnOnIncrease }: { current: number; previous: number | null; warnOnIncrease: boolean }) {
+  if (previous === null) return <>{current}</>;
+  const delta = current - previous;
+  if (delta === 0) return <>{current} <span class="delta-zero">(0)</span></>;
+  const cls = (delta > 0 && warnOnIncrease) || (delta < 0 && !warnOnIncrease) ? "delta-positive" : "delta-negative";
+  const sign = delta > 0 ? "+" : "";
+  return <>{current} <span class={cls}>({sign}{delta})</span></>;
+}
+
 export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
   const embedded = !!policyIdOverride;
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
@@ -30,7 +61,8 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   const [startFilter, setStartFilter] = useState("");
   const [endFilter, setEndFilter] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedContent, setExpandedContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -81,16 +113,22 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   useEffect(fetchLogs, [policyId]);
   useEffect(() => { if (policyId) fetchLogs(); }, [viewInvalidation.value]);
 
-  const parseSummary = (s: string) => {
-    try { return JSON.parse(s); } catch { return null; }
-  };
-
-  const loadDetail = (log: AuditLog) => {
+  const toggleExpand = (log: AuditLog) => {
+    if (expandedId === log.audit_id) {
+      setExpandedId(null);
+      setExpandedContent(null);
+      return;
+    }
+    setExpandedId(log.audit_id);
+    setExpandedContent(null);
     apiFetch(`/api/audit-logs/${encodeURIComponent(log.audit_id)}`)
       .then((r) => { if (!r.ok) throw new Error("not found"); return r.json(); })
-      .then((full: AuditLog) => setSelectedLog(full))
-      .catch(() => setSelectedLog(log));
+      .then((full: AuditLog) => setExpandedContent(full.content || full.summary))
+      .catch(() => setExpandedContent(log.summary));
   };
+
+  const summaries = logs.map((l) => parseSummary(l.summary));
+  const auditIds = logs.map((l) => l.audit_id);
 
   return (
     <section class="audit-history-view">
@@ -105,7 +143,23 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
             ))}
           </select>
         )}
-        <input placeholder="Audit ID" value={auditIdFilter} onInput={(e) => setAuditIdFilter((e.target as HTMLInputElement).value)} />
+        {embedded && logs.length > 0 ? (
+          <select
+            value={auditIdFilter}
+            onChange={(e) => setAuditIdFilter((e.target as HTMLSelectElement).value)}
+          >
+            <option value="">All Audits</option>
+            {auditIds.map((id) => (
+              <option key={id} value={id}>{id}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            placeholder="Audit ID"
+            value={auditIdFilter}
+            onInput={(e) => setAuditIdFilter((e.target as HTMLInputElement).value)}
+          />
+        )}
         <input type="date" value={startFilter} onInput={(e) => setStartFilter((e.target as HTMLInputElement).value)} title="Start date" />
         <input type="date" value={endFilter} onInput={(e) => setEndFilter((e.target as HTMLInputElement).value)} title="End date" />
         <button class="btn btn-primary" onClick={fetchLogs}>Search</button>
@@ -118,55 +172,79 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
           <p>{policyId ? "No audit logs for this policy." : "Select a policy to view audit history."}</p>
         </div>
       ) : (
-        <>
-          <div class="audit-timeline">
-            {logs.map((log) => {
-              const summary = parseSummary(log.summary);
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Framework</th>
+              <th>Strengths</th>
+              <th>Findings</th>
+              <th>Gaps</th>
+              <th>Author</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.map((log, i) => {
+              const summary = summaries[i];
+              const prev = i + 1 < summaries.length ? summaries[i + 1] : null;
+              const isExpanded = expandedId === log.audit_id;
               return (
-                <article key={log.audit_id} class="audit-card" onClick={() => loadDetail(log)}>
-                  <div class="audit-card-header">
-                    <span class="audit-period">
+                <Fragment key={log.audit_id}>
+                  <tr
+                    class={isExpanded ? "expanded" : ""}
+                    onClick={() => toggleExpand(log)}
+                    onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(log); } }}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    aria-label={`Audit ${new Date(log.audit_start).toLocaleDateString()} — ${new Date(log.audit_end).toLocaleDateString()}`}
+                  >
+                    <td>
                       {new Date(log.audit_start).toLocaleDateString()} — {new Date(log.audit_end).toLocaleDateString()}
-                    </span>
-                    {log.framework && <span class="audit-framework">{log.framework}</span>}
-                  </div>
-                  {summary && (
-                    <div class="posture-counts">
-                      <span class="count-pass">{summary.strengths ?? 0} strengths</span>
-                      <span class="count-finding">{summary.findings ?? 0} findings</span>
-                      <span class="count-gap">{summary.gaps ?? 0} gaps</span>
-                    </div>
+                    </td>
+                    <td>{log.framework || "—"}</td>
+                    <td>
+                      {summary ? (
+                        <DeltaCell current={summary.strengths} previous={prev?.strengths ?? null} warnOnIncrease={false} />
+                      ) : "—"}
+                    </td>
+                    <td>
+                      {summary ? (
+                        <DeltaCell current={summary.findings} previous={prev?.findings ?? null} warnOnIncrease={true} />
+                      ) : "—"}
+                    </td>
+                    <td>
+                      {summary ? (
+                        <DeltaCell current={summary.gaps} previous={prev?.gaps ?? null} warnOnIncrease={true} />
+                      ) : "—"}
+                    </td>
+                    <td>{log.created_by || "—"}</td>
+                  </tr>
+                  {isExpanded && (
+                    <tr class="history-expand-row">
+                      <td colSpan={6}>
+                        <pre class="yaml-viewer">{expandedContent || "Loading..."}</pre>
+                        {expandedContent && (
+                          <button
+                            class="btn btn-sm btn-secondary"
+                            style={{ marginTop: "8px" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadYaml(expandedContent, auditLogFilename(log.policy_id, log.audit_start));
+                            }}
+                          >
+                            Download YAML
+                          </button>
+                        )}
+                      </td>
+                    </tr>
                   )}
-                  <div class="audit-card-meta">
-                    {log.created_by && <span class="audit-card-author">{log.created_by}</span>}
-                  </div>
-                </article>
+                </Fragment>
               );
             })}
-          </div>
-
-          {selectedLog && (
-            <div class="audit-detail">
-              <div class="detail-header">
-                <h3>Audit Detail</h3>
-                <div class="detail-actions">
-                  {selectedLog.content && (
-                    <button
-                      class="btn btn-sm btn-secondary"
-                      onClick={() => downloadYaml(selectedLog.content!, auditLogFilename(selectedLog.policy_id, selectedLog.audit_start))}
-                    >
-                      Download YAML
-                    </button>
-                  )}
-                  <button class="btn btn-sm" onClick={() => setSelectedLog(null)}>Close</button>
-                </div>
-              </div>
-              <pre class="yaml-viewer">{selectedLog.content || selectedLog.summary}</pre>
-            </div>
-          )}
-        </>
+          </tbody>
+        </table>
       )}
     </section>
   );
 }
-

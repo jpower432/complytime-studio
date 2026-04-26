@@ -25,7 +25,7 @@ export const selectedControlId = signal<string | null>(null);
 export const selectedRequirementId = signal<string | null>(null);
 export const selectedEvalResult = signal<string | null>(null);
 export const selectedPolicyDetail = signal<string | null>(null);
-export const activeTab = signal<"requirements" | "evidence" | "history">("requirements");
+export const activeTab = signal<"requirements" | "inventory" | "evidence" | "history">("requirements");
 
 // Monotonic counter; mounted views watch this to refetch. Same browser tab/session only —
 // not shared across tabs or windows. Out-of-band backend changes (other clients, direct DB)
@@ -83,7 +83,7 @@ export function navigate(view: View) {
   }
 }
 
-export function navigateToPolicy(policyId: string, tab: "requirements" | "evidence" | "history" = "requirements") {
+export function navigateToPolicy(policyId: string, tab: "requirements" | "inventory" | "evidence" | "history" = "requirements") {
   selectedPolicyDetail.value = policyId;
   selectedPolicyId.value = policyId;
   activeTab.value = tab;
@@ -106,7 +106,10 @@ function syncFromHash() {
     selectedPolicyDetail.value = params.policyDetail;
     selectedPolicyId.value = params.policyDetail;
   }
-  if (params.tab) activeTab.value = params.tab as "requirements" | "evidence" | "history";
+  const VALID_TABS = ["requirements", "inventory", "evidence", "history"] as const;
+  if (params.tab && VALID_TABS.includes(params.tab as typeof VALID_TABS[number])) {
+    activeTab.value = params.tab as typeof VALID_TABS[number];
+  }
   if (params.policy) selectedPolicyId.value = params.policy;
   if (params.start || params.end) {
     selectedTimeRange.value = { start: params.start || "", end: params.end || "" };

@@ -562,3 +562,47 @@ table tr:focus-visible { outline-offset: -2px; }
 
 /* ── Time Presets ── */
 .time-presets { display: flex; gap: 6px; margin-bottom: 12px; }
+
+/* ── Evidence Recency ── */
+tr.recency-current  { opacity: 1; }
+tr.recency-aging    { opacity: 0.75; }
+tr.recency-stale    { opacity: 0.55; }
+tr.recency-very-stale { opacity: 0.35; }
+.stale-indicator { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--warning-subtle); color: var(--warning); font-weight: 600; margin-left: 6px; }
+
+/* ── Evidence Summary Strip ── */
+.evidence-summary {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 16px; margin-bottom: 16px;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; font-weight: 500;
+}
+.evidence-summary .posture-bar { flex: 1; min-width: 120px; }
+
+/* ── Inventory View ── */
+.inventory-view { padding: 0; }
+.inventory-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 768px) { .inventory-grid { grid-template-columns: 1fr; } }
+.inventory-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-heading); }
+.inventory-list { display: flex; flex-direction: column; gap: 6px; }
+.inventory-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; background: var(--bg-surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px;
+}
+.inventory-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.inventory-item-stats { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.inventory-item .posture-bar { width: 80px; margin: 0; }
+
+/* ── History Table ── */
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.history-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); font-weight: 600; font-size: 12px; }
+.history-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.history-table tr { cursor: pointer; transition: background 0.1s; }
+.history-table tbody tr:hover { background: var(--bg-hover); }
+.history-table tr.expanded { background: var(--accent-subtle); }
+.history-expand-row td { padding: 16px; background: var(--bg); }
+.delta-positive { color: var(--error); font-size: 11px; font-weight: 600; }
+.delta-negative { color: var(--success); font-size: 11px; font-weight: 600; }
+.delta-zero { color: var(--text-muted); font-size: 11px; }

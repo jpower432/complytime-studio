@@ -3,6 +3,7 @@
 import { useState, useEffect } from "preact/hooks";
 import { navigate, navigateToPolicy, selectedPolicyId, selectedTimeRange, viewInvalidation } from "../app";
 import { apiFetch } from "../api/fetch";
+import { isStale, freshnessClass, relativeTime } from "../lib/freshness";
 
 interface PostureRow {
   policy_id: string;
@@ -24,21 +25,6 @@ interface RiskSeverityMap {
 }
 
 type PresetKey = "7d" | "30d" | "90d" | "all";
-
-const STALE_THRESHOLD_DAYS = 30;
-
-function isStale(iso: string | undefined): boolean {
-  if (!iso) return true;
-  return (Date.now() - new Date(iso).getTime()) / 86_400_000 > STALE_THRESHOLD_DAYS;
-}
-
-function freshnessClass(iso: string | undefined): string {
-  if (!iso) return "freshness-none";
-  const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
-  if (days <= 7) return "freshness-current";
-  if (days <= STALE_THRESHOLD_DAYS) return "freshness-aging";
-  return "freshness-stale";
-}
 
 export function PostureView() {
   const [rows, setRows] = useState<PostureRow[]>([]);
@@ -129,20 +115,6 @@ export function PostureView() {
       </div>
     </section>
   );
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return "just now";
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  return `${months}mo ago`;
 }
 
 function TimePresets({ active, onSelect }: { active: PresetKey; onSelect: (k: PresetKey) => void }) {
