@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-#
-# Agent CRDs removed. The assistant is now a BYO ADK agent deployed via
-# byo-assistant.yaml. Threat modeler and policy composer have been removed —
-# artifact authoring is handled by engineers using local tools (Cursor, Claude
-# Code) + gemara-mcp.
-#
-# This file is intentionally empty. It is retained for Helm template discovery
-# and to document the pivot decision (see docs/decisions/audit-dashboard-pivot.md).

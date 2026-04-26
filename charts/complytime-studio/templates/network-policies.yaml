@@ -26,7 +26,8 @@ spec:
     - Ingress
 
 ---
-# Gateway: accept ingress from anywhere on port 8080 (user-facing service).
+# Gateway public port: accept ingress from anywhere on port 8080 (user-facing).
+# /internal/* paths return 404 on this port — they are served exclusively on 8081.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -42,6 +43,33 @@ spec:
   ingress:
     - ports:
         - port: 8080
+          protocol: TCP
+
+---
+# Gateway internal port: accept ingress only from assistant pods on port 8081.
+# Selector uses both name and component to prevent label-spoofing lateral movement.
+# See docs/decisions/internal-endpoint-isolation.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-gateway-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: studio-assistant
+              app.kubernetes.io/component: assistant
+              app.kubernetes.io/part-of: complytime-studio
+      ports:
+        - port: 8081
           protocol: TCP
 
 ---
@@ -110,6 +138,29 @@ spec:
         - port: 8123
           protocol: TCP
         - port: 9000
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.nats.enabled }}
+---
+# NATS: accept ingress from namespace peers (gateway, ingest) on port 4222.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-nats
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-nats
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 4222
           protocol: TCP
 {{- end }}
 {{- end }}

@@ -4,17 +4,14 @@ Prerequisite: kagent >= 0.8.0 with KMCP controller must be installed in this clu
 
 Architecture:
   Assistant:     BYO ADK agent (Python) — studio-assistant
-  Gateway:       Thin Go service — serves workbench SPA, agent directory, REST endpoints
+  Gateway:       Go service — serves workbench SPA, REST APIs, A2A proxy
   MCP servers:   gemara-mcp, oras-mcp — deployed as MCPServer CRDs via KMCP
 {{- if .Values.clickhouse.enabled }}
-  ClickHouse:    Evidence store + ClickHouse/mcp-clickhouse MCP server
+  ClickHouse:    Evidence store + clickhouse-mcp MCP server
 {{- end }}
 
 Access:
   Gateway:       kubectl port-forward -n {{ .Release.Namespace }} svc/studio-gateway 8080:8080
-  kagent UI:     kubectl port-forward -n {{ .Release.Namespace }} svc/kagent-ui 8001:8080
-  kagent API:    kubectl port-forward -n {{ .Release.Namespace }} svc/kagent-controller 8083:8083
-  Invoke (CLI):  kagent invoke --agent studio-assistant --task "Prepare audit for ..."
 {{- if .Values.registry.enabled }}
   OCI registry:  kubectl port-forward -n {{ .Release.Namespace }} svc/studio-registry {{ .Values.registry.service.port }}:{{ .Values.registry.service.port }}
 {{- end }}

@@ -23,7 +23,11 @@ spec:
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8080
+            - name: public
+              containerPort: 8080
+              protocol: TCP
+            - name: internal
+              containerPort: 8081
               protocol: TCP
           securityContext:
             readOnlyRootFilesystem: true
@@ -46,6 +50,8 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            - name: INTERNAL_PORT
+              value: "8081"
             - name: GITHUB_ORG
               value: {{ .Values.github.org | quote }}
             - name: GITHUB_REPO
@@ -113,6 +119,24 @@ spec:
               value: {{ .Values.model.provider | quote }}
             - name: MODEL_NAME
               value: {{ .Values.model.name | quote }}
+            {{- if .Values.blobStorage.enabled }}
+            - name: BLOB_ENDPOINT
+              value: {{ .Values.blobStorage.endpoint | quote }}
+            - name: BLOB_BUCKET
+              value: {{ .Values.blobStorage.bucket | quote }}
+            - name: BLOB_USE_SSL
+              value: {{ .Values.blobStorage.useSSL | quote }}
+            - name: BLOB_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.blobStorage.secretName }}
+                  key: access-key
+            - name: BLOB_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.blobStorage.secretName }}
+                  key: secret-key
+            {{- end }}
             {{- if .Values.clickhouse.enabled }}
             - name: CLICKHOUSE_ADDR
               value: "studio-clickhouse:9000"
@@ -130,6 +154,12 @@ spec:
             {{- end }}
             - name: AUTO_PERSIST_ARTIFACTS
               value: {{ .Values.gateway.autoPersistArtifacts | default true | quote }}
+            {{- if .Values.nats.enabled }}
+            - name: NATS_URL
+              value: "nats://studio-nats:4222"
+            - name: NETWORKPOLICY_ENFORCED
+              value: "true"
+            {{- end }}
           resources:
             requests:
               memory: "32Mi"
@@ -151,6 +181,28 @@ spec:
   selector:
     {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
   ports:
-    - port: 8080
+    - name: public
+      port: 8080
       targetPort: 8080
+      protocol: TCP
+---
+# Internal Service — agent-only traffic. Not exposed via Ingress.
+# Access restricted by studio-allow-gateway-internal NetworkPolicy.
+# See docs/decisions/internal-endpoint-isolation.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-gateway-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
+  ports:
+    - name: internal
+      port: 8081
+      targetPort: 8081
       protocol: TCP

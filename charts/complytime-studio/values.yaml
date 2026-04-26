@@ -11,6 +11,21 @@ gateway:
     tag: latest
   autoPersistArtifacts: true
 
+# -- S3-compatible blob storage for evidence attachments (manual POST /api/evidence
+# with multipart file). When disabled, the gateway omits BLOB_* env vars; file
+# uploads return 400. For kind/dev, enable and point at in-cluster MinIO or RustFS.
+blobStorage:
+  enabled: false
+  endpoint: ""
+  bucket: complytime-evidence
+  useSSL: false
+  secretName: studio-blob-credentials
+  # When true, Helm renders templates/blob-secret.yaml (dev only — use external
+  # secrets in production).
+  createSecret: false
+  accessKey: ""
+  secretKey: ""
+
 # -- Google OAuth for user authentication.
 # Create credentials at https://console.cloud.google.com/apis/credentials
 # Authorized redirect URI: http://localhost:8080/auth/callback
@@ -37,12 +52,11 @@ github:
 # -- Git URL of this repository, used for internal skill gitRefs.
 platformRepo: https://github.com/jpower432/complytime-studio.git
 
-# -- Internal skills from this repo (requires public repo or git credentials).
-# Disable when the platformRepo is private and kagent lacks git auth.
-internalSkills:
-  enabled: false
-
-# -- External skill repositories.
+# -- External skill repositories. kagent clones these and mounts them into
+# the agent container. To add a new external skill:
+#   1. Add an entry here with repo, ref, and path
+#   2. Add a matching entry in agents/<name>/agent.yaml skills block
+#   3. Run: make sync-prompts
 externalSkills:
   research:
     enabled: true
@@ -73,10 +87,7 @@ assistant:
 # When a key is absent or empty, the agent inherits the global model.* values.
 # Example: agents.assistant.model.provider: GeminiVertexAI
 agents:
-  assistant:
-    model:
-      provider: GeminiVertexAI
-      name: gemini-2.5-pro
+  assistant: {}
 
 # -- Global model configuration. Used as default for all agents unless
 # overridden per-agent in agents.<name>.model.
@@ -98,18 +109,33 @@ model:
 
 # -- Agent directory entries exposed via GET /api/agents.
 # Single agent — BYO assistant deployed via byo-assistant.yaml.
+# The skills block MUST mirror agents/<name>/agent.yaml a2a.skills.
 agentDirectory:
   - name: studio-assistant
-    description: "ComplyTime Studio assistant — audit preparation, evidence synthesis, cross-framework coverage analysis, and compliance guidance"
+    description: >-
+      ComplyTime Studio assistant — audit preparation, evidence synthesis,
+      cross-framework coverage analysis, and compliance guidance
     url: "http://studio-assistant:8080"
     skills:
       - id: compliance-assistant
         name: Studio Assistant
-        description: "Audit preparation, evidence synthesis, cross-framework coverage analysis, policy guidance, and AuditLog generation."
+        description: >-
+          Audit preparation, evidence synthesis, cross-framework coverage
+          analysis, policy guidance, and AuditLog generation.
         tags: [assistant, audit, compliance, coverage, evidence, layer-7]
 
 # -- MCP servers deployed via kagent MCPServer CRDs.
 # Platform servers (gemara, oras, clickhouse) use stdio with static credentials.
+#
+# To add a new MCP server:
+#   1. Add an entry here with enabled + image
+#   2. Create a Helm template in templates/ for the MCPServer CRD
+#   3. Add a matching entry in agents/<name>/agent.yaml mcp block with tool whitelist
+#   4. For user-scoped auth, set allowedHeaders: [Authorization] on the agent mcp ref
+#
+# Transport modes:
+#   stdio  — static credentials, agent and MCP server share a pod (sidecar)
+#   http   — per-request auth via Authorization header propagation (OBO flow)
 mcpServers:
   gemara:
     enabled: true
@@ -172,6 +198,21 @@ registry:
   seed:
     enabled: true
     image: ghcr.io/oras-project/oras:v1.2.2
+
+# -- NATS lightweight messaging for event-driven evidence processing.
+# When enabled, the gateway subscribes to evidence events and triggers
+# posture checks. The ingest job publishes events after each insert.
+# NATS is CNCF-graduated. Single-node, no JetStream — minimal footprint.
+nats:
+  enabled: false
+  image: nats:2-alpine
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
 
 # -- NetworkPolicy for Helm-managed studio pods (gateway, registry, clickhouse).
 # Agents and MCP servers are managed by kagent/kmcp; their network policies

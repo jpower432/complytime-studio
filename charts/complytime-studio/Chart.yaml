@@ -2,9 +2,8 @@
 apiVersion: v2
 name: complytime-studio
 description: >-
-  ComplyTime Studio — a multi-agent platform for authoring, validating,
-  and publishing Gemara GRC artifacts as OCI bundles. Deploys as a kagent
-  BYO agent with Go ADK runtime.
+  ComplyTime Studio — compliance analytics and audit preparation platform.
+  Deploys a BYO ADK agent with ClickHouse evidence store and MCP servers.
 type: application
 version: 0.2.0
 appVersion: "0.2.0"

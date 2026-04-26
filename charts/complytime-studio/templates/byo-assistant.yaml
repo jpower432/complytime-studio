@@ -13,11 +13,13 @@ spec:
   replicas: 1
   selector:
     matchLabels:
+      app.kubernetes.io/name: studio-assistant
       app.kubernetes.io/component: assistant
   template:
     metadata:
       labels:
         {{- include "studio.labels" . | nindent 8 }}
+        app.kubernetes.io/name: studio-assistant
         app.kubernetes.io/component: assistant
     spec:
       containers:
@@ -43,6 +45,10 @@ spec:
               value: {{ default .Values.model.provider (index $agentModel "provider" | default "") | quote }}
             - name: MODEL_NAME
               value: {{ default .Values.model.name (index $agentModel "name" | default "") | quote }}
+            - name: GATEWAY_URL
+              value: "http://studio-gateway:8080"
+            - name: INTERNAL_GATEWAY_URL
+              value: "http://studio-gateway-internal:8081"
             {{- if .Values.mcpServers.gemara.enabled }}
             - name: GEMARA_MCP_URL
               value: "http://studio-gemara-mcp:3000/mcp"
@@ -81,13 +87,13 @@ spec:
             httpGet:
               path: /.well-known/agent-card.json
               port: 8080
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /.well-known/agent-card.json
               port: 8080
-            initialDelaySeconds: 10
+            initialDelaySeconds: 20
             periodSeconds: 10
           resources:
             requests:
@@ -114,6 +120,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
+    app.kubernetes.io/name: studio-assistant
     app.kubernetes.io/component: assistant
   ports:
     - port: 8080
