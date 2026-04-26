@@ -51,9 +51,10 @@ func normalizeEndpoint(endpoint string, useSSL bool) (string, bool) {
 		return endpoint, useSSL
 	}
 	ssl := useSSL
-	if u.Scheme == "https" {
+	switch u.Scheme {
+	case "https":
 		ssl = true
-	} else if u.Scheme == "http" {
+	case "http":
 		ssl = false
 	}
 	return u.Host, ssl
