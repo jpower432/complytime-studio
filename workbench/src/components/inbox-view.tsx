@@ -248,10 +248,7 @@ export function InboxView() {
               <article
                 key={notif.notification_id}
                 class={`inbox-card inbox-card-notification ${notif.read ? "read" : "unread"}`}
-                onClick={() => {
-                  if (!notif.read) markRead(notif.notification_id);
-                  if (notif.policy_id) navigateToPolicy(notif.policy_id);
-                }}
+                onClick={() => { if (!notif.read) markRead(notif.notification_id); }}
               >
                 <div class="inbox-card-type">{notif.type === "posture_change" ? "Posture Change" : notif.type === "evidence_arrival" ? "Evidence Arrival" : notif.type}</div>
                 <div class="inbox-card-header">
@@ -259,6 +256,21 @@ export function InboxView() {
                   <span class="inbox-card-date">{new Date(notif.created_at).toLocaleDateString()}</span>
                 </div>
                 {payload.message && <p class="inbox-card-message">{payload.message}</p>}
+                {payload.previous_rate !== undefined && payload.current_rate !== undefined && (
+                  <div class="inbox-card-delta">
+                    <span>{(payload.previous_rate * 100).toFixed(0)}%</span>
+                    <span> → </span>
+                    <span>{(payload.current_rate * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {notif.policy_id && (
+                  <button
+                    class="btn btn-sm btn-link"
+                    onClick={(e) => { e.stopPropagation(); navigateToPolicy(notif.policy_id); }}
+                  >
+                    View Policy →
+                  </button>
+                )}
               </article>
             );
           })}

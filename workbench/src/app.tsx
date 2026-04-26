@@ -45,16 +45,6 @@ function parseHash(hash: string): { view: View; params: Record<string, string> }
     new URLSearchParams(stripped.slice(qIdx + 1)).forEach((v, k) => { params[k] = v; });
   }
 
-  // Legacy redirects
-  if (pathPart === "audit-history") {
-    const policyRedirect = params.policy || "";
-    if (policyRedirect) return { view: "posture-detail", params: { ...params, policyDetail: policyRedirect, tab: "history" } };
-    return { view: "posture", params };
-  }
-  if (pathPart === "draft-review" || pathPart === "requirements") {
-    return { view: "inbox", params };
-  }
-
   // Nested posture route: posture/{policy_id}
   if (pathPart.startsWith("posture/")) {
     const policyId = pathPart.slice("posture/".length);
