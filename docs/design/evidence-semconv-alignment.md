@@ -4,6 +4,16 @@
 
 Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio ClickHouse `evidence` table. The OTel Collector's ClickHouse exporter writes directly to the `evidence` table using this mapping. See [OTel-Native Ingestion](../decisions/otel-native-ingestion.md).
 
+## OTel Collector / exporter alignment
+
+Studio does **not** ship OpenTelemetry Collector configuration. Each environment wires the ClickHouse exporter (see [complytime-collector-components](https://github.com/complytime/complytime-collector-components)) so **log attribute names match this document** and **column names match the Studio DDL** (`internal/clickhouse/client.go` and Helm `clickhouse-schema-configmap.yaml` init script).
+
+| OTel attribute (canonical) | ClickHouse column |
+|:---------------------------|:------------------|
+| `compliance.source.registry` | `source_registry` |
+
+If the exporter uses a transform or field rename, apply it so the stored column remains `source_registry` (`Nullable(String)`). This file is the source of truth for the attribute name.
+
 ## Attribute-to-Column Mapping
 
 ### Policy Engine Attributes (`registry.policy`)
@@ -41,6 +51,20 @@ Mapping between the `beacon.evidence` OTel semantic convention ([complytime-coll
 | `compliance.remediation.exception.active` | `exception_active` | Nullable(Bool) | opt_in |
 | `compliance.assessment.id` | `evidence_id` | String | recommended |
 | `compliance.enrichment.status` | `enrichment_status` | Enum8 | required |
+
+### Attestation Provenance (`registry.compliance`)
+
+| Semconv Attribute | ClickHouse Column | Type | Requirement |
+|:------------------|:------------------|:-----|:------------|
+| `compliance.attestation.ref` | `attestation_ref` | Nullable(String) | opt_in |
+| `compliance.source.registry` | `source_registry` | Nullable(String) | opt_in |
+| `compliance.blob.ref` | `blob_ref` | Nullable(String) | opt_in |
+
+The `attestation_ref` column stores the OCI digest (e.g., `sha256:abc123`) of an in-toto attestation bundle linked to this evidence row. NULL when no attestation is available.
+
+The `source_registry` column stores the OCI registry hostname or URL where the attestation bundle resides. Used for cross-boundary attestation verification when evidence originates from a trust boundary with its own registry. NULL when the default registry applies or provenance is unknown.
+
+The `blob_ref` column stores an S3-compatible URI (e.g., `s3://bucket/key`) pointing to a file artifact (screenshot, log, PDF) associated with this evidence row. NULL for evidence without file attachments. File storage is S3-compatible; the gateway uploads and returns the canonical reference.
 
 ### Identity / Timestamps
 

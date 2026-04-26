@@ -48,7 +48,9 @@ Studio reads via clickhouse-mcp + REST APIs
 | `complyctl` / ProofWatch | Instrumentation, semconv attribute emission |
 | `complytime-studio` | `evidence` table DDL, query APIs, assistant |
 
-The interface contract is `docs/design/evidence-semconv-alignment.md`.
+The interface contract is `docs/design/evidence-semconv-alignment.md`. The exporter **MUST** map `compliance.source.registry` to the `source_registry` column (and every other attribute listed there to the named column) so OTel rows match REST-shaped queries.
+
+Environment-specific collector YAML lives in operator or platform repos; keep attribute names aligned with the semconv doc even when endpoints or credentials differ.
 
 ## Consequences
 

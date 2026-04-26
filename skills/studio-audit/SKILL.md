@@ -65,5 +65,43 @@ controls: catalog_id, control_id, title, objective, group_id, state, policy_id, 
 assessment_requirements: catalog_id, control_id, requirement_id, text, applicability, recommendation, state, imported_at
 control_threats: catalog_id, control_id, threat_reference_id, threat_entry_id, imported_at
 threats: catalog_id, threat_id, title, description, group_id, policy_id, imported_at
+risks: catalog_id, risk_id, title, description, severity, group_id, impact, policy_id, imported_at
+risk_threats: catalog_id, risk_id, threat_reference_id, threat_entry_id, imported_at
 audit_logs: audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary, model, prompt_version
+draft_audit_logs: draft_id, policy_id, audit_start, audit_end, framework, created_at, status, content, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits
+```
+
+## Risk Severity Queries
+
+Derive risk severity for failing evidence via threat linkage:
+
+```sql
+SELECT e.control_id, e.eval_result, r.risk_id, r.title AS risk_title, r.severity
+FROM evidence e
+INNER JOIN control_threats ct ON e.control_id = ct.control_id
+INNER JOIN risk_threats rt ON ct.threat_entry_id = rt.threat_entry_id
+INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
+WHERE e.policy_id = ? AND e.eval_result = 'Failed'
+```
+
+Risk exposure summary (counts by severity):
+
+```sql
+SELECT r.severity, count(DISTINCT r.risk_id) AS risk_count, count(DISTINCT e.control_id) AS affected_controls
+FROM evidence e
+INNER JOIN control_threats ct ON e.control_id = ct.control_id
+INNER JOIN risk_threats rt ON ct.threat_entry_id = rt.threat_entry_id
+INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
+WHERE e.policy_id = ? AND e.eval_result = 'Failed'
+GROUP BY r.severity
+```
+
+Unmitigated risks (threats with no control):
+
+```sql
+SELECT r.risk_id, r.title, r.severity
+FROM risk_threats rt
+INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
+LEFT JOIN control_threats ct ON rt.threat_entry_id = ct.threat_entry_id
+WHERE ct.control_id IS NULL
 ```
