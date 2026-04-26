@@ -46,6 +46,10 @@ type EvidenceRow struct {
 
 	EnrichmentStatus string `ch:"enrichment_status"`
 
+	AttestationRef *string `ch:"attestation_ref"`
+	SourceRegistry *string `ch:"source_registry"`
+	BlobRef        *string `ch:"blob_ref"`
+
 	CollectedAt time.Time `ch:"collected_at"`
 }
 

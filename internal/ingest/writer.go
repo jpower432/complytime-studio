@@ -67,6 +67,7 @@ func (w *Writer) InsertEvidenceRows(ctx context.Context, rows []EvidenceRow) err
 		remediation_action, remediation_status, remediation_desc,
 		exception_id, exception_active,
 		enrichment_status,
+		attestation_ref, source_registry, blob_ref,
 		collected_at
 	)`)
 	if err != nil {
@@ -86,6 +87,7 @@ func (w *Writer) InsertEvidenceRows(ctx context.Context, rows []EvidenceRow) err
 			r.RemediationAction, r.RemediationStatus, r.RemediationDesc,
 			r.ExceptionID, r.ExceptionActive,
 			r.EnrichmentStatus,
+			r.AttestationRef, r.SourceRegistry, r.BlobRef,
 			r.CollectedAt,
 		); err != nil {
 			return fmt.Errorf("append evidence row: %w", err)
