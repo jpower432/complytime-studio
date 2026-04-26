@@ -127,7 +127,7 @@ export function InboxView() {
       apiFetch("/api/notifications").then((r) => r.json()).catch(() => []),
     ]).then(([d, n]) => {
       setDrafts(d);
-      setNotifications(n);
+      setNotifications(n.filter((notif: Notification) => !notif.read));
     }).finally(() => setLoading(false));
   }, []);
 

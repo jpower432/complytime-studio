@@ -33,10 +33,12 @@ export function Sidebar() {
 
   useEffect(() => {
     const fetchCount = () => {
-      apiFetch("/api/notifications/unread-count")
-        .then((r) => r.json())
-        .then((d: { count: number }) => setUnreadCount(d.count))
-        .catch(() => {});
+      Promise.all([
+        apiFetch("/api/notifications/unread-count").then((r) => r.json()).catch(() => ({ count: 0 })),
+        apiFetch("/api/draft-audit-logs?status=pending_review").then((r) => r.json()).catch(() => []),
+      ]).then(([notifs, drafts]: [{ count: number }, any[]]) => {
+        setUnreadCount(notifs.count + drafts.length);
+      });
     };
     fetchCount();
     const interval = setInterval(fetchCount, 30000);
