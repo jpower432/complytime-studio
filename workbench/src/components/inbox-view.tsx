@@ -50,6 +50,22 @@ type SaveState = "idle" | "saving" | "saved";
 
 const RESULT_TYPES = ["Strength", "Finding", "Gap", "Observation"];
 
+function extractBlockScalar(lines: string[], key: string): string {
+  const idx = lines.findIndex((l) => l.includes(`${key}:`));
+  if (idx < 0) return "";
+  const firstLine = lines[idx].replace(new RegExp(`.*${key}:\\s*>?-?\\s*`), "").trim();
+  const parts: string[] = firstLine ? [firstLine] : [];
+  const baseIndent = lines[idx].search(/\S/);
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "") continue;
+    const indent = line.search(/\S/);
+    if (indent <= baseIndent) break;
+    parts.push(line.trim());
+  }
+  return parts.join(" ");
+}
+
 function parseYAMLContent(content: string): AuditResult[] | null {
   try {
     const resultsMatch = content.match(/^results:\s*$/m);
@@ -61,8 +77,8 @@ function parseYAMLContent(content: string): AuditResult[] | null {
       const id = lines[0]?.trim() || "";
       const title = lines.find((l) => l.includes("title:"))?.replace(/.*title:\s*/, "").trim() || "";
       const type = lines.find((l) => l.includes("type:") && !l.includes("evidence"))?.replace(/.*type:\s*/, "").trim() || "";
-      const desc = lines.find((l) => l.includes("description:"))?.replace(/.*description:\s*/, "").trim() || "";
-      const reasoning = lines.find((l) => l.includes("agent-reasoning:"))?.replace(/.*agent-reasoning:\s*>?-?\s*/, "").trim() || "";
+      const desc = extractBlockScalar(lines, "description");
+      const reasoning = extractBlockScalar(lines, "agent-reasoning");
       results.push({ id, title, type, description: desc, "agent-reasoning": reasoning });
     }
     return results;
@@ -340,7 +356,7 @@ export function InboxView() {
                 const overridden = edit.type_override !== "" && edit.type_override !== result.type;
                 const editable = selected.status === "pending_review";
                 return (
-                  <article key={result.id} class={`result-card ${overridden ? "result-overridden" : ""}`}>
+                  <article key={result.id} class={`result-card type-${displayType} ${overridden ? "result-overridden" : ""}`}>
                     <div class="result-card-header">
                       <span class="result-id">{result.id}</span>
                       {editable ? (
