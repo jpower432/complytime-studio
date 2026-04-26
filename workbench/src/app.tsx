@@ -34,6 +34,9 @@ export const activeTab = signal<"requirements" | "inventory" | "evidence" | "his
 export const viewInvalidation = signal(0);
 export function invalidateViews() { viewInvalidation.value++; }
 
+export const inboxVersion = signal(0);
+export function invalidateInbox() { inboxVersion.value++; }
+
 const VALID_VIEWS: View[] = ["posture", "posture-detail", "policies", "evidence", "inbox"];
 
 function parseHash(hash: string): { view: View; params: Record<string, string> } {

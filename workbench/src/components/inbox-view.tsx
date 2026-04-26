@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
-import { navigateToPolicy } from "../app";
+import { navigateToPolicy, invalidateInbox } from "../app";
 import { downloadYaml, auditLogFilename } from "../lib/download";
 
 interface Notification {
@@ -187,13 +187,27 @@ export function InboxView() {
   };
 
   const markRead = (notifId: string) => {
-    apiFetch(`/api/notifications/${encodeURIComponent(notifId)}/read`, { method: "PATCH" }).catch(() => {});
-    setNotifications((prev) => prev.map((n) => n.notification_id === notifId ? { ...n, read: true } : n));
+    apiFetch(
+      `/api/notifications/${encodeURIComponent(notifId)}/read`,
+      { method: "PATCH" },
+    ).catch(() => {});
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.notification_id === notifId ? { ...n, read: true } : n
+      )
+    );
+    invalidateInbox();
   };
 
   const dismissNotification = (notifId: string) => {
-    apiFetch(`/api/notifications/${encodeURIComponent(notifId)}/read`, { method: "PATCH" }).catch(() => {});
-    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
+    apiFetch(
+      `/api/notifications/${encodeURIComponent(notifId)}/read`,
+      { method: "PATCH" },
+    ).catch(() => {});
+    setNotifications((prev) =>
+      prev.filter((n) => n.notification_id !== notifId)
+    );
+    invalidateInbox();
   };
 
   const closeDetail = () => {
@@ -217,6 +231,7 @@ export function InboxView() {
         if (!r.ok) throw new Error("promote failed");
         closeDetail();
         fetchAll();
+        invalidateInbox();
       }).catch(() => alert("Failed to promote draft"))
         .finally(() => setPromoting(false));
     };

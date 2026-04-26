@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect } from "preact/hooks";
-import { currentView, navigate } from "../app";
+import { currentView, navigate, inboxVersion } from "../app";
 import { apiFetch } from "../api/fetch";
 
 const PostureIcon = () => (
@@ -31,11 +31,15 @@ export function Sidebar() {
   const view = currentView.value;
   const [unreadCount, setUnreadCount] = useState(0);
 
+  const version = inboxVersion.value;
+
   useEffect(() => {
     const fetchCount = () => {
       Promise.all([
-        apiFetch("/api/notifications/unread-count").then((r) => r.json()).catch(() => ({ count: 0 })),
-        apiFetch("/api/draft-audit-logs?status=pending_review").then((r) => r.json()).catch(() => []),
+        apiFetch("/api/notifications/unread-count")
+          .then((r) => r.json()).catch(() => ({ count: 0 })),
+        apiFetch("/api/draft-audit-logs?status=pending_review")
+          .then((r) => r.json()).catch(() => []),
       ]).then(([notifs, drafts]: [{ count: number }, any[]]) => {
         setUnreadCount(notifs.count + drafts.length);
       });
@@ -43,7 +47,7 @@ export function Sidebar() {
     fetchCount();
     const interval = setInterval(fetchCount, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [version]);
 
   return (
     <aside class="sidebar">
