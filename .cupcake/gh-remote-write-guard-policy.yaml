@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: Apache-2.0
+# AI Agent Governance: Remote Write Guard Policy
+# Conforms to Gemara Layer 3 #Policy
+
+title: AI Agent Remote Write Guard Policy
+
+metadata:
+  id: AIGOV.RW.POL01
+  type: Policy
+  gemara-version: "1.0.0"
+  description: >-
+    Organizational policy requiring that AI coding agents are prevented
+    from performing remote, write-based GitHub operations.
+  version: 0.1.0
+  draft: true
+  author:
+    id: complytime-studio
+    name: ComplyTime Studio
+    type: Software Assisted
+  mapping-references:
+    - id: aigov-rw-controls
+      title: AI Agent Remote Write Guard Control Catalog
+      version: "1.0.0"
+      url: file://.cupcake/gh-remote-write-guard-controls.yaml
+      description: >-
+        Layer 2 control catalog defining the controls enforced by this policy.
+
+contacts:
+  responsible:
+    - name: Repository Owner
+      affiliation: ComplyTime
+  accountable:
+    - name: Repository Owner
+      affiliation: ComplyTime
+
+scope:
+  in:
+    technologies: ["Cursor IDE", "OpenCode"]
+    users: ["AI coding agents"]
+  out:
+    users: ["Human operators executing commands directly in terminal"]
+
+imports:
+  catalogs:
+    - reference-id: aigov-rw-controls
+      constraints:
+        - id: AIGOV.RW.POL01.CON01
+          target-id: AIGOV.RW.CTL01
+          text: >-
+            All git push variants MUST be denied without exception,
+            including force push and push with lease.
+        - id: AIGOV.RW.POL01.CON02
+          target-id: AIGOV.RW.CTL06
+          text: >-
+            gh api calls without an explicit HTTP method flag are
+            permitted (defaults to GET).
+
+adherence:
+  evaluation-methods:
+    - id: AIGOV.RW.POL01.EVAL01
+      type: Intent
+      mode: Automated
+      required: true
+      description: >-
+        Cupcake OPA policy engine evaluates agent-initiated shell
+        commands against deny rules before execution (PreToolUse).
+        Each command is matched against regex patterns for git push,
+        gh CLI write subcommands, and gh api write methods.
+      executor:
+        id: cupcake
+        name: Cupcake
+        type: Software
+        version: "0.3.0"
+        description: >-
+          Policy enforcement layer for AI coding agents using OPA
+          and Rego policy-as-code.
+        uri: https://cupcake.eqtylab.io
+  enforcement-methods:
+    - id: AIGOV.RW.POL01.ENF01
+      type: Gate
+      mode: Automated
+      required: true
+      description: >-
+        Cupcake returns a deny decision to the agent harness, which
+        blocks the shell command from executing. The agent receives
+        the denial reason and must not attempt workarounds.
+      executor:
+        id: cupcake
+        name: Cupcake
+        type: Software
+        version: "0.3.0"
+        uri: https://cupcake.eqtylab.io
+  assessment-plans:
+    - id: AIGOV.RW.POL01.AP01
+      requirement-id: AIGOV.RW.CTL01.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+      parameters:
+        - id: regex-pattern
+          label: Regex Pattern
+          description: >-
+            The OPA regex pattern used to match git push commands.
+          accepted-values: ['\\bgit\\s+push\\b']
+    - id: AIGOV.RW.POL01.AP02
+      requirement-id: AIGOV.RW.CTL02.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP03
+      requirement-id: AIGOV.RW.CTL02.AR02
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP04
+      requirement-id: AIGOV.RW.CTL03.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP05
+      requirement-id: AIGOV.RW.CTL03.AR02
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP06
+      requirement-id: AIGOV.RW.CTL04.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP07
+      requirement-id: AIGOV.RW.CTL05.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP08
+      requirement-id: AIGOV.RW.CTL06.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+    - id: AIGOV.RW.POL01.AP09
+      requirement-id: AIGOV.RW.CTL07.AR01
+      frequency: Per agent session (continuous)
+      evaluation-methods:
+        - id: AIGOV.RW.POL01.EVAL01
+          type: Intent
+          mode: Automated
+          required: true
+  non-compliance: >-
+    Denied commands are blocked at the harness level. The agent
+    receives a policy violation message and must instruct the user
+    to perform the operation manually.

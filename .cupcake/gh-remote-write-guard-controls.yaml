@@ -1,0 +1,184 @@
+# SPDX-License-Identifier: Apache-2.0
+# AI Agent Governance: Remote Write Controls
+# Conforms to Gemara Layer 2 #ControlCatalog
+
+title: AI Agent Remote Write Guard Control Catalog
+
+metadata:
+  id: AIGOV.RW
+  type: ControlCatalog
+  gemara-version: "1.0.0"
+  description: >-
+    Controls preventing AI coding agents from performing remote,
+    write-based GitHub operations.
+  version: 1.0.0
+  draft: true
+  author:
+    id: complytime-studio
+    name: ComplyTime Studio
+    type: Software Assisted
+  mapping-references:
+    - id: cupcake-cursor-policy
+      title: Cupcake Remote Write Guard Policy (Cursor)
+      version: "1.0.0"
+      url: file://.cupcake/policies/cursor/gh_remote_write_guard.rego
+      description: >-
+        OPA Rego policy enforcing deny decisions for remote write
+        operations during AI agent sessions in Cursor IDE.
+    - id: cupcake-opencode-policy
+      title: Cupcake Remote Write Guard Policy (OpenCode)
+      version: "1.0.0"
+      url: file://.cupcake/policies/opencode/gh_remote_write_guard.rego
+      description: >-
+        OPA Rego policy enforcing deny decisions for remote write
+        operations during AI agent sessions in OpenCode.
+  applicability-groups:
+    - id: ai_agent_session
+      title: AI Agent Session
+      description: >-
+        Any interactive AI coding agent session (e.g. Cursor, OpenCode)
+        where the agent executes shell commands on behalf of the user.
+
+groups:
+  - id: AIGOV.RW.FAM01
+    title: Source Control Push Operations
+    description: >-
+      Controls governing agent-initiated pushes to remote Git repositories.
+  - id: AIGOV.RW.FAM02
+    title: GitHub Project Mutations
+    description: >-
+      Controls governing agent-initiated write operations against
+      pull requests, issues, and releases via the GitHub CLI.
+  - id: AIGOV.RW.FAM03
+    title: Repository and API Write Operations
+    description: >-
+      Controls governing agent-initiated repository administration,
+      API write methods, and workflow triggers.
+
+controls:
+  - id: AIGOV.RW.CTL01
+    title: Prohibit Agent-Initiated Remote Pushes
+    objective: >-
+      Prevent AI agents from pushing commits to any remote repository,
+      ensuring all remote state changes require explicit human action.
+    group: AIGOV.RW.FAM01
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL01.AR01
+        text: >-
+          The system MUST deny any agent-initiated git push command,
+          including all variants (force push, push with upstream tracking,
+          push to specific remotes or branches).
+        applicability: ["ai_agent_session"]
+        recommendation: >-
+          The user should run git push manually from their terminal
+          after reviewing staged commits.
+        state: Active
+
+  - id: AIGOV.RW.CTL02
+    title: Prohibit Agent-Initiated Pull Request Mutations
+    objective: >-
+      Prevent AI agents from creating, merging, closing, commenting on,
+      editing, or reviewing pull requests, preserving human ownership
+      of the PR lifecycle.
+    group: AIGOV.RW.FAM02
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL02.AR01
+        text: >-
+          The system MUST deny agent-initiated gh pr create, merge,
+          and close commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+      - id: AIGOV.RW.CTL02.AR02
+        text: >-
+          The system MUST deny agent-initiated gh pr comment, edit,
+          review, ready, and reopen commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+
+  - id: AIGOV.RW.CTL03
+    title: Prohibit Agent-Initiated Issue Mutations
+    objective: >-
+      Prevent AI agents from creating, modifying, or managing GitHub
+      issues, ensuring issue triage remains a human-driven activity.
+    group: AIGOV.RW.FAM02
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL03.AR01
+        text: >-
+          The system MUST deny agent-initiated gh issue create, close,
+          delete, and reopen commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+      - id: AIGOV.RW.CTL03.AR02
+        text: >-
+          The system MUST deny agent-initiated gh issue comment, edit,
+          transfer, pin, and unpin commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+
+  - id: AIGOV.RW.CTL04
+    title: Prohibit Agent-Initiated Release Mutations
+    objective: >-
+      Prevent AI agents from creating, deleting, or editing GitHub
+      releases, keeping the release process under human control.
+    group: AIGOV.RW.FAM02
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL04.AR01
+        text: >-
+          The system MUST deny agent-initiated gh release create,
+          delete, and edit commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+
+  - id: AIGOV.RW.CTL05
+    title: Prohibit Agent-Initiated Repository Administration
+    objective: >-
+      Prevent AI agents from creating, deleting, forking, renaming,
+      or archiving repositories, protecting organizational repository
+      structure from unintended mutation.
+    group: AIGOV.RW.FAM03
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL05.AR01
+        text: >-
+          The system MUST deny agent-initiated gh repo create, delete,
+          fork, rename, and archive commands.
+        applicability: ["ai_agent_session"]
+        state: Active
+
+  - id: AIGOV.RW.CTL06
+    title: Prohibit Agent-Initiated GitHub API Write Methods
+    objective: >-
+      Prevent AI agents from invoking the GitHub API with write-capable
+      HTTP methods (POST, PUT, PATCH, DELETE), blocking mutations that
+      bypass the gh CLI's subcommand structure.
+    group: AIGOV.RW.FAM03
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL06.AR01
+        text: >-
+          The system MUST deny agent-initiated gh api calls that
+          specify POST, PUT, PATCH, or DELETE via the -X or --method
+          flag.
+        applicability: ["ai_agent_session"]
+        recommendation: >-
+          Read-only gh api calls (implicit GET) remain permitted for
+          agent use when gathering context.
+        state: Active
+
+  - id: AIGOV.RW.CTL07
+    title: Prohibit Agent-Initiated Workflow Triggers
+    objective: >-
+      Prevent AI agents from triggering GitHub Actions workflows,
+      ensuring CI/CD pipeline execution requires human authorization.
+    group: AIGOV.RW.FAM03
+    state: Active
+    assessment-requirements:
+      - id: AIGOV.RW.CTL07.AR01
+        text: >-
+          The system MUST deny agent-initiated gh workflow run commands.
+        applicability: ["ai_agent_session"]
+        state: Active
