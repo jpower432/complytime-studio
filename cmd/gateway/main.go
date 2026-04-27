@@ -18,6 +18,7 @@ import (
 	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
+	"github.com/complytime/complytime-studio/internal/certifier"
 	chclient "github.com/complytime/complytime-studio/internal/clickhouse"
 	"github.com/complytime/complytime-studio/internal/config"
 	"github.com/complytime/complytime-studio/internal/consts"
@@ -157,6 +158,7 @@ func main() {
 			EvidenceAssessments: st,
 			Posture:             st,
 			Notifications:       st,
+			Certifications:      st,
 			EventPublisher:      pub,
 		}
 		store.Register(mux, stores)
@@ -168,10 +170,17 @@ func main() {
 		if bus != nil {
 			adapter := &notificationAdapter{store: st}
 			rateCache := events.NewRateCache()
-			handler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
-			debouncer := events.NewDebouncer(30*time.Second, handler)
+			postureHandler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
+			postureDebouncer := events.NewDebouncer(30*time.Second, postureHandler)
+
+			pipeline := buildCertifierPipeline()
+			certAdapter := &certificationAdapter{store: st}
+			certHandler := events.CertificationHandler(ctx, pipeline, certAdapter, certAdapter)
+			certDebouncer := events.NewDebouncer(30*time.Second, certHandler)
+
 			sub, err := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
-				debouncer.Push(evt)
+				postureDebouncer.Push(evt)
+				certDebouncer.Push(evt)
 			})
 			if err != nil {
 				slog.Warn("nats subscribe failed", "error", err)
@@ -391,13 +400,92 @@ type notificationAdapter struct {
 	}
 }
 
-func (a *notificationAdapter) InsertNotification(ctx context.Context, n events.Notification) error {
+func (a *notificationAdapter) InsertNotification(
+	ctx context.Context, n events.Notification,
+) error {
 	return a.store.InsertNotification(ctx, store.Notification{
 		NotificationID: n.NotificationID,
 		Type:           n.Type,
 		PolicyID:       n.PolicyID,
 		Payload:        n.Payload,
 	})
+}
+
+// buildCertifierPipeline constructs the day-one certifier pipeline from
+// environment configuration.
+func buildCertifierPipeline() *certifier.Pipeline {
+	knownRegistries := make(map[string]bool)
+	for _, r := range splitComma(os.Getenv("KNOWN_REGISTRIES")) {
+		knownRegistries[r] = true
+	}
+	knownEngines := make(map[string]bool)
+	for _, e := range splitComma(os.Getenv("KNOWN_ENGINES")) {
+		knownEngines[e] = true
+	}
+	return certifier.NewPipeline(
+		&certifier.SchemaCertifier{},
+		&certifier.ProvenanceCertifier{KnownRegistries: knownRegistries},
+		&certifier.ExecutorCertifier{KnownEngines: knownEngines},
+	)
+}
+
+// certificationAdapter bridges store.Store to the events.CertificationQuerier
+// and events.CertificationWriter interfaces.
+type certificationAdapter struct {
+	store interface {
+		QueryRecentEvidence(
+			ctx context.Context, policyID string, since time.Time,
+		) ([]store.EvidenceRowLite, error)
+		InsertCertifications(ctx context.Context, rows []store.CertificationRow) error
+		UpdateEvidenceCertified(ctx context.Context, evidenceID string, certified bool) error
+	}
+}
+
+func (a *certificationAdapter) QueryRecentEvidence(
+	ctx context.Context, policyID string, since time.Time,
+) ([]certifier.EvidenceRow, error) {
+	rows, err := a.store.QueryRecentEvidence(ctx, policyID, since)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]certifier.EvidenceRow, len(rows))
+	for i, r := range rows {
+		out[i] = certifier.EvidenceRow{
+			EvidenceID:       r.EvidenceID,
+			TargetID:         r.TargetID,
+			RuleID:           r.RuleID,
+			EvalResult:       r.EvalResult,
+			ComplianceStatus: r.ComplianceStatus,
+			EngineName:       r.EngineName,
+			SourceRegistry:   r.SourceRegistry,
+			AttestationRef:   r.AttestationRef,
+			EnrichmentStatus: r.EnrichmentStatus,
+			CollectedAt:      r.CollectedAt,
+		}
+	}
+	return out, nil
+}
+
+func (a *certificationAdapter) InsertCertifications(
+	ctx context.Context, rows []events.CertificationRow,
+) error {
+	storeRows := make([]store.CertificationRow, len(rows))
+	for i, r := range rows {
+		storeRows[i] = store.CertificationRow{
+			EvidenceID:       r.EvidenceID,
+			Certifier:        r.Certifier,
+			CertifierVersion: r.CertifierVersion,
+			Result:           r.Result,
+			Reason:           r.Reason,
+		}
+	}
+	return a.store.InsertCertifications(ctx, storeRows)
+}
+
+func (a *certificationAdapter) UpdateEvidenceCertified(
+	ctx context.Context, evidenceID string, certified bool,
+) error {
+	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
 }
 
 // cookieSecretKey returns the 32-byte AES-256 key for session cookie encryption.

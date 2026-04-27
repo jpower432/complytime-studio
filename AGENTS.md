@@ -41,7 +41,6 @@ skills:
  # Internal skills (from this repo) — see agents/assistant/agent.yaml
  - path: skills/studio-audit
  - path: skills/posture-check
- - path: skills/attestation-verification
  # External skills (from other repos)
  - repo: https://github.com/rhaml-23/prompt.git
  ref: main
@@ -209,7 +208,6 @@ Canonical spec: `agents/assistant/agent.yaml` (Helm `agentDirectory` must keep `
 |:--|:--|
 | `studio-audit` | Classification criteria, coverage mapping, ClickHouse DDL reference |
 | `posture-check` | Pre-audit readiness — cadence, provenance, method, evidence fitness |
-| `attestation-verification` | In-toto attestation chain verification against policy layouts |
 
 External git-mounted skills (see `agent.yaml`): `research.md`, `gemara.md` from `rhaml-23/prompt`.
 

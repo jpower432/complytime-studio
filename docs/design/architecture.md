@@ -84,7 +84,7 @@ User-facing entry point on **`PORT` (default 8080)**. Serves the embedded Preact
 | `AuditLogStore` | `InsertAuditLog`, `ListAuditLogs`, `GetAuditLog` |
 | `MappingStore` | `InsertMappingDocument`, `ListMappingDocuments` |
 | `RequirementStore` | `ListRequirementMatrix`, `ListRequirementEvidence` |
-| `PostureStore` | `ListPosture` |
+| `PostureStore` | `ListPosture(ctx, start, end time.Time)` — optional time range filters evidence by `collected_at` when `start`/`end` are non-zero |
 | `CatalogStore` | `InsertCatalog`, `ListCatalogs`, `GetCatalog` |
 | `ControlStore` | `InsertControls`, `ListControls` |
 | `ThreatStore` | `InsertThreats`, `ListThreats` |
@@ -172,7 +172,7 @@ Embedded in the gateway binary at build time via `go:embed`. Hash-routed single-
 
 | View / Component | Description |
 |:--|:--|
-| PostureView | Per-policy posture cards via `GET /api/posture` and `GET /api/risks/severity` -- counts, pass rate, target/control inventory, evidence freshness, RACI-style owner, severity overlay |
+| PostureView | Per-policy posture cards via `GET /api/posture` (optional `start`/`end`) and `GET /api/risks/severity` -- stacked pass/fail/other bar, freshness-colored left border (7d / 30d / stale / none), aggregate summary strip above the grid, time presets (7d / 30d / 90d / All), counts, pass rate, target/control inventory, RACI-style owner, severity overlay; only **View Details** navigates to drill-down |
 | PolicyDetailView | Posture drill-down: breadcrumb + tabs **Requirements** / **Evidence** / **History** (`#posture/{policy_id}`) |
 | RequirementMatrixView | Matrix with classification (**No Evidence** replaces legacy "Blind"), filters, risk severity context |
 | PoliciesView | Imported policies with detail view (criteria, assessment requirements) |
@@ -211,7 +211,7 @@ Embedded in the gateway binary at build time via `go:embed`. Hash-routed single-
 | `GET` | `/api/evidence` | Query evidence (filters: policy, control, target, date) |
 | `POST` | `/api/evidence` | Ingest evidence — JSON body or **multipart** (`evidence` part + optional files); attaches `blob_ref` when blob store configured |
 | `POST` | `/api/evidence/upload` | Multipart CSV/JSON file upload; returns `inserted`, `failed`, `errors`, `warnings` |
-| `GET` | `/api/posture` | Per-policy posture aggregates (pass/fail/other counts) |
+| `GET` | `/api/posture` | Per-policy posture aggregates (pass/fail/other counts). Optional query params `start` and `end`: filter by evidence `collected_at` (date-only `YYYY-MM-DD` or RFC 3339; date-only `end` is end-of-day). Omitting both params keeps all evidence. `400` on invalid date format. |
 | `GET` | `/api/risks/severity` | Per-policy risk severity rows for matrix/card overlay |
 | `GET` | `/api/requirements` | Requirement matrix (joins assessment_requirements, controls, evidence); `limit` clamped (`MaxQueryLimit`) |
 | `GET` | `/api/requirements/{id}/evidence` | Evidence drill-down for a specific requirement |

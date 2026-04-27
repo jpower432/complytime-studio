@@ -3,10 +3,10 @@
 package gemara
 
 import (
+	"context"
 	"fmt"
 
 	sdk "github.com/gemaraproj/go-gemara"
-	goyaml "github.com/goccy/go-yaml"
 )
 
 // RiskRow represents a single risk parsed from a RiskCatalog.
@@ -30,10 +30,11 @@ type RiskThreatRow struct {
 }
 
 // ParseRiskCatalog extracts risk rows and risk-to-threat links from a RiskCatalog YAML body.
-func ParseRiskCatalog(content, catalogID, policyID string) ([]RiskRow, []RiskThreatRow, error) {
-	var catalog sdk.RiskCatalog
-	if err := goyaml.Unmarshal([]byte(content), &catalog); err != nil {
-		return nil, nil, fmt.Errorf("parse risk catalog YAML: %w", err)
+func ParseRiskCatalog(ctx context.Context, content, catalogID, policyID string) ([]RiskRow, []RiskThreatRow, error) {
+	f := NewMemoryFetcher(map[string][]byte{artifactSource: []byte(content)})
+	catalog, err := sdk.Load[sdk.RiskCatalog](ctx, f, artifactSource)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load risk catalog: %w", err)
 	}
 
 	resolvedID := catalogID

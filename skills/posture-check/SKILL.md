@@ -35,20 +35,6 @@ IMPORTANT: Use literal string values in SQL queries, not template variables like
 
 ## Provenance Validation
 
-Two modes, selected by `attestation_ref` presence:
-
-### Mode A: Cryptographic verification (attestation_ref present)
-
-When `evidence.attestation_ref` is not NULL, invoke the attestation-verification skill to verify the chain. The verdict determines the provenance result:
-
-| Verdict | Provenance Result |
-|:--|:--|
-| CHAIN VERIFIED | Pass — note "cryptographically verified" |
-| BROKEN CHAIN | **Wrong Source** — include the chain failure reason |
-| REGISTRY UNAVAILABLE | Fall back to Mode B with note |
-
-### Mode B: String comparison (attestation_ref NULL or fallback)
-
 Compare `evidence.engine_name` against the plan's `evaluation-methods[].executor.id`:
 
 | Evidence `engine_name` | Plan `executor.id` | Result |
@@ -102,7 +88,7 @@ Each assessment plan is classified into one of seven states. When multiple condi
 | Priority | State | Condition |
 |:--|:--|:--|
 | 1 (worst) | **No Evidence** | No evidence rows for this plan's `requirement_id` within the audit window |
-| 2 | **Wrong Source** | Evidence exists but provenance check failed (engine_name mismatch or broken attestation chain) |
+| 2 | **Wrong Source** | Evidence exists but provenance check failed (engine_name mismatch) |
 | 3 | **Wrong Method** | Evidence exists, correct source, but method/mode does not match plan's evaluation-methods |
 | 4 | **Unfit Evidence** | Evidence exists, correct source and method, but content does not satisfy evidence-requirements |
 | 5 | **Stale** | Evidence exists from correct source/method/fitness but most recent is outside the current frequency window |
@@ -120,7 +106,7 @@ Window: <window_start> — <window_end>
 
 | Plan   | Frequency | Last Evidence | Provenance         | Method | Result | Status         |
 |:-------|:----------|:--------------|:-------------------|:-------|:-------|:---------------|
-| AP-01  | weekly    | 2d ago        | ✓ verified (chain) | ✓ Auto | Passed | Healthy        |
+| AP-01  | weekly    | 2d ago        | ✓ kyverno (name)   | ✓ Auto | Passed | Healthy        |
 | AP-02  | quarterly | 45d ago       | ✓ nessus (name)    | ✓ Auto | Failed | Failing        |
 | AP-03  | quarterly | 190d ago      | ✗ qualys≠nessus    | —      | Passed | Wrong Source   |
 | AP-04  | monthly   | 3d ago        | ✓ opa (name)       | ✗ Manual≠Auto | Passed | Wrong Method |
@@ -142,7 +128,7 @@ assessments:
   - evidence_id: ev-123
     plan_id: AP-01
     classification: Healthy
-    reason: "Evidence current, actor verified via attestation chain, result Passed"
+    reason: "Evidence current, source matches (executor.id), result Passed"
   - evidence_id: ev-456
     plan_id: AP-02
     classification: Failing

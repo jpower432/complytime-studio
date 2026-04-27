@@ -19,6 +19,29 @@ stringData:
 {{- end }}
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: studio-clickhouse-reader-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+type: Opaque
+stringData:
+  users_override.xml: |
+    <clickhouse>
+        <users>
+            <{{ .Values.clickhouse.auth.readerUser }}>
+                <password>{{ .Values.clickhouse.auth.readerPassword }}</password>
+                <networks>
+                    <ip>::/0</ip>
+                </networks>
+                <profile>readonly</profile>
+                <quota>default</quota>
+            </{{ .Values.clickhouse.auth.readerUser }}>
+        </users>
+    </clickhouse>
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: studio-clickhouse
@@ -84,7 +107,7 @@ spec:
             - name: config-override
               mountPath: /etc/clickhouse-server/config.d/low_resource_config.xml
               subPath: low_resource_config.xml
-            - name: config-override
+            - name: reader-config
               mountPath: /etc/clickhouse-server/users.d/users_override.xml
               subPath: users_override.xml
           resources:
@@ -121,6 +144,10 @@ spec:
             items:
               - key: low_resource_config.xml
                 path: low_resource_config.xml
+        - name: reader-config
+          secret:
+            secretName: studio-clickhouse-reader-config
+            items:
               - key: users_override.xml
                 path: users_override.xml
   volumeClaimTemplates:

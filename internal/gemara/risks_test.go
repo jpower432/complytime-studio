@@ -3,6 +3,7 @@
 package gemara
 
 import (
+	"context"
 	"testing"
 )
 
@@ -97,7 +98,7 @@ risks:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			risks, links, err := ParseRiskCatalog(tt.yaml, tt.catalogID, tt.policyID)
+			risks, links, err := ParseRiskCatalog(context.Background(), tt.yaml, tt.catalogID, tt.policyID)
 			if err != nil {
 				t.Fatalf("ParseRiskCatalog: %v", err)
 			}

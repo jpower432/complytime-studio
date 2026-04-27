@@ -30,7 +30,6 @@ skills:
   # Internal skills (this repo)
   - path: skills/studio-audit        # Classification criteria, coverage mapping, ClickHouse DDL reference
   - path: skills/posture-check        # Pre-audit readiness — cadence, provenance, method, evidence fitness
-  - path: skills/attestation-verification  # In-toto attestation chain verification against Policy layouts
   # External skills
   - repo: https://github.com/rhaml-23/prompt.git
     ref: main

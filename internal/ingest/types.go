@@ -50,6 +50,8 @@ type EvidenceRow struct {
 	SourceRegistry *string `ch:"source_registry"`
 	BlobRef        *string `ch:"blob_ref"`
 
+	Certified bool `ch:"certified"`
+
 	CollectedAt time.Time `ch:"collected_at"`
 }
 

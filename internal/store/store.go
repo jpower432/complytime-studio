@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -43,6 +44,8 @@ type ControlStore interface {
 type ThreatStore interface {
 	InsertThreats(ctx context.Context, rows []gemara.ThreatRow) error
 	CountThreats(ctx context.Context, catalogID string) (int, error)
+	QueryThreats(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.ThreatRow, error)
+	QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error)
 }
 
 // RiskStore defines read/write operations for parsed risk catalog entries.
@@ -51,6 +54,8 @@ type RiskStore interface {
 	InsertRiskThreats(ctx context.Context, rows []gemara.RiskThreatRow) error
 	CountRisks(ctx context.Context, catalogID string) (int, error)
 	GetPolicyRiskSeverity(ctx context.Context, policyID string) ([]RiskSeverityRow, error)
+	QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error)
+	QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error)
 }
 
 // CatalogStore defines read/write operations for raw catalog artifacts.
@@ -78,9 +83,19 @@ type EvidenceAssessmentStore interface {
 	InsertEvidenceAssessments(ctx context.Context, assessments []EvidenceAssessment) error
 }
 
+// CertificationStore defines read/write operations for evidence certifications.
+type CertificationStore interface {
+	InsertCertifications(ctx context.Context, rows []CertificationRow) error
+	UpdateEvidenceCertified(ctx context.Context, evidenceID string, certified bool) error
+	QueryCertifications(ctx context.Context, evidenceID string) ([]CertificationRow, error)
+	QueryRecentEvidence(
+		ctx context.Context, policyID string, since time.Time,
+	) ([]EvidenceRowLite, error)
+}
+
 // PostureStore defines read operations for compliance posture aggregates.
 type PostureStore interface {
-	ListPosture(ctx context.Context) ([]PostureRow, error)
+	ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error)
 	QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error)
 }
 
@@ -130,6 +145,7 @@ var (
 	_ RequirementStore        = (*Store)(nil)
 	_ PostureStore            = (*Store)(nil)
 	_ NotificationStore       = (*Store)(nil)
+	_ CertificationStore      = (*Store)(nil)
 )
 
 // New wraps an existing ClickHouse connection.
@@ -375,6 +391,63 @@ func (s *Store) CountThreats(ctx context.Context, catalogID string) (int, error)
 	return int(count), nil
 }
 
+func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.ThreatRow, error) {
+	where, args := buildCatalogPolicyFilter(catalogID, policyID)
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, threat_id, title, description, group_id, policy_id FROM threats`+where+` ORDER BY catalog_id, threat_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.ThreatRow
+	for rows.Next() {
+		var r gemara.ThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.ThreatID, &r.Title, &r.Description, &r.GroupID, &r.PolicyID); err != nil {
+			return nil, fmt.Errorf("scan threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if controlID != "" {
+		clauses = append(clauses, "control_id = ?")
+		args = append(args, controlID)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, control_id, threat_reference_id, threat_entry_id FROM control_threats`+where+` ORDER BY catalog_id, control_id, threat_reference_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query control threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.ControlThreatRow
+	for rows.Next() {
+		var r gemara.ControlThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.ControlID, &r.ThreatReferenceID, &r.ThreatEntryID); err != nil {
+			return nil, fmt.Errorf("scan control threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) InsertRisks(ctx context.Context, rows []gemara.RiskRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -421,6 +494,81 @@ func (s *Store) CountRisks(ctx context.Context, catalogID string) (int, error) {
 		return 0, fmt.Errorf("count risks: %w", err)
 	}
 	return int(count), nil
+}
+
+func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error) {
+	where, args := buildCatalogPolicyFilter(catalogID, policyID)
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, risk_id, title, description, severity, group_id, impact, policy_id FROM risks`+where+` ORDER BY catalog_id, risk_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query risks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.RiskRow
+	for rows.Next() {
+		var r gemara.RiskRow
+		if err := rows.Scan(&r.CatalogID, &r.RiskID, &r.Title, &r.Description, &r.Severity, &r.GroupID, &r.Impact, &r.PolicyID); err != nil {
+			return nil, fmt.Errorf("scan risk: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if riskID != "" {
+		clauses = append(clauses, "risk_id = ?")
+		args = append(args, riskID)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	limit = consts.ClampLimit(limit)
+	query := fmt.Sprintf(`SELECT catalog_id, risk_id, threat_reference_id, threat_entry_id FROM risk_threats`+where+` ORDER BY catalog_id, risk_id, threat_reference_id LIMIT %d`, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query risk threats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []gemara.RiskThreatRow
+	for rows.Next() {
+		var r gemara.RiskThreatRow
+		if err := rows.Scan(&r.CatalogID, &r.RiskID, &r.ThreatReferenceID, &r.ThreatEntryID); err != nil {
+			return nil, fmt.Errorf("scan risk threat: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// buildCatalogPolicyFilter builds a WHERE clause for optional catalog_id and policy_id filters.
+func buildCatalogPolicyFilter(catalogID, policyID string) (string, []any) {
+	var clauses []string
+	var args []any
+	if catalogID != "" {
+		clauses = append(clauses, "catalog_id = ?")
+		args = append(args, catalogID)
+	}
+	if policyID != "" {
+		clauses = append(clauses, "policy_id = ?")
+		args = append(args, policyID)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
 // RiskSeverityRow maps a control to its highest-severity risk for a given policy.
@@ -513,6 +661,8 @@ type EvidenceRecord struct {
 	AttestationRef string `json:"attestation_ref,omitempty"`
 	SourceRegistry string `json:"source_registry,omitempty"`
 	BlobRef        string `json:"blob_ref,omitempty"`
+
+	Certified bool `json:"certified"`
 
 	Owner       string    `json:"owner,omitempty"`
 	CollectedAt time.Time `json:"collected_at"`
@@ -653,6 +803,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		coalesce(attestation_ref, '') AS attestation_ref,
 		coalesce(source_registry, '') AS source_registry,
 		coalesce(blob_ref, '') AS blob_ref,
+		certified,
 		collected_at
 		FROM evidence WHERE 1=1`
 	var args []any
@@ -721,6 +872,7 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 			&r.RiskLevel, &r.Requirements,
 			&r.EnrichmentStatus,
 			&r.AttestationRef, &r.SourceRegistry, &r.BlobRef,
+			&r.Certified,
 			&r.CollectedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan evidence: %w", err)
@@ -728,6 +880,119 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// CertificationRow represents a single certification verdict.
+type CertificationRow struct {
+	EvidenceID       string    `json:"evidence_id"`
+	Certifier        string    `json:"certifier"`
+	CertifierVersion string    `json:"certifier_version"`
+	Result           string    `json:"result"`
+	Reason           string    `json:"reason"`
+	CertifiedAt      time.Time `json:"certified_at,omitempty"`
+}
+
+// EvidenceRowLite is a lightweight evidence projection for the certifier pipeline.
+type EvidenceRowLite struct {
+	EvidenceID       string    `json:"evidence_id"`
+	TargetID         string    `json:"target_id"`
+	RuleID           string    `json:"rule_id"`
+	EvalResult       string    `json:"eval_result"`
+	ComplianceStatus string    `json:"compliance_status"`
+	EngineName       string    `json:"engine_name"`
+	SourceRegistry   string    `json:"source_registry"`
+	AttestationRef   string    `json:"attestation_ref"`
+	EnrichmentStatus string    `json:"enrichment_status"`
+	CollectedAt      time.Time `json:"collected_at"`
+}
+
+// InsertCertifications batch-inserts certification verdicts.
+func (s *Store) InsertCertifications(ctx context.Context, rows []CertificationRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason)`)
+	if err != nil {
+		return fmt.Errorf("prepare certifications batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(
+			r.EvidenceID, r.Certifier, r.CertifierVersion,
+			r.Result, r.Reason,
+		); err != nil {
+			return fmt.Errorf("append certification: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+// UpdateEvidenceCertified sets the denormalized certified flag on an evidence row.
+func (s *Store) UpdateEvidenceCertified(
+	ctx context.Context, evidenceID string, certified bool,
+) error {
+	return s.conn.Exec(ctx,
+		`ALTER TABLE evidence UPDATE certified = ? WHERE evidence_id = ?`,
+		certified, evidenceID)
+}
+
+// QueryCertifications returns certification verdicts for a given evidence row.
+func (s *Store) QueryCertifications(
+	ctx context.Context, evidenceID string,
+) ([]CertificationRow, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT evidence_id, certifier, certifier_version, result, reason, certified_at
+		 FROM certifications WHERE evidence_id = ? ORDER BY certified_at DESC`, evidenceID)
+	if err != nil {
+		return nil, fmt.Errorf("query certifications: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []CertificationRow
+	for rows.Next() {
+		var r CertificationRow
+		if err := rows.Scan(
+			&r.EvidenceID, &r.Certifier, &r.CertifierVersion,
+			&r.Result, &r.Reason, &r.CertifiedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan certification: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// QueryRecentEvidence returns lightweight evidence rows for a policy ingested after since.
+func (s *Store) QueryRecentEvidence(
+	ctx context.Context, policyID string, since time.Time,
+) ([]EvidenceRowLite, error) {
+	rows, err := s.conn.Query(ctx,
+		`SELECT evidence_id, target_id, rule_id, eval_result, compliance_status,
+			coalesce(engine_name, '') AS engine_name,
+			coalesce(source_registry, '') AS source_registry,
+			coalesce(attestation_ref, '') AS attestation_ref,
+			enrichment_status, collected_at
+		 FROM evidence
+		 WHERE policy_id = ? AND ingested_at >= ?
+		 ORDER BY ingested_at DESC`, policyID, since)
+	if err != nil {
+		return nil, fmt.Errorf("query recent evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []EvidenceRowLite
+	for rows.Next() {
+		var r EvidenceRowLite
+		if err := rows.Scan(
+			&r.EvidenceID, &r.TargetID, &r.RuleID, &r.EvalResult,
+			&r.ComplianceStatus, &r.EngineName, &r.SourceRegistry,
+			&r.AttestationRef, &r.EnrichmentStatus, &r.CollectedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan recent evidence: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // AuditLog represents a stored audit log artifact.
@@ -1046,7 +1311,24 @@ type PostureRow struct {
 }
 
 // ListPosture returns per-policy evidence posture aggregates with inventory context.
-func (s *Store) ListPosture(ctx context.Context) ([]PostureRow, error) {
+// When start or end are non-zero the evidence window is restricted to that range.
+func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error) {
+	var (
+		evidenceFilter string
+		args           []any
+	)
+	if !start.IsZero() || !end.IsZero() {
+		evidenceFilter = " WHERE 1=1"
+		if !start.IsZero() {
+			evidenceFilter += " AND collected_at >= ?"
+			args = append(args, start)
+		}
+		if !end.IsZero() {
+			evidenceFilter += " AND collected_at <= ?"
+			args = append(args, end)
+		}
+	}
+
 	query := `
 		SELECT
 			p.policy_id,
@@ -1061,11 +1343,11 @@ func (s *Store) ListPosture(ctx context.Context) ([]PostureRow, error) {
 			uniqIf(e.control_id, e.control_id != '') AS control_count,
 			if(count(e.evidence_id) > 0, toString(max(e.collected_at)), '') AS latest_evidence_at
 		FROM (SELECT policy_id, title, version FROM policies FINAL) AS p
-		LEFT JOIN evidence e ON e.policy_id = p.policy_id
+		LEFT JOIN (SELECT * FROM evidence` + evidenceFilter + `) e ON e.policy_id = p.policy_id
 		GROUP BY p.policy_id, p.title, policy_version
 		ORDER BY p.title`
 
-	rows, err := s.conn.Query(ctx, query)
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list posture: %w", err)
 	}

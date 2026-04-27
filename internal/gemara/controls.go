@@ -3,10 +3,10 @@
 package gemara
 
 import (
+	"context"
 	"fmt"
 
 	sdk "github.com/gemaraproj/go-gemara"
-	goyaml "github.com/goccy/go-yaml"
 )
 
 // ControlRow represents a single control parsed from a ControlCatalog.
@@ -41,15 +41,16 @@ type ControlThreatRow struct {
 
 // ParseControlCatalog extracts controls, assessment requirements, and control-to-threat links
 // from a ControlCatalog YAML body.
-func ParseControlCatalog(content, catalogID, policyID string) (
+func ParseControlCatalog(ctx context.Context, content, catalogID, policyID string) (
 	[]ControlRow,
 	[]AssessmentRequirementRow,
 	[]ControlThreatRow,
 	error,
 ) {
-	var catalog sdk.ControlCatalog
-	if err := goyaml.Unmarshal([]byte(content), &catalog); err != nil {
-		return nil, nil, nil, fmt.Errorf("parse control catalog YAML: %w", err)
+	f := NewMemoryFetcher(map[string][]byte{artifactSource: []byte(content)})
+	catalog, err := sdk.Load[sdk.ControlCatalog](ctx, f, artifactSource)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load control catalog: %w", err)
 	}
 
 	resolvedID := catalogID

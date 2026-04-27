@@ -4,6 +4,7 @@ import { useState, useEffect } from "preact/hooks";
 import { selectedPolicyDetail, activeTab, navigate, updateHash } from "../app";
 import { apiFetch } from "../api/fetch";
 import { RequirementMatrixView } from "./requirement-matrix-view";
+import { InventoryView } from "./inventory-view";
 import { EvidenceView } from "./evidence-view";
 import { AuditHistoryView } from "./audit-history-view";
 
@@ -13,16 +14,33 @@ interface PolicyInfo {
   version?: string;
 }
 
-const TABS = [
-  { id: "requirements" as const, label: "Requirements" },
-  { id: "evidence" as const, label: "Evidence" },
-  { id: "history" as const, label: "History" },
+type TabId = "requirements" | "inventory" | "evidence" | "history";
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: "requirements", label: "Requirements" },
+  { id: "inventory", label: "Inventory" },
+  { id: "evidence", label: "Evidence" },
+  { id: "history", label: "History" },
 ];
 
 export function PolicyDetailView() {
   const policyId = selectedPolicyDetail.value;
   const tab = activeTab.value;
   const [policy, setPolicy] = useState<PolicyInfo | null>(null);
+  const [evidenceTargetFilter, setEvidenceTargetFilter] = useState<string | undefined>();
+  const [evidenceControlFilter, setEvidenceControlFilter] = useState<string | undefined>();
+
+  const handleTargetClick = (targetId: string, targetName: string) => {
+    setEvidenceTargetFilter(targetName || targetId);
+    setEvidenceControlFilter(undefined);
+    switchTab("evidence");
+  };
+
+  const handleControlClick = (controlId: string) => {
+    setEvidenceControlFilter(controlId);
+    setEvidenceTargetFilter(undefined);
+    switchTab("evidence");
+  };
 
   useEffect(() => {
     if (!policyId) return;
@@ -37,7 +55,7 @@ export function PolicyDetailView() {
     return null;
   }
 
-  const switchTab = (t: "requirements" | "evidence" | "history") => {
+  const switchTab = (t: TabId) => {
     activeTab.value = t;
     updateHash();
   };
@@ -66,7 +84,20 @@ export function PolicyDetailView() {
 
       <div class="tab-content" role="tabpanel">
         {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} />}
-        {tab === "evidence" && <EvidenceView policyIdOverride={policyId} />}
+        {tab === "inventory" && (
+          <InventoryView
+            policyIdOverride={policyId}
+            onTargetClick={handleTargetClick}
+            onControlClick={handleControlClick}
+          />
+        )}
+        {tab === "evidence" && (
+          <EvidenceView
+            policyIdOverride={policyId}
+            initialTargetFilter={evidenceTargetFilter}
+            initialControlFilter={evidenceControlFilter}
+          />
+        )}
         {tab === "history" && <AuditHistoryView policyIdOverride={policyId} />}
       </div>
     </section>

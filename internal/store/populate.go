@@ -90,7 +90,7 @@ func PopulateControls(ctx context.Context, cs CatalogStore, ctrlS ControlStore) 
 			continue
 		}
 
-		controls, reqs, threats, parseErr := gemarapkg.ParseControlCatalog(full.Content, cat.CatalogID, cat.PolicyID)
+		controls, reqs, threats, parseErr := gemarapkg.ParseControlCatalog(ctx, full.Content, cat.CatalogID, cat.PolicyID)
 		if parseErr != nil {
 			slog.Warn("retroactive control catalog parse failed, skipping", "catalog_id", cat.CatalogID, "error", parseErr)
 			continue
@@ -148,7 +148,7 @@ func PopulateThreats(ctx context.Context, cs CatalogStore, threatS ThreatStore) 
 			continue
 		}
 
-		rows, parseErr := gemarapkg.ParseThreatCatalog(full.Content, cat.CatalogID, cat.PolicyID)
+		rows, parseErr := gemarapkg.ParseThreatCatalog(ctx, full.Content, cat.CatalogID, cat.PolicyID)
 		if parseErr != nil {
 			slog.Warn("retroactive threat catalog parse failed, skipping", "catalog_id", cat.CatalogID, "error", parseErr)
 			continue
@@ -196,7 +196,7 @@ func PopulateRisks(ctx context.Context, cs CatalogStore, riskS RiskStore) error 
 			continue
 		}
 
-		riskRows, linkRows, parseErr := gemarapkg.ParseRiskCatalog(full.Content, cat.CatalogID, cat.PolicyID)
+		riskRows, linkRows, parseErr := gemarapkg.ParseRiskCatalog(ctx, full.Content, cat.CatalogID, cat.PolicyID)
 		if parseErr != nil {
 			slog.Warn("retroactive risk catalog parse failed, skipping", "catalog_id", cat.CatalogID, "error", parseErr)
 			continue

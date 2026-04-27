@@ -9,16 +9,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/complytime/complytime-studio/internal/auth"
 )
 
 type fakePostureStore struct {
-	rows []PostureRow
-	err  error
+	rows      []PostureRow
+	err       error
+	lastStart time.Time
+	lastEnd   time.Time
 }
 
-func (f *fakePostureStore) ListPosture(ctx context.Context) ([]PostureRow, error) {
+func (f *fakePostureStore) ListPosture(_ context.Context, start, end time.Time) ([]PostureRow, error) {
+	f.lastStart = start
+	f.lastEnd = end
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -203,5 +208,88 @@ func TestListPostureHandler_AuthMiddleware_wrongBearer(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestListPostureHandler_TimeFilter(t *testing.T) {
+	t.Parallel()
+
+	seeded := []PostureRow{{PolicyID: "pol-1", Title: "P", TotalRows: 5, PassedRows: 3}}
+
+	tests := []struct {
+		name       string
+		query      string
+		wantStatus int
+		wantStart  bool
+		wantEnd    bool
+		checkEnd   func(*testing.T, time.Time)
+	}{
+		{
+			name:       "no params passes zero times",
+			query:      "/api/posture",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "date-only start and end are parsed",
+			query:      "/api/posture?start=2026-04-01&end=2026-04-26",
+			wantStatus: http.StatusOK,
+			wantStart:  true,
+			wantEnd:    true,
+			checkEnd: func(t *testing.T, end time.Time) {
+				t.Helper()
+				expected := time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
+				if !end.Equal(expected) {
+					t.Errorf("end = %v, want end-of-day %v", end, expected)
+				}
+			},
+		},
+		{
+			name:       "RFC 3339 start is parsed",
+			query:      "/api/posture?start=2026-04-01T00:00:00Z",
+			wantStatus: http.StatusOK,
+			wantStart:  true,
+		},
+		{
+			name:       "invalid start returns 400",
+			query:      "/api/posture?start=not-a-date",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid end returns 400",
+			query:      "/api/posture?end=xyz",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &fakePostureStore{rows: seeded}
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /api/posture", listPostureHandler(mock))
+
+			req := httptest.NewRequest(http.MethodGet, tt.query, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d, body: %q", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			if tt.wantStart && mock.lastStart.IsZero() {
+				t.Error("expected non-zero start time")
+			}
+			if tt.wantEnd && mock.lastEnd.IsZero() {
+				t.Error("expected non-zero end time")
+			}
+			if !tt.wantStart && !mock.lastStart.IsZero() {
+				t.Error("expected zero start time")
+			}
+			if tt.checkEnd != nil {
+				tt.checkEnd(t, mock.lastEnd)
+			}
+		})
 	}
 }

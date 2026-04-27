@@ -88,11 +88,11 @@ NATS event → Debouncer (30s window, coalesces per policy) → PostureCheckHand
 
 The liaison opens Studio and sees:
 
-- **Posture** — cards per policy showing target count, control count, evidence freshness, RACI owner, risk severity
+- **Posture** — cards per policy with a stacked pass/fail/other bar, freshness indicator, time presets (7d / 30d / 90d / All) for evidence collection range, optional summary strip, target/control count, RACI owner, risk severity
 - **Inbox badge** — red dot when unread notifications exist
 - **Inbox** — combined feed of posture change notifications and draft audit logs
 
-Clicking a posture card drills into the policy with tabs for Requirements, Evidence, and History.
+**View Details** on a card opens the policy drill-down with tabs for Requirements, Evidence, and History (the card is not a full click target).
 
 ### 5. Audit Production (agent-assisted)
 

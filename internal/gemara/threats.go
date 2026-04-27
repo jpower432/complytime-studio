@@ -3,11 +3,13 @@
 package gemara
 
 import (
+	"context"
 	"fmt"
 
 	sdk "github.com/gemaraproj/go-gemara"
-	goyaml "github.com/goccy/go-yaml"
 )
+
+const artifactSource = "artifact.yaml"
 
 // ThreatRow represents a single threat parsed from a ThreatCatalog.
 type ThreatRow struct {
@@ -20,10 +22,11 @@ type ThreatRow struct {
 }
 
 // ParseThreatCatalog extracts threat rows from a ThreatCatalog YAML body.
-func ParseThreatCatalog(content, catalogID, policyID string) ([]ThreatRow, error) {
-	var catalog sdk.ThreatCatalog
-	if err := goyaml.Unmarshal([]byte(content), &catalog); err != nil {
-		return nil, fmt.Errorf("parse threat catalog YAML: %w", err)
+func ParseThreatCatalog(ctx context.Context, content, catalogID, policyID string) ([]ThreatRow, error) {
+	f := NewMemoryFetcher(map[string][]byte{artifactSource: []byte(content)})
+	catalog, err := sdk.Load[sdk.ThreatCatalog](ctx, f, artifactSource)
+	if err != nil {
+		return nil, fmt.Errorf("load threat catalog: %w", err)
 	}
 
 	resolvedID := catalogID
