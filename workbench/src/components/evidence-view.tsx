@@ -13,6 +13,7 @@ import {
 } from "../lib/freshness";
 import { createFilterChips, FilterChips } from "./filter-chip";
 import { AddFilterMenu } from "./add-filter-menu";
+import { fmtDateTime } from "../lib/format";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -279,7 +280,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
       ...r,
       _bucket: computeBucket(r),
       target_name_or_id: r.target_name || r.target_id,
-      _certLabel: r.certified ? "Certified" : "Uncertified",
+      _certLabel: r.certified === true ? "Certified" : r.certified === false ? "Uncertified" : "Pending",
     })),
     [records, freqMap]
   );
@@ -337,7 +338,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
     {
       key: "Certification",
       label: "Certification",
-      options: ["Certified", "Uncertified"],
+      options: ["Certified", "Uncertified", "Pending"],
     },
   ];
 
@@ -377,11 +378,10 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
           <table class="data-table evidence-table">
             <thead>
               <tr>
-                <th class="evidence-expand-col" aria-hidden="true" />
+                <th class="evidence-cert-col" aria-label="Certification status" />
                 <th>Target</th>
                 <th>Control</th>
                 <th>Result</th>
-                <th>Cert</th>
                 <th>Engine</th>
                 <th>Collected</th>
               </tr>
@@ -390,6 +390,11 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
               {filteredRecords.map((r) => {
                 const rowKey = evidenceRowKey(r);
                 const open = expandedKey === rowKey;
+                const certTooltip = r.certified === true
+                  ? "Certified — click for details"
+                  : r.certified === false
+                    ? "Uncertified — click for details"
+                    : "Pending certification — click for details";
                 return (
                   <Fragment key={rowKey}>
                     <tr
@@ -399,21 +404,18 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                         + ` ${open ? "evidence-row-open" : ""}`
                       }
                     >
-                      <td class="evidence-expand-cell">
+                      <td class="evidence-cert-cell">
                         <button
                           type="button"
-                          class="btn btn-xs"
+                          class="evidence-cert-toggle"
                           aria-expanded={open}
-                          aria-label={
-                            open
-                              ? "Hide evidence details"
-                              : "Show evidence details"
-                          }
+                          title={certTooltip}
+                          aria-label={certTooltip}
                           onClick={() => setExpandedKey(
                             open ? null : rowKey,
                           )}
                         >
-                          {open ? "\u2212" : "+"}
+                          <CertBadge certified={r.certified} />
                         </button>
                       </td>
                       <td title={r.target_id}>
@@ -428,10 +430,9 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                           {r.eval_result}
                         </span>
                       </td>
-                      <td><CertBadge certified={r.certified} /></td>
                       <td>{r.engine_name || "---"}</td>
                       <td>
-                        {new Date(r.collected_at).toLocaleString()}
+                        {fmtDateTime(r.collected_at)}
                       </td>
                     </tr>
                     {open && (
@@ -439,8 +440,11 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                         class="evidence-detail-row"
                         aria-label="Evidence details"
                       >
-                        <td colSpan={7}>
+                        <td colSpan={6}>
                           <div class="evidence-detail-panel">
+                            <CertificationDetail
+                              evidenceId={r.evidence_id}
+                            />
                             {r.source_registry?.trim() ? (
                               <SourceRegistryDetail
                                 value={r.source_registry}
@@ -450,9 +454,6 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                                 No source registry on this row.
                               </p>
                             )}
-                            <CertificationDetail
-                              evidenceId={r.evidence_id}
-                            />
                           </div>
                         </td>
                       </tr>
