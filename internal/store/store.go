@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/google/uuid"
@@ -146,6 +147,7 @@ var (
 	_ PostureStore            = (*Store)(nil)
 	_ NotificationStore       = (*Store)(nil)
 	_ CertificationStore      = (*Store)(nil)
+	_ auth.UserStore          = (*Store)(nil)
 )
 
 // New wraps an existing ClickHouse connection.

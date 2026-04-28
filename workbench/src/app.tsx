@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { signal } from "@preact/signals";
-import { useEffect } from "preact/hooks";
+import { useState, useEffect, useCallback } from "preact/hooks";
 import "./store/theme";
 import { Header } from "./components/header";
 import { Sidebar } from "./components/sidebar";
@@ -10,10 +10,13 @@ import { PoliciesView } from "./components/policies-view";
 import { EvidenceView } from "./components/evidence-view";
 import { PolicyDetailView } from "./components/policy-detail-view";
 import { InboxView } from "./components/inbox-view";
+import { SettingsView } from "./components/settings-view";
+import { AuditWorkspaceView } from "./components/audit-workspace-view";
 import { ChatAssistant } from "./components/chat-assistant";
 import { fetchMe, redirectToLogin, type UserInfo } from "./api/auth";
+import { apiFetch } from "./api/fetch";
 
-export type View = "posture" | "posture-detail" | "policies" | "evidence" | "inbox";
+export type View = "posture" | "posture-detail" | "policies" | "evidence" | "inbox" | "settings" | "audit";
 
 export const currentView = signal<View>("posture");
 export const currentUser = signal<UserInfo | null>(null);
@@ -25,6 +28,7 @@ export const selectedControlId = signal<string | null>(null);
 export const selectedRequirementId = signal<string | null>(null);
 export const selectedEvalResult = signal<string | null>(null);
 export const selectedPolicyDetail = signal<string | null>(null);
+export const selectedAuditId = signal<string | null>(null);
 export const activeTab = signal<"requirements" | "inventory" | "evidence" | "history">("requirements");
 
 // Monotonic counter; mounted views watch this to refetch. Same browser tab/session only —
@@ -37,7 +41,7 @@ export function invalidateViews() { viewInvalidation.value++; }
 export const inboxVersion = signal(0);
 export function invalidateInbox() { inboxVersion.value++; }
 
-const VALID_VIEWS: View[] = ["posture", "posture-detail", "policies", "evidence", "inbox"];
+const VALID_VIEWS: View[] = ["posture", "posture-detail", "policies", "evidence", "inbox", "settings", "audit"];
 
 function parseHash(hash: string): { view: View; params: Record<string, string> } {
   const stripped = hash.replace(/^#\/?/, "");
@@ -54,12 +58,22 @@ function parseHash(hash: string): { view: View; params: Record<string, string> }
     if (policyId) return { view: "posture-detail", params: { ...params, policyDetail: policyId } };
   }
 
+  // Nested audit route: audit/{id}
+  if (pathPart.startsWith("audit/")) {
+    const id = pathPart.slice("audit/".length);
+    if (id) return { view: "audit", params: { ...params, auditId: id } };
+  }
+
   const view = VALID_VIEWS.includes(pathPart as View) ? (pathPart as View) : "posture";
   return { view, params };
 }
 
 function buildHash(view: View): string {
   const parts: string[] = [];
+
+  if (view === "audit" && selectedAuditId.value) {
+    return `#/audit/${encodeURIComponent(selectedAuditId.value)}`;
+  }
 
   if (view === "posture-detail" && selectedPolicyDetail.value) {
     const base = `posture/${encodeURIComponent(selectedPolicyDetail.value)}`;
@@ -86,6 +100,13 @@ export function navigate(view: View) {
   }
 }
 
+export function navigateToAudit(id: string) {
+  selectedAuditId.value = id;
+  currentView.value = "audit";
+  const hash = buildHash("audit");
+  if (window.location.hash !== hash) window.location.hash = hash;
+}
+
 export function navigateToPolicy(policyId: string, tab: "requirements" | "inventory" | "evidence" | "history" = "requirements") {
   selectedPolicyDetail.value = policyId;
   selectedPolicyId.value = policyId;
@@ -109,6 +130,7 @@ function syncFromHash() {
     selectedPolicyDetail.value = params.policyDetail;
     selectedPolicyId.value = params.policyDetail;
   }
+  if (params.auditId) selectedAuditId.value = params.auditId;
   const VALID_TABS = ["requirements", "inventory", "evidence", "history"] as const;
   if (params.tab && VALID_TABS.includes(params.tab as typeof VALID_TABS[number])) {
     activeTab.value = params.tab as typeof VALID_TABS[number];
@@ -127,6 +149,51 @@ fetchMe().then((user) => {
   currentUser.value = user;
   authChecked.value = true;
 });
+
+function SetupBanner() {
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch("/api/setup-status")
+      .then((r) => r.json())
+      .then((d: { needs_setup: boolean }) => setNeedsSetup(d.needs_setup))
+      .catch(() => {});
+  }, []);
+
+  const claim = useCallback(async () => {
+    setClaiming(true);
+    setError("");
+    try {
+      const res = await apiFetch("/api/bootstrap", { method: "POST" });
+      if (res.ok) {
+        const me = await fetchMe();
+        currentUser.value = me;
+        setNeedsSetup(false);
+      } else {
+        const body = await res.json().catch(() => ({ error: "Setup failed" }));
+        setError(body.error || `Setup failed (${res.status})`);
+      }
+    } catch {
+      setError("Network error — could not reach the server.");
+    } finally {
+      setClaiming(false);
+    }
+  }, []);
+
+  if (!needsSetup) return null;
+
+  return (
+    <div class="setup-banner">
+      <span>No admin configured. Complete initial setup to get started.</span>
+      {error && <span class="setup-banner-error">{error}</span>}
+      <button class="btn btn-primary btn-sm" disabled={claiming} onClick={claim}>
+        {claiming ? "Setting up..." : "Complete Setup"}
+      </button>
+    </div>
+  );
+}
 
 export function App() {
   const view = currentView.value;
@@ -157,6 +224,7 @@ export function App() {
     <div class="app-shell">
       <a href="#main-content" class="skip-link">Skip to main content</a>
       <Header user={user} />
+      <SetupBanner />
       <div class="app-body">
         <Sidebar />
         <main id="main-content" class="app-main" data-view={view}>
@@ -165,6 +233,8 @@ export function App() {
           {view === "policies" && <PoliciesView />}
           {view === "evidence" && <EvidenceView />}
           {view === "inbox" && <InboxView />}
+          {view === "settings" && <SettingsView />}
+          {view === "audit" && <AuditWorkspaceView />}
         </main>
       </div>
       <ChatAssistant />

@@ -167,8 +167,8 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
       {policyId && rows.length > 0 && (
         <div class="export-toolbar">
           <button class="btn btn-xs" onClick={() => triggerExport("csv", policyId, startFilter, endFilter)}>Export CSV</button>
-          <button class="btn btn-xs" disabled>Export Excel</button>
-          <button class="btn btn-xs" disabled>Export PDF</button>
+          <button class="btn btn-xs" disabled title="Coming soon">Export Excel</button>
+          <button class="btn btn-xs" disabled title="Coming soon">Export PDF</button>
         </div>
       )}
 

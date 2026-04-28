@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Fragment } from "preact";
 import { useState, useEffect } from "preact/hooks";
-import { selectedPolicyId, selectedTimeRange, viewInvalidation, updateHash } from "../app";
+import { selectedPolicyId, selectedTimeRange, viewInvalidation, updateHash, navigateToAudit } from "../app";
 import { apiFetch } from "../api/fetch";
-import { downloadYaml, auditLogFilename } from "../lib/download";
+import { cardKeyHandler } from "../lib/a11y";
 
 interface AuditLog {
   audit_id: string;
@@ -23,53 +22,6 @@ interface PolicyOption {
   title: string;
 }
 
-interface SummaryData {
-  strengths: number;
-  findings: number;
-  gaps: number;
-  observations: number;
-}
-
-function parseSummary(s: string): SummaryData | null {
-  try {
-    const parsed = JSON.parse(s);
-    return {
-      strengths: parsed.strengths ?? 0,
-      findings: parsed.findings ?? 0,
-      gaps: parsed.gaps ?? 0,
-      observations: parsed.observations ?? 0,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function deltaTooltip(delta: number): string {
-  if (delta === 0) return "No change from prior audit";
-  const abs = Math.abs(delta);
-  return delta > 0 ? `${abs} more than prior audit` : `${abs} fewer than prior audit`;
-}
-
-function DeltaCell({ current, previous, warnOnIncrease }: {
-  current: number;
-  previous: number | null;
-  warnOnIncrease: boolean;
-}) {
-  if (previous === null) return <>{current}</>;
-  const delta = current - previous;
-  const tip = deltaTooltip(delta);
-  if (delta === 0) {
-    return <>{current} <span class="delta-zero" title={tip}>(0)</span></>;
-  }
-  const isWarn = (delta > 0 && warnOnIncrease)
-    || (delta < 0 && !warnOnIncrease);
-  const cls = isWarn ? "delta-positive" : "delta-negative";
-  const sign = delta > 0 ? "+" : "";
-  return (
-    <>{current} <span class={cls} title={tip}>({sign}{delta})</span></>
-  );
-}
-
 export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
   const embedded = !!policyIdOverride;
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
@@ -78,8 +30,6 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   const [startFilter, setStartFilter] = useState("");
   const [endFilter, setEndFilter] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [expandedContent, setExpandedContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -130,21 +80,10 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   useEffect(fetchLogs, [policyId]);
   useEffect(() => { if (policyId) fetchLogs(); }, [viewInvalidation.value]);
 
-  const toggleExpand = (log: AuditLog) => {
-    if (expandedId === log.audit_id) {
-      setExpandedId(null);
-      setExpandedContent(null);
-      return;
-    }
-    setExpandedId(log.audit_id);
-    setExpandedContent(null);
-    apiFetch(`/api/audit-logs/${encodeURIComponent(log.audit_id)}`)
-      .then((r) => { if (!r.ok) throw new Error("not found"); return r.json(); })
-      .then((full: AuditLog) => setExpandedContent(full.content || full.summary))
-      .catch(() => setExpandedContent(log.summary));
+  const parseSummary = (s: string) => {
+    try { return JSON.parse(s); } catch { return null; }
   };
 
-  const summaries = logs.map((l) => parseSummary(l.summary));
   const auditIds = logs.map((l) => l.audit_id);
 
   return (
@@ -189,78 +128,40 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
           <p>{policyId ? "No audit logs for this policy." : "Select a policy to view audit history."}</p>
         </div>
       ) : (
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th>Framework</th>
-              <th>Strengths</th>
-              <th>Findings</th>
-              <th>Gaps</th>
-              <th>Author</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((log, i) => {
-              const summary = summaries[i];
-              const prev = i + 1 < summaries.length ? summaries[i + 1] : null;
-              const isExpanded = expandedId === log.audit_id;
-              return (
-                <Fragment key={log.audit_id}>
-                  <tr
-                    class={isExpanded ? "expanded" : ""}
-                    onClick={() => toggleExpand(log)}
-                    onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(log); } }}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={isExpanded}
-                    aria-label={`Audit ${new Date(log.audit_start).toLocaleDateString()} — ${new Date(log.audit_end).toLocaleDateString()}`}
-                  >
-                    <td>
-                      {new Date(log.audit_start).toLocaleDateString()} — {new Date(log.audit_end).toLocaleDateString()}
-                    </td>
-                    <td>{log.framework || "—"}</td>
-                    <td>
-                      {summary ? (
-                        <DeltaCell current={summary.strengths} previous={prev?.strengths ?? null} warnOnIncrease={false} />
-                      ) : "—"}
-                    </td>
-                    <td>
-                      {summary ? (
-                        <DeltaCell current={summary.findings} previous={prev?.findings ?? null} warnOnIncrease={true} />
-                      ) : "—"}
-                    </td>
-                    <td>
-                      {summary ? (
-                        <DeltaCell current={summary.gaps} previous={prev?.gaps ?? null} warnOnIncrease={true} />
-                      ) : "—"}
-                    </td>
-                    <td>{log.created_by || "—"}</td>
-                  </tr>
-                  {isExpanded && (
-                    <tr class="history-expand-row">
-                      <td colSpan={6}>
-                        <pre class="yaml-viewer">{expandedContent || "Loading..."}</pre>
-                        {expandedContent && (
-                          <button
-                            class="btn btn-sm btn-secondary"
-                            style={{ marginTop: "8px" }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              downloadYaml(expandedContent, auditLogFilename(log.policy_id, log.audit_start));
-                            }}
-                          >
-                            Download YAML
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+        <div class="audit-card-list">
+          {logs.map((log) => {
+            const summary = parseSummary(log.summary);
+            return (
+              <article
+                key={log.audit_id}
+                class="audit-card"
+                onClick={() => navigateToAudit(log.audit_id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={cardKeyHandler(() => navigateToAudit(log.audit_id))}
+                aria-label={`View audit for ${new Date(log.audit_start).toLocaleDateString()} — ${new Date(log.audit_end).toLocaleDateString()}`}
+              >
+                <div class="audit-card-header">
+                  <span class="audit-period">
+                    {new Date(log.audit_start).toLocaleDateString()} — {new Date(log.audit_end).toLocaleDateString()}
+                  </span>
+                  {log.framework && <span class="audit-framework">{log.framework}</span>}
+                </div>
+                {summary && (
+                  <div class="posture-counts">
+                    <span class="count-pass">{summary.strengths ?? 0} strengths</span>
+                    <span class="count-finding">{summary.findings ?? 0} findings</span>
+                    <span class="count-gap">{summary.gaps ?? 0} gaps</span>
+                  </div>
+                )}
+                <div class="audit-card-meta">
+                  <span>{log.created_by || "system"}</span>
+                  <span>{new Date(log.created_at).toLocaleDateString()}</span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       )}
     </section>
   );

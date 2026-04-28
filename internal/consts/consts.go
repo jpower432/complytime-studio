@@ -60,6 +60,12 @@ const (
 	// DefaultDevAPIToken is the well-known dev seed token shipped in
 	// values.yaml. The gateway warns at startup if this value is still in use.
 	DefaultDevAPIToken = "dev-seed-token"
+
+	// RoleAdmin is the admin role value stored in the users table.
+	RoleAdmin = "admin"
+
+	// RoleReviewer is the default role for new users.
+	RoleReviewer = "reviewer"
 )
 
 // ClampLimit applies the default and max query limit policy.

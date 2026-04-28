@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/complytime/complytime-studio/internal/consts"
 )
 
 func testKey(t *testing.T) []byte {
@@ -335,63 +337,11 @@ func TestHandleLogout_DeletesSession(t *testing.T) {
 	}
 }
 
-func TestRoleForEmail_EmptyAdmins(t *testing.T) {
-	role := RoleForEmail("anyone@example.com", map[string]bool{})
-	if role != "admin" {
-		t.Fatalf("role = %q, want admin (empty allowlist)", role)
-	}
-}
-
-func TestRoleForEmail_InList(t *testing.T) {
-	admins := map[string]bool{"admin@co.com": true}
-	if got := RoleForEmail("admin@co.com", admins); got != "admin" {
-		t.Fatalf("role = %q, want admin", got)
-	}
-}
-
-func TestRoleForEmail_NotInList(t *testing.T) {
-	admins := map[string]bool{"admin@co.com": true}
-	if got := RoleForEmail("viewer@co.com", admins); got != "viewer" {
-		t.Fatalf("role = %q, want viewer", got)
-	}
-}
-
-func TestRoleForEmail_CaseInsensitive(t *testing.T) {
-	admins := map[string]bool{"admin@co.com": true}
-	if got := RoleForEmail("Admin@CO.com", admins); got != "admin" {
-		t.Fatalf("role = %q, want admin (case-insensitive)", got)
-	}
-}
-
-func TestRequireAdmin_Allows(t *testing.T) {
+func TestRequireAdmin_NilStore_Blocks(t *testing.T) {
 	h := testHandler(t)
-	admins := map[string]bool{"admin@co.com": true}
-	guard := RequireAdmin(admins)
+	guard := RequireAdmin(nil)
 
-	sess := ServerSession{Login: "admin@co.com", Email: "admin@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	cookie := createSession(t, h, sess)
-
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	guarded := h.Middleware(guard(inner))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
-	req.AddCookie(cookie)
-	guarded.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 for admin", rec.Code)
-	}
-}
-
-func TestRequireAdmin_Blocks(t *testing.T) {
-	h := testHandler(t)
-	admins := map[string]bool{"admin@co.com": true}
-	guard := RequireAdmin(admins)
-
-	sess := ServerSession{Login: "viewer@co.com", Email: "viewer@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	sess := ServerSession{Login: "anyone@co.com", Email: "anyone@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	cookie := createSession(t, h, sess)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,17 +355,15 @@ func TestRequireAdmin_Blocks(t *testing.T) {
 	guarded.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 for viewer", rec.Code)
+		t.Fatalf("status = %d, want 403 when no user store", rec.Code)
 	}
 }
 
-func TestHandleMe_ReturnsRole(t *testing.T) {
+func TestHandleMe_ReturnsReviewerWithoutStore(t *testing.T) {
 	h := testHandler(t)
-	admins := map[string]bool{"admin@co.com": true}
-	h.SetAdmins(admins)
 
 	sess := ServerSession{
-		Login: "viewer@co.com", Email: "viewer@co.com",
+		Login: "anyone@co.com", Email: "anyone@co.com",
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}
 	cookie := createSession(t, h, sess)
@@ -432,8 +380,8 @@ func TestHandleMe_ReturnsRole(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&info); err != nil {
 		t.Fatal(err)
 	}
-	if info.Role != "viewer" {
-		t.Errorf("role = %q, want viewer", info.Role)
+	if info.Role != consts.RoleReviewer {
+		t.Errorf("role = %q, want %s (no store = fail closed)", info.Role, consts.RoleReviewer)
 	}
 }
 

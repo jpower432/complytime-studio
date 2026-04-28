@@ -203,18 +203,15 @@ func main() {
 		slog.Error("auth handler init failed", "error", err)
 		os.Exit(1)
 	}
-	adminEmails := splitComma(os.Getenv("ADMIN_EMAILS"))
-	admins := make(map[string]bool, len(adminEmails))
-	for _, e := range adminEmails {
-		admins[strings.ToLower(e)] = true
-	}
-	authHandler.SetAdmins(admins)
-	if len(admins) > 0 {
-		slog.Info("admin allowlist configured", "count", len(admins))
+	if st != nil {
+		authHandler.SetUserStore(st)
+		slog.Info("persistent user store enabled — first user to sign in becomes admin")
 	} else {
-		slog.Warn("ADMIN_EMAILS is empty — all authenticated users have admin access")
+		slog.Warn("no user store (ClickHouse not configured) — RBAC disabled, all users treated as reviewer")
 	}
+
 	authHandler.Register(mux)
+	authHandler.RegisterUserAPI(mux)
 	authHandler.RegisterChatHistory(mux, sessionStore)
 
 	if apiToken := os.Getenv("STUDIO_API_TOKEN"); apiToken != "" {
@@ -270,7 +267,11 @@ func main() {
 
 	var handler http.Handler = mux
 	if authCfg.ClientID != "" {
-		adminGuard := auth.RequireAdmin(admins)
+		var userStore auth.UserStore
+		if st != nil {
+			userStore = st
+		}
+		adminGuard := auth.RequireAdmin(userStore)
 		handler = authHandler.Middleware(writeProtect(mux, adminGuard))
 		slog.Info("auth enabled", "provider", "google-oauth")
 	} else {
@@ -382,7 +383,7 @@ func writeProtect(next http.Handler, adminGuard func(http.Handler) http.Handler)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet {
-			if r.URL.Path == "/api/chat/history" {
+			if r.URL.Path == "/api/chat/history" || r.URL.Path == "/api/bootstrap" || strings.HasPrefix(r.URL.Path, "/api/a2a/") {
 				next.ServeHTTP(w, r)
 				return
 			}

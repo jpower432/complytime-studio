@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
 import { downloadYaml, auditLogFilename } from "../lib/download";
+import { cardKeyHandler } from "../lib/a11y";
 
 interface DraftAuditLog {
   draft_id: string;
@@ -284,7 +285,15 @@ export function DraftReviewView() {
           {drafts.map((draft) => {
             const summary = parseSummary(draft.summary);
             return (
-              <article key={draft.draft_id} class={`audit-card ${draft.status === "promoted" ? "promoted" : ""}`} onClick={() => loadDetail(draft)}>
+              <article
+                key={draft.draft_id}
+                class={`audit-card ${draft.status === "promoted" ? "promoted" : ""}`}
+                onClick={() => loadDetail(draft)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={cardKeyHandler(() => loadDetail(draft))}
+                aria-label={`Review draft for ${draft.policy_id}, ${new Date(draft.audit_start).toLocaleDateString()} — ${new Date(draft.audit_end).toLocaleDateString()}`}
+              >
                 <div class="audit-card-header">
                   <span class="audit-period">
                     {new Date(draft.audit_start).toLocaleDateString()} — {new Date(draft.audit_end).toLocaleDateString()}
