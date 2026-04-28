@@ -5,6 +5,7 @@ import { navigate, navigateToPolicy, selectedPolicyId, selectedTimeRange, viewIn
 import { apiFetch } from "../api/fetch";
 import { isStale, freshnessClass, relativeTime } from "../lib/freshness";
 import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate } from "../lib/format";
 
 interface PostureRow {
   policy_id: string;
@@ -225,7 +226,7 @@ function PostureCard({ row, riskSeverity }: { row: PostureRow; riskSeverity?: st
           Last evidence: {relativeTime(row.latest_evidence_at)}
         </p>
       ) : row.latest_at ? (
-        <p class="posture-latest">Latest: {new Date(row.latest_at).toLocaleDateString()}</p>
+        <p class="posture-latest">Latest: {fmtDate(row.latest_at)}</p>
       ) : (
         <p class="posture-latest posture-latest-missing">No evidence yet</p>
       )}

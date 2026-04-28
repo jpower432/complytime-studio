@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
-import { navigateToPolicy, navigateToAudit, invalidateInbox } from "../app";
+import { navigateToPolicy, navigateToAudit, invalidateInbox, inboxVersion } from "../app";
 import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate } from "../lib/format";
 
 interface Notification {
   notification_id: string;
@@ -51,6 +52,11 @@ export function InboxView() {
   }, []);
 
   useEffect(fetchAll, [fetchAll]);
+  useEffect(() => { fetchAll(); }, [inboxVersion.value]);
+  useEffect(() => {
+    const interval = setInterval(fetchAll, 30000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
 
   const items: InboxItem[] = [
     ...drafts.map((d): InboxItem => ({ kind: "draft", data: d })),
@@ -120,11 +126,11 @@ export function InboxView() {
                   </div>
                   <div class="inbox-card-header">
                     <strong>{draft.policy_id}</strong>
-                    <span class="inbox-card-date">{new Date(draft.created_at).toLocaleDateString()}</span>
+                    <span class="inbox-card-date">{fmtDate(draft.created_at)}</span>
                   </div>
                   {draft.framework && <div class="inbox-card-framework">{draft.framework}</div>}
                   <div class="inbox-card-period">
-                    {new Date(draft.audit_start).toLocaleDateString()} — {new Date(draft.audit_end).toLocaleDateString()}
+                    {fmtDate(draft.audit_start)} — {fmtDate(draft.audit_end)}
                   </div>
                   {summary && (
                     <div class="posture-counts">
@@ -152,7 +158,7 @@ export function InboxView() {
                 <div class="inbox-card-type">{notif.type === "posture_change" ? "Posture Change" : notif.type === "evidence_arrival" ? "Evidence Arrival" : notif.type}</div>
                 <div class="inbox-card-header">
                   <strong>{notif.policy_id}</strong>
-                  <span class="inbox-card-date">{new Date(notif.created_at).toLocaleDateString()}</span>
+                  <span class="inbox-card-date">{fmtDate(notif.created_at)}</span>
                 </div>
                 {payload.message && <p class="inbox-card-message">{payload.message}</p>}
                 {payload.previous_rate !== undefined && payload.current_rate !== undefined && (

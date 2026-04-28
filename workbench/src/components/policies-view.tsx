@@ -3,6 +3,7 @@
 import { useState, useEffect } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
 import { currentUser } from "../app";
+import { fmtDate } from "../lib/format";
 
 interface Policy {
   policy_id: string;
@@ -111,7 +112,7 @@ export function PoliciesView() {
               <tr key={p.policy_id} onClick={() => selectPolicy(p.policy_id)} class="clickable-row">
                 <td>{p.title}</td>
                 <td>{p.version || "—"}</td>
-                <td>{new Date(p.imported_at).toLocaleDateString()}</td>
+                <td>{fmtDate(p.imported_at)}</td>
                 <td class="mono">{p.oci_reference}</td>
               </tr>
             ))}
@@ -137,7 +138,7 @@ export function PoliciesView() {
               ) : (
                 selected.mappings.map((m) => (
                   <details key={m.mapping_id} class="mapping-detail">
-                    <summary>{m.framework} — imported {new Date(m.imported_at).toLocaleDateString()}</summary>
+                    <summary>{m.framework} — imported {fmtDate(m.imported_at)}</summary>
                     <pre class="yaml-viewer">{m.content}</pre>
                   </details>
                 ))

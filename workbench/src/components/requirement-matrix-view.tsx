@@ -3,6 +3,7 @@
 import { useState, useEffect } from "preact/hooks";
 import { selectedPolicyId, selectedTimeRange, selectedControlId, selectedRequirementId, viewInvalidation, updateHash } from "../app";
 import { apiFetch } from "../api/fetch";
+import { fmtDate, fmtDateTime } from "../lib/format";
 import {
   fetchRequirementMatrix,
   fetchRequirementEvidence,
@@ -209,7 +210,7 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
                   <td class="req-id">{row.requirement_id}</td>
                   <td class="req-text">{row.requirement_text}</td>
                   <td class="num">{row.evidence_count}</td>
-                  <td class="date">{row.latest_evidence ? new Date(row.latest_evidence).toLocaleDateString() : "—"}</td>
+                  <td class="date">{row.latest_evidence ? fmtDate(row.latest_evidence) : "—"}</td>
                   <td><ClassificationBadge value={row.classification} /></td>
                   <td>{riskMap[row.control_id] ? (
                     <span class={`risk-badge risk-${riskMap[row.control_id].toLowerCase()}`}>{riskMap[row.control_id]}</span>
@@ -273,7 +274,7 @@ function EvidencePanel({
             <td>{ev.target_name || ev.target_id}</td>
             <td class="mono">{ev.rule_id}</td>
             <td><span class={`eval-result eval-${ev.eval_result.toLowerCase().replace(/\s+/g, "-")}`}>{ev.eval_result}</span></td>
-            <td class="date">{new Date(ev.collected_at).toLocaleString()}</td>
+            <td class="date">{fmtDateTime(ev.collected_at)}</td>
             <td><ClassificationBadge value={ev.classification} /></td>
             <td>{ev.source_registry || "—"}</td>
           </tr>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
 import { downloadYaml, auditLogFilename } from "../lib/download";
 import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate, fmtDateTime, displayName } from "../lib/format";
 
 interface DraftAuditLog {
   draft_id: string;
@@ -73,10 +74,10 @@ function parseEdits(raw?: string): EditsMap {
 
 function ResultTypeTag({ type }: { type: string }) {
   const colors: Record<string, string> = {
-    Strength: "var(--color-pass, #22c55e)",
-    Finding: "var(--color-finding, #f59e0b)",
-    Gap: "var(--color-gap, #ef4444)",
-    Observation: "var(--color-observation, #6366f1)",
+    Strength: "var(--color-pass)",
+    Finding: "var(--color-finding)",
+    Gap: "var(--color-gap)",
+    Observation: "var(--color-observation)",
   };
   return (
     <span
@@ -292,11 +293,11 @@ export function DraftReviewView() {
                 role="button"
                 tabIndex={0}
                 onKeyDown={cardKeyHandler(() => loadDetail(draft))}
-                aria-label={`Review draft for ${draft.policy_id}, ${new Date(draft.audit_start).toLocaleDateString()} — ${new Date(draft.audit_end).toLocaleDateString()}`}
+                aria-label={`Review draft for ${draft.policy_id}, ${fmtDate(draft.audit_start)} — ${fmtDate(draft.audit_end)}`}
               >
                 <div class="audit-card-header">
                   <span class="audit-period">
-                    {new Date(draft.audit_start).toLocaleDateString()} — {new Date(draft.audit_end).toLocaleDateString()}
+                    {fmtDate(draft.audit_start)} — {fmtDate(draft.audit_end)}
                   </span>
                   <span class={`draft-status status-${draft.status}`}>{draft.status.replace("_", " ")}</span>
                 </div>
@@ -346,9 +347,9 @@ export function DraftReviewView() {
 
           <div class="draft-meta-bar">
             <span>Policy: <strong>{selected.policy_id}</strong></span>
-            <span>Created: {new Date(selected.created_at).toLocaleString()}</span>
+            <span>Created: {fmtDateTime(selected.created_at)}</span>
             {selected.model && <span>Model: {selected.model}</span>}
-            {selected.reviewed_by && <span>Reviewed by: {selected.reviewed_by}</span>}
+            {selected.reviewed_by && <span>Reviewed by: {displayName(selected.reviewed_by)}</span>}
           </div>
 
           {parsed?.results ? (
