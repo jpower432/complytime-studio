@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect, useRef, useCallback } from "preact/hooks";
+import { useState, useEffect, useCallback } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
-import { navigateToPolicy, invalidateInbox } from "../app";
-import { downloadYaml, auditLogFilename } from "../lib/download";
+import { navigateToPolicy, navigateToAudit, invalidateInbox, inboxVersion } from "../app";
+import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate } from "../lib/format";
 
 interface Notification {
   notification_id: string;
@@ -32,93 +33,12 @@ interface DraftAuditLog {
   reviewer_edits?: string;
 }
 
-interface AuditResult {
-  id: string;
-  title: string;
-  type: string;
-  description: string;
-  "agent-reasoning"?: string;
-}
-
-interface EditEntry {
-  type_override: string;
-  note: string;
-}
-
-type EditsMap = Record<string, EditEntry>;
-type SaveState = "idle" | "saving" | "saved";
-
-const RESULT_TYPES = ["Strength", "Finding", "Gap", "Observation"];
-
-function extractBlockScalar(lines: string[], key: string): string {
-  const idx = lines.findIndex((l) => l.includes(`${key}:`));
-  if (idx < 0) return "";
-  const firstLine = lines[idx].replace(new RegExp(`.*${key}:\\s*>?-?\\s*`), "").trim();
-  const parts: string[] = firstLine ? [firstLine] : [];
-  const baseIndent = lines[idx].search(/\S/);
-  for (let i = idx + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === "") continue;
-    const indent = line.search(/\S/);
-    if (indent <= baseIndent) break;
-    parts.push(line.trim());
-  }
-  return parts.join(" ");
-}
-
-function parseYAMLContent(content: string): AuditResult[] | null {
-  try {
-    const resultsMatch = content.match(/^results:\s*$/m);
-    if (!resultsMatch) return null;
-    const results: AuditResult[] = [];
-    const blocks = content.split(/^  - id:\s*/m).slice(1);
-    for (const block of blocks) {
-      const lines = block.split("\n");
-      const id = lines[0]?.trim() || "";
-      const title = lines.find((l) => l.includes("title:"))?.replace(/.*title:\s*/, "").trim() || "";
-      const type = lines.find((l) => l.includes("type:") && !l.includes("evidence"))?.replace(/.*type:\s*/, "").trim() || "";
-      const desc = extractBlockScalar(lines, "description");
-      const reasoning = extractBlockScalar(lines, "agent-reasoning");
-      results.push({ id, title, type, description: desc, "agent-reasoning": reasoning });
-    }
-    return results;
-  } catch {
-    return null;
-  }
-}
-
-function parseEdits(raw?: string): EditsMap {
-  if (!raw || raw === "{}") return {};
-  try { return JSON.parse(raw); } catch { return {}; }
-}
-
-function ResultTypeTag({ type }: { type: string }) {
-  const colors: Record<string, string> = {
-    Strength: "var(--color-pass, #22c55e)",
-    Finding: "var(--color-finding, #f59e0b)",
-    Gap: "var(--color-gap, #ef4444)",
-    Observation: "var(--color-observation, #6366f1)",
-  };
-  return (
-    <span class="result-type-tag" style={{ background: colors[type] || "#94a3b8", color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "0.75rem", fontWeight: 600 }}>
-      {type}
-    </span>
-  );
-}
-
 type InboxItem = { kind: "draft"; data: DraftAuditLog } | { kind: "notification"; data: Notification };
 
 export function InboxView() {
   const [drafts, setDrafts] = useState<DraftAuditLog[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<DraftAuditLog | null>(null);
-  const [results, setResults] = useState<AuditResult[] | null>(null);
-  const [edits, setEdits] = useState<EditsMap>({});
-  const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [promoting, setPromoting] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchAll = useCallback(() => {
     setLoading(true);
@@ -132,6 +52,11 @@ export function InboxView() {
   }, []);
 
   useEffect(fetchAll, [fetchAll]);
+  useEffect(() => { fetchAll(); }, [inboxVersion.value]);
+  useEffect(() => {
+    const interval = setInterval(fetchAll, 30000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
 
   const items: InboxItem[] = [
     ...drafts.map((d): InboxItem => ({ kind: "draft", data: d })),
@@ -141,50 +66,6 @@ export function InboxView() {
     const tb = b.kind === "draft" ? b.data.created_at : b.data.created_at;
     return new Date(tb).getTime() - new Date(ta).getTime();
   });
-
-  const saveEdits = useCallback((draftId: string, editsMap: EditsMap) => {
-    setSaveState("saving");
-    apiFetch(`/api/draft-audit-logs/${encodeURIComponent(draftId)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reviewer_edits: editsMap }),
-    }).then((r) => {
-      if (!r.ok) throw new Error("save failed");
-      setSaveState("saved");
-      if (fadeRef.current) clearTimeout(fadeRef.current);
-      fadeRef.current = setTimeout(() => setSaveState("idle"), 2000);
-    }).catch(() => setSaveState("idle"));
-  }, []);
-
-  const scheduleAutoSave = useCallback((draftId: string, editsMap: EditsMap) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => saveEdits(draftId, editsMap), 1000);
-  }, [saveEdits]);
-
-  const updateEdit = (resultId: string, field: "type_override" | "note", value: string) => {
-    if (!selected) return;
-    const next = { ...edits, [resultId]: { ...edits[resultId] || { type_override: "", note: "" }, [field]: value } };
-    setEdits(next);
-    scheduleAutoSave(selected.draft_id, next);
-  };
-
-  const detailRef = useRef<HTMLDivElement>(null);
-
-  const openDraft = (draft: DraftAuditLog) => {
-    apiFetch(`/api/draft-audit-logs/${encodeURIComponent(draft.draft_id)}`)
-      .then((r) => r.json())
-      .then((d: DraftAuditLog) => {
-        setSelected(d);
-        if (d.content) setResults(parseYAMLContent(d.content));
-        setEdits(parseEdits(d.reviewer_edits));
-        setSaveState("idle");
-        requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-      })
-      .catch(() => {
-        setSelected(draft);
-        requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-      });
-  };
 
   const markRead = (notifId: string) => {
     apiFetch(
@@ -210,58 +91,7 @@ export function InboxView() {
     invalidateInbox();
   };
 
-  const closeDetail = () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    setSelected(null);
-    setResults(null);
-    setEdits({});
-    setSaveState("idle");
-  };
-
-  const promote = () => {
-    if (!selected) return;
-    setPromoting(true);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const finalize = () => {
-      apiFetch("/api/audit-logs/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draft_id: selected.draft_id }),
-      }).then((r) => {
-        if (!r.ok) throw new Error("promote failed");
-        closeDetail();
-        fetchAll();
-        invalidateInbox();
-      }).catch(() => alert("Failed to promote draft"))
-        .finally(() => setPromoting(false));
-    };
-    if (Object.keys(edits).length > 0) {
-      apiFetch(`/api/draft-audit-logs/${encodeURIComponent(selected.draft_id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reviewer_edits: edits }),
-      }).then(finalize).catch(finalize);
-    } else {
-      finalize();
-    }
-  };
-
   const parseSummary = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
-  const editFor = (id: string): EditEntry => edits[id] || { type_override: "", note: "" };
-
-  const reasoningMap: Record<string, string> = (() => {
-    if (!selected?.agent_reasoning) return {};
-    try {
-      const parsed = JSON.parse(selected.agent_reasoning);
-      if (typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    } catch { /* fall through */ }
-    const map: Record<string, string> = {};
-    for (const line of selected.agent_reasoning.split("\n")) {
-      const idx = line.indexOf(": ");
-      if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 2).trim();
-    }
-    return map;
-  })();
 
   return (
     <section class="inbox-view">
@@ -279,7 +109,15 @@ export function InboxView() {
               const draft = item.data;
               const summary = parseSummary(draft.summary);
               return (
-                <article key={draft.draft_id} class={`inbox-card inbox-card-draft ${draft.status === "pending_review" ? "unread" : ""}`} onClick={() => openDraft(draft)}>
+                <article
+                  key={draft.draft_id}
+                  class={`inbox-card inbox-card-draft ${draft.status === "pending_review" ? "unread" : ""}`}
+                  onClick={() => navigateToAudit(draft.draft_id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={cardKeyHandler(() => navigateToAudit(draft.draft_id))}
+                  aria-label={`Review draft for ${draft.policy_id}`}
+                >
                   <div class="inbox-card-type-row">
                     <span class="inbox-card-type">Draft Audit Log</span>
                     <span class={`inbox-status-badge status-${draft.status}`}>
@@ -288,11 +126,11 @@ export function InboxView() {
                   </div>
                   <div class="inbox-card-header">
                     <strong>{draft.policy_id}</strong>
-                    <span class="inbox-card-date">{new Date(draft.created_at).toLocaleDateString()}</span>
+                    <span class="inbox-card-date">{fmtDate(draft.created_at)}</span>
                   </div>
                   {draft.framework && <div class="inbox-card-framework">{draft.framework}</div>}
                   <div class="inbox-card-period">
-                    {new Date(draft.audit_start).toLocaleDateString()} — {new Date(draft.audit_end).toLocaleDateString()}
+                    {fmtDate(draft.audit_start)} — {fmtDate(draft.audit_end)}
                   </div>
                   {summary && (
                     <div class="posture-counts">
@@ -312,11 +150,15 @@ export function InboxView() {
                 key={notif.notification_id}
                 class={`inbox-card inbox-card-notification ${notif.read ? "read" : "unread"}`}
                 onClick={() => { if (!notif.read) markRead(notif.notification_id); }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={cardKeyHandler(() => { if (!notif.read) markRead(notif.notification_id); })}
+                aria-label={`${notif.type === "posture_change" ? "Posture change" : "Evidence arrival"} for ${notif.policy_id}`}
               >
                 <div class="inbox-card-type">{notif.type === "posture_change" ? "Posture Change" : notif.type === "evidence_arrival" ? "Evidence Arrival" : notif.type}</div>
                 <div class="inbox-card-header">
                   <strong>{notif.policy_id}</strong>
-                  <span class="inbox-card-date">{new Date(notif.created_at).toLocaleDateString()}</span>
+                  <span class="inbox-card-date">{fmtDate(notif.created_at)}</span>
                 </div>
                 {payload.message && <p class="inbox-card-message">{payload.message}</p>}
                 {payload.previous_rate !== undefined && payload.current_rate !== undefined && (
@@ -349,86 +191,6 @@ export function InboxView() {
         </div>
       )}
 
-      {selected && (
-        <div class="draft-detail" ref={detailRef}>
-          <div class="detail-header">
-            <h3>Review Draft</h3>
-            <div class="detail-actions">
-              {saveState !== "idle" && (
-                <span class={`save-indicator save-${saveState}`}>{saveState === "saving" ? "Saving..." : "Saved"}</span>
-              )}
-              {selected.content && (
-                <button class="btn btn-sm btn-secondary" onClick={() => downloadYaml(selected.content!, auditLogFilename(selected.policy_id, selected.audit_start))}>
-                  Download YAML
-                </button>
-              )}
-              {selected.status === "pending_review" && (
-                <button class="btn btn-primary" onClick={promote} disabled={promoting}>
-                  {promoting ? "Saving..." : "Save to History"}
-                </button>
-              )}
-              <button class="btn btn-sm" onClick={closeDetail}>Close</button>
-            </div>
-          </div>
-
-          <div class="draft-meta-bar">
-            <span>Policy: <strong>{selected.policy_id}</strong></span>
-            <span>Created: {new Date(selected.created_at).toLocaleString()}</span>
-            {selected.model && <span>Model: {selected.model}</span>}
-          </div>
-
-          {results ? (
-            <div class="results-grid">
-              {results.map((result) => {
-                const edit = editFor(result.id);
-                const displayType = edit.type_override || result.type;
-                const overridden = edit.type_override !== "" && edit.type_override !== result.type;
-                const editable = selected.status === "pending_review";
-                return (
-                  <article key={result.id} class={`result-card type-${displayType} ${overridden ? "result-overridden" : ""}`}>
-                    <div class="result-card-header">
-                      <span class="result-id">{result.id}</span>
-                      {editable ? (
-                        <select class="result-type-select" value={displayType} onChange={(e) => updateEdit(result.id, "type_override", (e.target as HTMLSelectElement).value)}>
-                          {RESULT_TYPES.map((t) => <option key={t} value={t}>{t}{t === result.type ? " (agent)" : ""}</option>)}
-                        </select>
-                      ) : (
-                        <ResultTypeTag type={displayType} />
-                      )}
-                    </div>
-                    <h4>{result.title}</h4>
-                    <p class="result-description">{result.description}</p>
-                    {(reasoningMap[result.id] || result["agent-reasoning"]) && (
-                      <div class="agent-reasoning"><strong>Agent Reasoning:</strong><p>{reasoningMap[result.id] || result["agent-reasoning"]}</p></div>
-                    )}
-                    {editable && (
-                      <div class="result-controls">
-                        {overridden && <span class="override-badge">Overridden</span>}
-                        <textarea
-                          class="result-note"
-                          placeholder="Add reviewer note..."
-                          value={edit.note}
-                          onInput={(e) => updateEdit(result.id, "note", (e.target as HTMLTextAreaElement).value)}
-                          rows={2}
-                        />
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <pre class="yaml-viewer">{selected.content || selected.summary}</pre>
-          )}
-
-          {selected.agent_reasoning && (
-            <details class="reasoning-section">
-              <summary>Full Agent Reasoning</summary>
-              <pre class="yaml-viewer">{selected.agent_reasoning}</pre>
-            </details>
-          )}
-        </div>
-      )}
     </section>
   );
 }

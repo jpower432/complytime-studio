@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
 )
 
@@ -51,12 +52,13 @@ type Config struct {
 // Session represents the authenticated user session injected into request
 // context. It does not contain the access token — that stays server-side.
 type Session struct {
-	Login     string   `json:"l"`
-	Name      string   `json:"n"`
-	AvatarURL string   `json:"a"`
-	Email     string   `json:"e"`
-	Groups    []string `json:"g,omitempty"`
-	ExpiresAt int64    `json:"x"`
+	Login          string   `json:"l"`
+	Name           string   `json:"n"`
+	AvatarURL      string   `json:"a"`
+	Email          string   `json:"e"`
+	Groups         []string `json:"g,omitempty"`
+	ExpiresAt      int64    `json:"x"`
+	ServiceAccount bool     `json:"-"`
 }
 
 // cookiePayload is the encrypted cookie content — only a session ID.
@@ -73,20 +75,9 @@ type UserInfo struct {
 	Role      string `json:"role"`
 }
 
-// RoleForEmail returns "admin" if the email is in the admin set, "viewer" otherwise.
-// An empty admin set means everyone is admin (fail-open for dev clusters).
-func RoleForEmail(email string, admins map[string]bool) string {
-	if len(admins) == 0 {
-		return "admin"
-	}
-	if admins[strings.ToLower(email)] {
-		return "admin"
-	}
-	return "viewer"
-}
-
 // RequireAdmin returns middleware that rejects non-admin requests with 403.
-func RequireAdmin(admins map[string]bool) func(http.Handler) http.Handler {
+// Fails closed: if the store lookup errors, the request is rejected.
+func RequireAdmin(users UserStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sess, ok := SessionFrom(r.Context())
@@ -94,7 +85,16 @@ func RequireAdmin(admins map[string]bool) func(http.Handler) http.Handler {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
 				return
 			}
-			if RoleForEmail(sess.Email, admins) != "admin" {
+			if sess.ServiceAccount {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if users == nil {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+				return
+			}
+			u, err := users.GetUser(r.Context(), sess.Email)
+			if err != nil || u.Role != consts.RoleAdmin {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
 				return
 			}
@@ -120,7 +120,7 @@ type Handler struct {
 	gcm       cipher.AEAD
 	apiToken  string
 	store     SessionStore
-	admins    map[string]bool
+	users     UserStore
 }
 
 // NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
@@ -135,18 +135,12 @@ func NewHandler(cfg Config, secretKey []byte, store SessionStore) (*Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("auth: GCM init: %w", err)
 	}
-	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store, admins: make(map[string]bool)}, nil
+	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store}, nil
 }
 
-// SetAdmins configures the admin email allowlist. An empty map means
-// everyone is admin (dev-mode fail-open).
-func (h *Handler) SetAdmins(admins map[string]bool) {
-	h.admins = admins
-}
-
-// Admins returns the admin email set for use with RequireAdmin middleware.
-func (h *Handler) Admins() map[string]bool {
-	return h.admins
+// SetUserStore configures the persistent user/role store.
+func (h *Handler) SetUserStore(us UserStore) {
+	h.users = us
 }
 
 // SetAPIToken configures a static bearer token that bypasses session auth.
@@ -247,10 +241,14 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 
 		if h.apiToken != "" {
 			if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
-				ctx := context.WithValue(r.Context(), sessionKey, &Session{
+				sess := &Session{
 					Email: "api-token@internal",
 					Name:  "API Token",
-				})
+				}
+				if h.apiToken == consts.DefaultDevAPIToken {
+					sess.ServiceAccount = true
+				}
+				ctx := context.WithValue(r.Context(), sessionKey, sess)
 				ctx = httputil.WithIdentity(ctx, "api-token@internal")
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -339,6 +337,29 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	groups := groupsFromIDToken(tokenResp.IDToken)
 
+	if h.users != nil {
+		adminCount, adminErr := h.users.CountAdmins(r.Context())
+		if adminErr != nil {
+			slog.Error("admin count check failed (login continues)", "error", adminErr)
+		}
+		if err := h.users.UpsertUser(r.Context(), user.Email, user.Name, user.Picture); err != nil {
+			slog.Error("user upsert failed (login continues)", "error", err)
+		}
+		if adminErr == nil && adminCount == 0 {
+			if _, err := h.users.SetRole(r.Context(), user.Email, consts.RoleAdmin); err != nil {
+				slog.Error("first-admin promotion failed", "error", err)
+			} else {
+				slog.Info("first admin promoted", "email", user.Email)
+				_ = h.users.InsertRoleChange(r.Context(), RoleChange{
+					ChangedBy:   "system",
+					TargetEmail: user.Email,
+					OldRole:     consts.RoleReviewer,
+					NewRole:     consts.RoleAdmin,
+				})
+			}
+		}
+	}
+
 	sid := generateSessionID()
 	serverSess := ServerSession{
 		AccessToken: tokenResp.AccessToken,
@@ -374,12 +395,18 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
+	role := consts.RoleReviewer
+	if h.users != nil {
+		if u, err := h.users.GetUser(r.Context(), serverSess.Email); err == nil {
+			role = u.Role
+		}
+	}
 	writeJSON(w, http.StatusOK, UserInfo{
 		Login:     serverSess.Login,
 		Name:      serverSess.Name,
 		AvatarURL: serverSess.AvatarURL,
 		Email:     serverSess.Email,
-		Role:      RoleForEmail(serverSess.Email, h.admins),
+		Role:      role,
 	})
 }
 

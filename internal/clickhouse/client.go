@@ -378,6 +378,31 @@ func schemaMigrations() []migration {
 			PARTITION BY toYYYYMM(certified_at)
 			ORDER BY (evidence_id, certifier, certified_at)`,
 		},
+		{
+			Version:     13,
+			Description: "add users table",
+			SQL: `CREATE TABLE IF NOT EXISTS users (
+				email String,
+				name String,
+				avatar_url String,
+				role LowCardinality(String) DEFAULT 'reviewer',
+				created_at DateTime64(3) DEFAULT now64(3),
+				version UInt64 DEFAULT toUnixTimestamp64Milli(now64(3))
+			) ENGINE = ReplacingMergeTree(version)
+			ORDER BY (email)`,
+		},
+		{
+			Version:     14,
+			Description: "add role_changes audit table",
+			SQL: `CREATE TABLE IF NOT EXISTS role_changes (
+				changed_by String,
+				target_email String,
+				old_role LowCardinality(String),
+				new_role LowCardinality(String),
+				changed_at DateTime64(3) DEFAULT now64(3)
+			) ENGINE = MergeTree
+			ORDER BY (changed_at, target_email)`,
+		},
 	}
 }
 

@@ -4,6 +4,8 @@ import { useState, useEffect } from "preact/hooks";
 import { navigate, navigateToPolicy, selectedPolicyId, selectedTimeRange, viewInvalidation } from "../app";
 import { apiFetch } from "../api/fetch";
 import { isStale, freshnessClass, relativeTime } from "../lib/freshness";
+import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate } from "../lib/format";
 
 interface PostureRow {
   policy_id: string;
@@ -180,15 +182,35 @@ function PostureSummary({ rows }: { rows: PostureRow[] }) {
   );
 }
 
+function readinessLevel(row: PostureRow, riskSeverity?: string): "green" | "yellow" | "red" {
+  const severity = riskSeverity?.toLowerCase();
+  if (severity === "critical" || severity === "high") return "red";
+  if (!row.latest_evidence_at) return "red";
+  const ageMs = Date.now() - new Date(row.latest_evidence_at).getTime();
+  const days = ageMs / 86_400_000;
+  if (days > 30) return "red";
+  if (days > 7 || severity === "medium") return "yellow";
+  return "green";
+}
+
 function PostureCard({ row, riskSeverity }: { row: PostureRow; riskSeverity?: string }) {
   const passRate = row.total_rows > 0
     ? Math.round((row.passed_rows / row.total_rows) * 100)
     : 0;
+  const readiness = readinessLevel(row, riskSeverity);
 
   return (
-    <article class={`posture-card ${freshnessClass(row.latest_evidence_at)}`} data-policy-id={row.policy_id}>
+    <article
+      class={`posture-card ${freshnessClass(row.latest_evidence_at)}`}
+      data-policy-id={row.policy_id}
+      onClick={() => navigateToPolicy(row.policy_id)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={cardKeyHandler(() => navigateToPolicy(row.policy_id))}
+      aria-label={`View details for ${row.title}`}
+    >
       <div class="posture-card-header">
-        <h3>{row.title}</h3>
+        <h3><span class={`readiness-dot readiness-${readiness}`} aria-label={`Readiness: ${readiness}`} />{row.title}</h3>
         <div class="posture-card-meta">
           {riskSeverity && (
             <span class={`risk-badge risk-${riskSeverity.toLowerCase()}`} data-severity={riskSeverity}>
@@ -198,6 +220,25 @@ function PostureCard({ row, riskSeverity }: { row: PostureRow; riskSeverity?: st
           <span class="posture-version">{row.version || "latest"}</span>
         </div>
       </div>
+
+      {row.latest_evidence_at ? (
+        <p class="posture-latest" title={row.latest_evidence_at}>
+          Last evidence: {relativeTime(row.latest_evidence_at)}
+        </p>
+      ) : row.latest_at ? (
+        <p class="posture-latest">Latest: {fmtDate(row.latest_at)}</p>
+      ) : (
+        <p class="posture-latest posture-latest-missing">No evidence yet</p>
+      )}
+
+      {row.total_rows > 0 ? (
+        <div class="posture-counts">
+          <span class="count-pass">{row.passed_rows} passed</span>
+          <span class="count-finding">{row.failed_rows} failed</span>
+          <span class="count-gap">{row.other_rows} other</span>
+          <span class="count-observation">{passRate}% pass rate</span>
+        </div>
+      ) : null}
 
       <div class="posture-inventory">
         {(row.target_count ?? 0) > 0 && (
@@ -210,32 +251,6 @@ function PostureCard({ row, riskSeverity }: { row: PostureRow; riskSeverity?: st
           {row.owner ? `Owner: ${row.owner}` : "No owner"}
         </span>
       </div>
-
-      <PostureBar passed={row.passed_rows} failed={row.failed_rows} other={row.other_rows} total={row.total_rows} />
-
-      {row.total_rows > 0 ? (
-        <div class="posture-counts">
-          <span class="count-pass">{row.passed_rows} passed</span>
-          <span class="count-finding">{row.failed_rows} failed</span>
-          <span class="count-gap">{row.other_rows} other</span>
-          <span class="count-observation">{passRate}% pass rate</span>
-        </div>
-      ) : (
-        <p class="posture-no-audit">No evidence yet</p>
-      )}
-      {row.latest_evidence_at ? (
-        <p class="posture-latest" title={row.latest_evidence_at}>
-          Last evidence: {relativeTime(row.latest_evidence_at)}
-        </p>
-      ) : row.latest_at ? (
-        <p class="posture-latest">Latest: {new Date(row.latest_at).toLocaleDateString()}</p>
-      ) : null}
-      <button
-        class="btn btn-sm btn-primary posture-drilldown-btn"
-        onClick={() => navigateToPolicy(row.policy_id)}
-      >
-        View Details
-      </button>
     </article>
   );
 }
