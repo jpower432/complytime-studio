@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { selectedPolicyId, selectedTimeRange, viewInvalidation, updateHash, navigateToAudit } from "../app";
 import { apiFetch } from "../api/fetch";
-import { cardKeyHandler } from "../lib/a11y";
+import { fmtDate, displayName } from "../lib/format";
 
 interface AuditLog {
   audit_id: string;
@@ -31,6 +31,9 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
   const [endFilter, setEndFilter] = useState("");
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedContent, setExpandedContent] = useState<string | null>(null);
+  const expandedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     apiFetch("/api/policies")
@@ -84,6 +87,35 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
     try { return JSON.parse(s); } catch { return null; }
   };
 
+  const toggleExpand = (log: AuditLog) => {
+    if (expandedId === log.audit_id) {
+      setExpandedId(null);
+      setExpandedContent(null);
+      expandedIdRef.current = null;
+      return;
+    }
+    if (log.content) {
+      setExpandedId(log.audit_id);
+      setExpandedContent(log.content);
+      expandedIdRef.current = log.audit_id;
+      return;
+    }
+    setExpandedId(log.audit_id);
+    setExpandedContent(null);
+    expandedIdRef.current = log.audit_id;
+    const requestedId = log.audit_id;
+    apiFetch(`/api/audit-logs/${encodeURIComponent(log.audit_id)}`)
+      .then((r) => { if (!r.ok) throw new Error("not found"); return r.json(); })
+      .then((full: AuditLog) => {
+        if (expandedIdRef.current !== requestedId) return;
+        setExpandedContent(full.content || full.summary);
+      })
+      .catch(() => {
+        if (expandedIdRef.current !== requestedId) return;
+        setExpandedContent("Failed to load audit content.");
+      });
+  };
+
   const auditIds = logs.map((l) => l.audit_id);
 
   return (
@@ -128,36 +160,59 @@ export function AuditHistoryView({ policyIdOverride }: { policyIdOverride?: stri
           <p>{policyId ? "No audit logs for this policy." : "Select a policy to view audit history."}</p>
         </div>
       ) : (
-        <div class="audit-card-list">
+        <div class="audit-list">
           {logs.map((log) => {
             const summary = parseSummary(log.summary);
+            const open = expandedId === log.audit_id;
             return (
-              <article
-                key={log.audit_id}
-                class="audit-card"
-                onClick={() => navigateToAudit(log.audit_id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={cardKeyHandler(() => navigateToAudit(log.audit_id))}
-                aria-label={`View audit for ${new Date(log.audit_start).toLocaleDateString()} — ${new Date(log.audit_end).toLocaleDateString()}`}
-              >
-                <div class="audit-card-header">
-                  <span class="audit-period">
-                    {new Date(log.audit_start).toLocaleDateString()} — {new Date(log.audit_end).toLocaleDateString()}
-                  </span>
-                  {log.framework && <span class="audit-framework">{log.framework}</span>}
+              <article key={log.audit_id} class={`audit-card ${open ? "audit-card-expanded" : ""}`}>
+                <div
+                  class="audit-card-header"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={open}
+                  aria-label={`Audit ${fmtDate(log.audit_start)} — ${fmtDate(log.audit_end)}, ${open ? "collapse" : "expand"}`}
+                  onClick={() => toggleExpand(log)}
+                  onKeyDown={(e: KeyboardEvent) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleExpand(log);
+                    }
+                  }}
+                >
+                  <div class="audit-card-left">
+                    <span class="audit-period">
+                      {fmtDate(log.audit_start)} — {fmtDate(log.audit_end)}
+                    </span>
+                    {log.framework && <span class="audit-framework">{log.framework}</span>}
+                  </div>
+                  {summary && (
+                    <div class="posture-counts">
+                      <span class="count-pass">{summary.strengths ?? 0} strengths</span>
+                      <span class="count-finding">{summary.findings ?? 0} findings</span>
+                      <span class="count-gap">{summary.gaps ?? 0} gaps</span>
+                    </div>
+                  )}
+                  <div class="audit-card-meta">
+                    <span>{displayName(log.created_by)}</span>
+                    <span>{fmtDate(log.created_at)}</span>
+                    <span class="audit-expand-indicator" aria-hidden="true">{open ? "\u25B2" : "\u25BC"}</span>
+                  </div>
                 </div>
-                {summary && (
-                  <div class="posture-counts">
-                    <span class="count-pass">{summary.strengths ?? 0} strengths</span>
-                    <span class="count-finding">{summary.findings ?? 0} findings</span>
-                    <span class="count-gap">{summary.gaps ?? 0} gaps</span>
+                {open && (
+                  <div class="audit-card-body">
+                    {expandedContent ? (
+                      <pre class="yaml-viewer">{expandedContent}</pre>
+                    ) : (
+                      <div class="view-loading">Loading...</div>
+                    )}
+                    <div class="audit-card-actions">
+                      <button class="btn btn-sm btn-secondary" onClick={() => navigateToAudit(log.audit_id)}>
+                        Open Workspace
+                      </button>
+                    </div>
                   </div>
                 )}
-                <div class="audit-card-meta">
-                  <span>{log.created_by || "system"}</span>
-                  <span>{new Date(log.created_at).toLocaleDateString()}</span>
-                </div>
               </article>
             );
           })}
