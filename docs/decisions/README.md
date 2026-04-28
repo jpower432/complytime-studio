@@ -26,5 +26,9 @@
 | [Filter Chip Pattern](filter-chip-pattern.md) | Accepted | 2026-04-26 |
 | [Evidence Staleness Model](evidence-staleness-model.md) | Accepted | 2026-04-26 |
 | [Evidence Filter Bar](evidence-filter-bar.md) | Accepted | 2026-04-26 |
+| [Settings UX: Sidebar Bottom Gear Icon](settings-ux-placement.md) | Accepted | 2026-04-27 |
+| [Balanced Color Palette](muted-color-palette.md) | Accepted | 2026-04-27 |
+| [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
+| [External Authorization Engine](external-authz-engine.md) | Deferred (trigger: RACI Phase 3) | 2026-04-27 |
 
 > **Related:** [Session Token Storage](session-token-storage.md) discusses OAuth access-token storage; [ADR-001](session-persistence-storage.md) covers server-side **conversation** persistence (`GET/PUT /api/chat/history`).

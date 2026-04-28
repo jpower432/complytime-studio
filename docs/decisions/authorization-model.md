@@ -1,6 +1,6 @@
 # Authorization Model: RACI-Scoped Multi-Tenancy
 
-**Status:** Exploratory
+**Status:** Superseded by simple-authz (admin/reviewer RBAC)
 **Date:** 2026-04-21
 
 ## Context
