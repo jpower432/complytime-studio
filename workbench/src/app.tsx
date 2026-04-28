@@ -15,6 +15,7 @@ import { AuditWorkspaceView } from "./components/audit-workspace-view";
 import { ChatAssistant } from "./components/chat-assistant";
 import { fetchMe, redirectToLogin, type UserInfo } from "./api/auth";
 import { apiFetch } from "./api/fetch";
+import { registerNames } from "./lib/format";
 
 export type View = "posture" | "posture-detail" | "policies" | "evidence" | "inbox" | "settings" | "audit";
 
@@ -148,6 +149,9 @@ syncFromHash();
 fetchMe().then((user) => {
   currentUser.value = user;
   authChecked.value = true;
+  if (user?.email) {
+    registerNames([{ email: user.email, name: user.name }]);
+  }
 });
 
 function SetupBanner() {
@@ -170,6 +174,7 @@ function SetupBanner() {
       if (res.ok) {
         const me = await fetchMe();
         currentUser.value = me;
+        if (me?.email) registerNames([{ email: me.email, name: me.name }]);
         setNeedsSetup(false);
       } else {
         const body = await res.json().catch(() => ({ error: "Setup failed" }));
@@ -187,7 +192,7 @@ function SetupBanner() {
   return (
     <div class="setup-banner">
       <span>No admin configured. Complete initial setup to get started.</span>
-      {error && <span class="setup-banner-error">{error}</span>}
+      {error && <span class="setup-banner-error" role="alert">{error}</span>}
       <button class="btn btn-primary btn-sm" disabled={claiming} onClick={claim}>
         {claiming ? "Setting up..." : "Complete Setup"}
       </button>
