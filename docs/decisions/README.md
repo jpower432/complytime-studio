@@ -30,5 +30,7 @@
 | [Balanced Color Palette](muted-color-palette.md) | Accepted | 2026-04-27 |
 | [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
 | [External Authorization Engine](external-authz-engine.md) | Deferred (trigger: RACI Phase 3) | 2026-04-27 |
+| [Agent Trust Model Deferred](trust-model-deferred.md) | Rejected for v1 | 2026-04-29 |
+| [Hash-Chained Audit Provenance Deferred](audit-provenance-deferred.md) | Deferred (trigger: regulatory requirement or Trillian) | 2026-04-29 |
 
 > **Related:** [Session Token Storage](session-token-storage.md) discusses OAuth access-token storage; [ADR-001](session-persistence-storage.md) covers server-side **conversation** persistence (`GET/PUT /api/chat/history`).
