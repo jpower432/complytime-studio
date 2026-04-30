@@ -403,6 +403,17 @@ func schemaMigrations() []migration {
 			) ENGINE = MergeTree
 			ORDER BY (changed_at, target_email)`,
 		},
+		{
+			Version:     15,
+			Description: "add sub column to users table for generic OIDC support",
+			// Single ADD COLUMN per statement — ClickHouse silently no-ops multi-column ADD COLUMN.
+			SQL: `ALTER TABLE users ADD COLUMN IF NOT EXISTS sub String DEFAULT ''`,
+		},
+		{
+			Version:     16,
+			Description: "add issuer column to users table for generic OIDC support",
+			SQL: `ALTER TABLE users ADD COLUMN IF NOT EXISTS issuer String DEFAULT ''`,
+		},
 	}
 }
 

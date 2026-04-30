@@ -191,18 +191,34 @@ func main() {
 		}
 	}
 
-	authCfg := auth.Config{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		CallbackURL:  httputil.EnvOr("GOOGLE_CALLBACK_URL", "http://localhost:8080/auth/callback"),
-	}
+	authCfg := auth.ConfigFromEnv()
 	secretKey := cookieSecretKey(authCfg.ClientID != "")
+
+	// OIDC discovery with bounded startup retry (2s base, 30s cap, 5min total).
+	if authCfg.ClientID != "" {
+		provider, discErr := auth.DiscoverWithRetry(ctx, authCfg.Provider.IssuerURL)
+		if discErr != nil {
+			slog.Error("oidc discovery failed — cannot start with auth enabled", "error", discErr)
+			os.Exit(1)
+		}
+		authCfg.Provider = provider
+		slog.Info("oidc discovery succeeded", "issuer", provider.IssuerURL)
+	}
+
 	sessionStore := auth.NewMemorySessionStore()
 	authHandler, err := auth.NewHandler(authCfg, secretKey, sessionStore)
 	if err != nil {
 		slog.Error("auth handler init failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Periodic discovery refresh goroutine.
+	if authCfg.ClientID != "" && authCfg.Provider != nil {
+		refreshInterval := auth.ParseDiscoveryRefreshInterval()
+		auth.StartRefreshLoop(ctx, authCfg.Provider.IssuerURL, refreshInterval, authHandler.UpdateProvider)
+		slog.Info("oidc discovery refresh loop started", "interval", refreshInterval)
+	}
+
 	if st != nil {
 		authHandler.SetUserStore(st)
 		slog.Info("persistent user store enabled — first user to sign in becomes admin")
@@ -273,7 +289,7 @@ func main() {
 		}
 		adminGuard := auth.RequireAdmin(userStore)
 		handler = authHandler.Middleware(writeProtect(mux, adminGuard))
-		slog.Info("auth enabled", "provider", "google-oauth")
+		slog.Info("auth enabled", "issuer", authCfg.Provider.IssuerURL)
 	} else {
 		slog.Info("auth disabled")
 	}

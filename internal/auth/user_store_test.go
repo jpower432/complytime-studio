@@ -25,19 +25,33 @@ func newMemoryUserStore() *memoryUserStore {
 	return &memoryUserStore{users: make(map[string]*User)}
 }
 
-func (m *memoryUserStore) UpsertUser(_ context.Context, email, name, avatarURL string) error {
+func (m *memoryUserStore) UpsertUser(_ context.Context, sub, issuer, email, name, avatarURL string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u, ok := m.users[email]; ok {
+		u.Sub = sub
+		u.Issuer = issuer
 		u.Name = name
 		u.AvatarURL = avatarURL
 		return nil
 	}
 	m.users[email] = &User{
+		Sub: sub, Issuer: issuer,
 		Email: email, Name: name, AvatarURL: avatarURL,
 		Role: consts.RoleReviewer, CreatedAt: time.Now(),
 	}
 	return nil
+}
+
+func (m *memoryUserStore) GetUserBySub(_ context.Context, sub, issuer string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if u.Sub == sub && u.Issuer == issuer {
+			return u, nil
+		}
+	}
+	return nil, ErrUserNotFound
 }
 
 func (m *memoryUserStore) GetUser(_ context.Context, email string) (*User, error) {
@@ -107,9 +121,9 @@ func (m *memoryUserStore) ListRoleChanges(_ context.Context) ([]RoleChange, erro
 func TestRequireAdmin_WithUserStore(t *testing.T) {
 	h := testHandler(t)
 	us := newMemoryUserStore()
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "https://issuer", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-viewer", "https://issuer", "viewer@co.com", "Viewer", "")
 
 	guard := RequireAdmin(us)
 
@@ -147,7 +161,7 @@ func TestHandleMe_WithUserStore(t *testing.T) {
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
-	_ = us.UpsertUser(context.TODO(), "test@co.com", "Test", "")
+	_ = us.UpsertUser(context.TODO(), "sub-test", "https://issuer", "test@co.com", "Test", "")
 	_, _ = us.SetRole(context.TODO(), "test@co.com", consts.RoleAdmin)
 
 	sess := ServerSession{
@@ -176,9 +190,9 @@ func TestHandleSetRole(t *testing.T) {
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "https://issuer", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "target@co.com", "Target", "")
+	_ = us.UpsertUser(context.TODO(), "sub-target", "https://issuer", "target@co.com", "Target", "")
 
 	sess := ServerSession{Email: "admin@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	cookie := createSession(t, h, sess)
@@ -217,7 +231,7 @@ func TestHandleSetRole_InvalidRole(t *testing.T) {
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "https://issuer", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
 
 	mux := http.NewServeMux()
@@ -240,9 +254,9 @@ func TestHandleListUsers_AdminRequired(t *testing.T) {
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "https://issuer", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-viewer", "https://issuer", "viewer@co.com", "Viewer", "")
 
 	mux := http.NewServeMux()
 	h.RegisterUserAPI(mux)

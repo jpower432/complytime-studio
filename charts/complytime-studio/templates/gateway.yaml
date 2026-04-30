@@ -91,7 +91,35 @@ spec:
             - name: REGISTRY_INSECURE
               value: "studio-registry:{{ .Values.registry.service.port }}"
             {{- end }}
-            {{- if .Values.auth.google.clientId }}
+            {{- if .Values.auth.oidc.issuerUrl }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.auth.oidc.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.auth.oidc.clientId | quote }}
+            {{- if .Values.auth.oidc.secretName }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.oidc.secretName }}
+                  key: {{ .Values.auth.oidc.secretKey }}
+            {{- end }}
+            - name: OIDC_CALLBACK_URL
+              value: {{ .Values.auth.oidc.callbackUrl | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.auth.oidc.scopes | quote }}
+            {{- if .Values.auth.oidc.rolesClaim }}
+            - name: OIDC_ROLES_CLAIM
+              value: {{ .Values.auth.oidc.rolesClaim | quote }}
+            {{- end }}
+            {{- if .Values.auth.oidc.bootstrapEmails }}
+            - name: OIDC_BOOTSTRAP_EMAILS
+              value: {{ join "," .Values.auth.oidc.bootstrapEmails | quote }}
+            {{- end }}
+            - name: OIDC_DISCOVERY_REFRESH
+              value: {{ .Values.auth.oidc.discoveryRefresh | default "24h" | quote }}
+            {{- end }}
+            {{- /* DEPRECATED: google.* values map to OIDC_* at runtime with a deprecation warning */}}
+            {{- if and .Values.auth.google.clientId (not .Values.auth.oidc.issuerUrl) }}
             - name: GOOGLE_CLIENT_ID
               value: {{ .Values.auth.google.clientId | quote }}
             - name: GOOGLE_CLIENT_SECRET
@@ -99,18 +127,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.google.secretName }}
                   key: {{ .Values.auth.google.secretKey }}
+            {{- if .Values.auth.google.callbackUrl }}
             - name: GOOGLE_CALLBACK_URL
-              value: {{ .Values.auth.google.callbackURL | quote }}
+              value: {{ .Values.auth.google.callbackUrl | quote }}
+            {{- end }}
             {{- end }}
             - name: COOKIE_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.cookieSecretName | default "studio-cookie-secret" }}
                   key: cookie-secret
-            {{- if .Values.auth.admins }}
-            - name: ADMIN_EMAILS
-              value: {{ join "," .Values.auth.admins | quote }}
-            {{- end }}
             {{- if .Values.auth.apiToken }}
             - name: STUDIO_API_TOKEN
               value: {{ .Values.auth.apiToken | quote }}

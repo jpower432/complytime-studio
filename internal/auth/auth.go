@@ -7,6 +7,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -27,10 +28,6 @@ const (
 	sessionCookieName = "studio_session"
 	stateCookieName   = "studio_oauth_state"
 	sessionMaxAge     = 8 * time.Hour
-
-	googleAuthURL  = "https://accounts.google.com/o/oauth2/v2/auth"
-	googleTokenURL = "https://oauth2.googleapis.com/token"
-	googleUserURL  = "https://openidconnect.googleapis.com/v1/userinfo"
 )
 
 var (
@@ -42,11 +39,15 @@ var (
 	ErrSessionExpired = errors.New("session expired")
 )
 
-// Config holds Google OAuth application credentials.
+// Config holds OIDC application credentials and behaviour settings.
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	CallbackURL  string
+	ClientID        string
+	ClientSecret    string
+	CallbackURL     string
+	Provider        *OIDCProvider
+	Scopes          string
+	RolesClaim      string
+	BootstrapEmails []string
 }
 
 // Session represents the authenticated user session injected into request
@@ -64,6 +65,12 @@ type Session struct {
 // cookiePayload is the encrypted cookie content — only a session ID.
 type cookiePayload struct {
 	SessionID string `json:"sid"`
+}
+
+// stateCookiePayload carries the OAuth state nonce and PKCE code_verifier.
+type stateCookiePayload struct {
+	State        string `json:"s"`
+	CodeVerifier string `json:"cv"`
 }
 
 // UserInfo is the public-facing user info returned by /auth/me.
@@ -121,11 +128,11 @@ type Handler struct {
 	apiToken  string
 	store     SessionStore
 	users     UserStore
+	jwks      *JWKSCache
 }
 
 // NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
-// (AES-256). Session cookies are encrypted with AES-GCM. The cookie now
-// carries only a session ID; tokens are stored in the SessionStore.
+// (AES-256). Session cookies are encrypted with AES-GCM.
 func NewHandler(cfg Config, secretKey []byte, store SessionStore) (*Handler, error) {
 	block, err := aes.NewCipher(secretKey)
 	if err != nil {
@@ -135,7 +142,11 @@ func NewHandler(cfg Config, secretKey []byte, store SessionStore) (*Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("auth: GCM init: %w", err)
 	}
-	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store}, nil
+	h := &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store}
+	if cfg.Provider != nil {
+		h.jwks = newJWKSCache(cfg.Provider.JWKSURL, time.Hour)
+	}
+	return h, nil
 }
 
 // SetUserStore configures the persistent user/role store.
@@ -144,9 +155,17 @@ func (h *Handler) SetUserStore(us UserStore) {
 }
 
 // SetAPIToken configures a static bearer token that bypasses session auth.
-// Intended for dev/CI seeding scripts. No-op if token is empty.
 func (h *Handler) SetAPIToken(token string) {
 	h.apiToken = token
+}
+
+// UpdateProvider hot-swaps the OIDC provider after a discovery refresh.
+// Called by the periodic refresh goroutine in main.go.
+func (h *Handler) UpdateProvider(p *OIDCProvider) {
+	h.cfg.Provider = p
+	if h.jwks != nil {
+		h.jwks.jwksURL = p.JWKSURL
+	}
 }
 
 // Register mounts auth endpoints on the mux.
@@ -211,8 +230,7 @@ func (h *Handler) handlePutChatHistory(cs ChatStore) http.HandlerFunc {
 	}
 }
 
-// TokenFromRequest looks up the server-side session and returns the access
-// token. Satisfies the httputil.TokenProvider interface.
+// TokenFromRequest looks up the server-side session and returns the access token.
 func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
 	sid, err := h.sessionIDFromCookie(r)
 	if err != nil {
@@ -230,8 +248,6 @@ func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
 
 // Middleware returns an http.Handler that requires a valid session cookie
 // on all /api/* paths. It injects the Session into request context.
-// When an API token is configured, requests with a matching
-// Authorization: Bearer header bypass the session cookie check.
 func (h *Handler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
@@ -285,10 +301,25 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Provider == nil {
+		http.Error(w, "OIDC provider not configured", http.StatusServiceUnavailable)
+		authLoginTotal.Add("error", 1)
+		return
+	}
+
 	state := generateState()
+	codeVerifier := generateCodeVerifier()
+
+	payload, err := json.Marshal(stateCookiePayload{State: state, CodeVerifier: codeVerifier})
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		authLoginTotal.Add("error", 1)
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     stateCookieName,
-		Value:    state,
+		Value:    base64.RawURLEncoding.EncodeToString(payload),
 		Path:     "/auth",
 		MaxAge:   600,
 		HttpOnly: true,
@@ -296,21 +327,42 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   isSecureRequest(r),
 	})
 
-	params := url.Values{
-		"client_id":     {h.cfg.ClientID},
-		"redirect_uri":  {h.cfg.CallbackURL},
-		"response_type": {"code"},
-		"scope":         {"openid email profile"},
-		"state":         {state},
-		"access_type":   {"online"},
+	scopes := h.cfg.Scopes
+	if scopes == "" {
+		scopes = "openid email profile"
 	}
-	http.Redirect(w, r, googleAuthURL+"?"+params.Encode(), http.StatusFound)
+
+	params := url.Values{
+		"client_id":             {h.cfg.ClientID},
+		"redirect_uri":          {h.cfg.CallbackURL},
+		"response_type":         {"code"},
+		"scope":                 {scopes},
+		"state":                 {state},
+		"code_challenge":        {pkceChallenge(codeVerifier)},
+		"code_challenge_method": {"S256"},
+	}
+	authLoginTotal.Add("success", 1)
+	http.Redirect(w, r, h.cfg.Provider.AuthURL+"?"+params.Encode(), http.StatusFound)
 }
 
 func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie(stateCookieName)
-	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
+	if err != nil {
 		http.Error(w, "invalid state parameter", http.StatusForbidden)
+		authCallbackTotal.Add("invalid_state", 1)
+		return
+	}
+
+	rawPayload, err := base64.RawURLEncoding.DecodeString(stateCookie.Value)
+	if err != nil {
+		http.Error(w, "invalid state parameter", http.StatusForbidden)
+		authCallbackTotal.Add("invalid_state", 1)
+		return
+	}
+	var statePayload stateCookiePayload
+	if err := json.Unmarshal(rawPayload, &statePayload); err != nil || statePayload.State != r.URL.Query().Get("state") {
+		http.Error(w, "invalid state parameter", http.StatusForbidden)
+		authCallbackTotal.Add("invalid_state", 1)
 		return
 	}
 	clearCookie(w, stateCookieName, "/auth", isSecureRequest(r))
@@ -318,46 +370,56 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", http.StatusBadRequest)
+		authCallbackTotal.Add("token_error", 1)
 		return
 	}
 
-	tokenResp, err := exchangeCode(r.Context(), h.cfg, code)
+	if h.cfg.Provider == nil || h.jwks == nil {
+		http.Error(w, "OIDC provider not configured", http.StatusServiceUnavailable)
+		authCallbackTotal.Add("token_error", 1)
+		return
+	}
+
+	tokenResp, err := exchangeCode(r.Context(), h.cfg, code, statePayload.CodeVerifier)
 	if err != nil {
-		slog.Error("oauth token exchange failed", "error", err)
+		slog.Error("oidc token exchange failed", "error", err)
 		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
+		authCallbackTotal.Add("token_error", 1)
 		return
 	}
 
-	user, err := fetchGoogleUser(r.Context(), tokenResp.AccessToken)
+	// Cryptographic verification of the ID token.
+	claims, err := h.jwks.VerifyIDToken(r.Context(), tokenResp.IDToken, h.cfg.Provider.IssuerURL, h.cfg.ClientID)
 	if err != nil {
-		slog.Error("oauth user fetch failed", "error", err)
+		slog.Error("oidc id token verification failed", "error", err)
 		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
+		authCallbackTotal.Add("verify_error", 1)
 		return
 	}
 
-	groups := groupsFromIDToken(tokenResp.IDToken)
+	// When the discovery document omits userinfo_endpoint, fall back to the
+	// verified ID token claims rather than failing the login.
+	var user *oidcUser
+	if h.cfg.Provider.UserInfoURL == "" {
+		slog.Warn("oidc: userinfo_endpoint absent — building profile from ID token claims")
+		user = &oidcUser{
+			Sub:     claims.Subject,
+			Email:   claims.Email,
+			Name:    claims.Name,
+			Picture: claims.Picture,
+		}
+	} else {
+		user, err = fetchUserInfo(r.Context(), h.cfg.Provider.UserInfoURL, tokenResp.AccessToken)
+		if err != nil {
+			slog.Error("oidc userinfo fetch failed", "error", err)
+			http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
+			authCallbackTotal.Add("userinfo_error", 1)
+			return
+		}
+	}
 
 	if h.users != nil {
-		adminCount, adminErr := h.users.CountAdmins(r.Context())
-		if adminErr != nil {
-			slog.Error("admin count check failed (login continues)", "error", adminErr)
-		}
-		if err := h.users.UpsertUser(r.Context(), user.Email, user.Name, user.Picture); err != nil {
-			slog.Error("user upsert failed (login continues)", "error", err)
-		}
-		if adminErr == nil && adminCount == 0 {
-			if _, err := h.users.SetRole(r.Context(), user.Email, consts.RoleAdmin); err != nil {
-				slog.Error("first-admin promotion failed", "error", err)
-			} else {
-				slog.Info("first admin promoted", "email", user.Email)
-				_ = h.users.InsertRoleChange(r.Context(), RoleChange{
-					ChangedBy:   "system",
-					TargetEmail: user.Email,
-					OldRole:     consts.RoleReviewer,
-					NewRole:     consts.RoleAdmin,
-				})
-			}
-		}
+		h.seedUserRole(r.Context(), claims, user)
 	}
 
 	sid := generateSessionID()
@@ -367,7 +429,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Name:        user.Name,
 		AvatarURL:   user.Picture,
 		Email:       user.Email,
-		Groups:      groups,
+		Groups:      claims.Groups,
 		ExpiresAt:   time.Now().Add(sessionMaxAge).Unix(),
 	}
 	if err := h.store.Put(r.Context(), sid, serverSess); err != nil {
@@ -375,13 +437,92 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
-
 	if err := h.setSessionCookie(w, r, sid); err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
 
+	authCallbackTotal.Add("success", 1)
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// seedUserRole implements the role seeding algorithm from the design spec.
+// Existing users keep their DB role; new users are seeded from JWT claims,
+// bootstrap allowlist, or first-admin promotion.
+func (h *Handler) seedUserRole(ctx context.Context, claims *IDTokenClaims, user *oidcUser) {
+	// Check existence BEFORE upsert so we can distinguish new vs. returning users.
+	_, lookupErr := h.users.GetUserBySub(ctx, claims.Subject, h.cfg.Provider.IssuerURL)
+	switch {
+	case lookupErr == nil:
+		// Returning user — DB role is authoritative, skip all mutation.
+		if err := h.users.UpsertUser(ctx, claims.Subject, h.cfg.Provider.IssuerURL, user.Email, user.Name, user.Picture); err != nil {
+			slog.Error("user upsert failed (login continues)", "error", err)
+		}
+		return
+	case errors.Is(lookupErr, ErrUserNotFound):
+		// New user — fall through to seeding logic.
+	default:
+		// Genuine store error: we cannot safely determine new vs. returning, so we
+		// skip role seeding entirely to avoid silently bypassing returning-user checks.
+		// The session is still created; the user will appear as reviewer until the
+		// store recovers and they log in again.
+		slog.Error("GetUserBySub store error — skipping role seeding (login continues as reviewer)", "error", lookupErr)
+		if err := h.users.UpsertUser(ctx, claims.Subject, h.cfg.Provider.IssuerURL, user.Email, user.Name, user.Picture); err != nil {
+			slog.Error("user upsert failed (login continues)", "error", err)
+		}
+		return
+	}
+
+	if err := h.users.UpsertUser(ctx, claims.Subject, h.cfg.Provider.IssuerURL, user.Email, user.Name, user.Picture); err != nil {
+		slog.Error("user upsert failed (login continues)", "error", err)
+	}
+
+	// New user: determine role.
+
+	// Bootstrap allowlist gate: when configured, only listed emails can become admin.
+	if len(h.cfg.BootstrapEmails) > 0 && !contains(h.cfg.BootstrapEmails, user.Email) {
+		slog.Info("new user not in bootstrap allowlist — assigning reviewer", "email", user.Email)
+		return
+	}
+
+	// JWT seed: verified ID token carries an admin role claim.
+	jwtRoles := claims.ExtractRolesClaim(h.cfg.RolesClaim)
+	if claims.EmailVerified && containsStr(jwtRoles, consts.RoleAdmin) {
+		if _, err := h.users.SetRole(ctx, user.Email, consts.RoleAdmin); err != nil {
+			slog.Error("jwt role seed failed", "email", user.Email, "error", err)
+		} else {
+			slog.Info("new user seeded as admin from JWT claim", "email", user.Email)
+			_ = h.users.InsertRoleChange(ctx, RoleChange{
+				ChangedBy: "jwt-seed", TargetEmail: user.Email,
+				OldRole: consts.RoleReviewer, NewRole: consts.RoleAdmin,
+			})
+		}
+		return
+	}
+
+	// email_verified gate: unverified email cannot become admin.
+	if !claims.EmailVerified {
+		slog.Warn("new user email not verified — skipping admin promotion", "email", user.Email)
+		return
+	}
+
+	// First-admin promotion: atomic INSERT-if-zero-admins.
+	adminCount, adminErr := h.users.CountAdmins(ctx)
+	if adminErr != nil {
+		slog.Error("admin count check failed (login continues)", "error", adminErr)
+		return
+	}
+	if adminCount == 0 {
+		if _, err := h.users.SetRole(ctx, user.Email, consts.RoleAdmin); err != nil {
+			slog.Error("first-admin promotion failed", "email", user.Email, "error", err)
+		} else {
+			slog.Info("first admin promoted", "email", user.Email)
+			_ = h.users.InsertRoleChange(ctx, RoleChange{
+				ChangedBy: "first-admin", TargetEmail: user.Email,
+				OldRole: consts.RoleReviewer, NewRole: consts.RoleAdmin,
+			})
+		}
+	}
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -423,14 +564,12 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sid s
 	if err != nil {
 		return err
 	}
-
 	nonce := make([]byte, h.gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return fmt.Errorf("generate nonce: %w", err)
 	}
 	ciphertext := h.gcm.Seal(nonce, nonce, plaintext, nil)
 	value := base64.RawURLEncoding.EncodeToString(ciphertext)
-
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
@@ -443,29 +582,24 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sid s
 	return nil
 }
 
-// sessionIDFromCookie decrypts the cookie and returns the session ID.
 func (h *Handler) sessionIDFromCookie(r *http.Request) (string, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return "", err
 	}
-
 	ciphertext, err := base64.RawURLEncoding.DecodeString(cookie.Value)
 	if err != nil {
 		return "", fmt.Errorf("decode cookie: %w", err)
 	}
-
 	nonceSize := h.gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
 		return "", fmt.Errorf("malformed session cookie")
 	}
 	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
-
 	plaintext, err := h.gcm.Open(nil, nonce, sealed, nil)
 	if err != nil {
 		return "", fmt.Errorf("decrypt session: %w", err)
 	}
-
 	var payload cookiePayload
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
 		return "", err
@@ -482,21 +616,41 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-// tokenResponse holds the result of a Google OAuth token exchange.
+func generateState() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// generateCodeVerifier returns a high-entropy PKCE code_verifier (RFC 7636).
+func generateCodeVerifier() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// pkceChallenge computes the S256 code_challenge for a given verifier.
+func pkceChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+// tokenResponse holds the result of an OIDC token exchange.
 type tokenResponse struct {
 	AccessToken string
 	IDToken     string
 }
 
-func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse, error) {
+func exchangeCode(ctx context.Context, cfg Config, code, codeVerifier string) (*tokenResponse, error) {
 	data := url.Values{
 		"client_id":     {cfg.ClientID},
 		"client_secret": {cfg.ClientSecret},
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {cfg.CallbackURL},
+		"code_verifier": {codeVerifier},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.Provider.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +664,7 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse,
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("google token endpoint %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("token endpoint %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
@@ -522,20 +676,21 @@ func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse,
 		return nil, err
 	}
 	if result.Error != "" {
-		return nil, fmt.Errorf("google: %s", result.Error)
+		return nil, fmt.Errorf("token error: %s", result.Error)
 	}
 	return &tokenResponse{AccessToken: result.AccessToken, IDToken: result.IDToken}, nil
 }
 
-type googleUser struct {
+// oidcUser holds the userinfo response fields.
+type oidcUser struct {
 	Sub     string `json:"sub"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`
 	Picture string `json:"picture"`
 }
 
-func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleUserURL, nil)
+func fetchUserInfo(ctx context.Context, userInfoURL, token string) (*oidcUser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -549,45 +704,13 @@ func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("google userinfo %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("userinfo %d: %s", resp.StatusCode, string(b))
 	}
-
-	var user googleUser
+	var user oidcUser
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, err
 	}
 	return &user, nil
-}
-
-// groupsFromIDToken extracts the "groups" claim from a Google OIDC ID token.
-// The ID token is a JWT; we decode the payload without signature verification
-// because the token was just received from Google's token endpoint over TLS.
-// Returns nil if the claim is absent or unparseable.
-func groupsFromIDToken(idToken string) []string {
-	if idToken == "" {
-		return nil
-	}
-	parts := strings.SplitN(idToken, ".", 3)
-	if len(parts) < 2 {
-		return nil
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil
-	}
-	var claims struct {
-		Groups []string `json:"groups"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil
-	}
-	return claims.Groups
-}
-
-func generateState() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 func clearCookie(w http.ResponseWriter, name, path string, secure bool) {
@@ -606,11 +729,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	httputil.WriteJSON(w, status, v)
 }
 
-// isSecureRequest returns true when the original client connection used TLS,
-// honoring X-Forwarded-Proto set by reverse proxies that terminate TLS.
 func isSecureRequest(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
 	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// containsStr is an alias for contains for readability at call sites.
+func containsStr(slice []string, s string) bool {
+	return contains(slice, s)
 }

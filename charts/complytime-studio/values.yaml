@@ -26,19 +26,38 @@ blobStorage:
   accessKey: ""
   secretKey: ""
 
-# -- Google OAuth for user authentication.
-# Create credentials at https://console.cloud.google.com/apis/credentials
-# Authorized redirect URI: http://localhost:8080/auth/callback
+# -- Authentication configuration.
+# Supports any OIDC-compliant provider (Keycloak, Okta, Azure AD, Google, etc.).
+# Set auth.oidc.issuerUrl and create a Kubernetes Secret for the client secret.
 auth:
+  oidc:
+    # issuerUrl must expose /.well-known/openid-configuration
+    # Example (Google): https://accounts.google.com
+    # Example (Keycloak): https://keycloak.example.com/realms/myrealm
+    issuerUrl: ""
+    clientId: ""
+    # Name of the Kubernetes Secret containing "client-secret"
+    secretName: studio-oauth-credentials
+    secretKey: client-secret
+    callbackUrl: "http://localhost:8080/auth/callback"
+    scopes: "openid email profile"
+    # Dot-path into verified ID token to extract role claim.
+    # Example (Keycloak): "realm_access.roles"
+    rolesClaim: ""
+    # Comma-separated email allowlist for first-admin promotion.
+    # When empty, the first user to sign in becomes admin.
+    bootstrapEmails: []
+    # How often to refresh the OIDC discovery document (default 24h).
+    discoveryRefresh: "24h"
+  # DEPRECATED: use auth.oidc.* instead. These values are mapped to
+  # OIDC_* equivalents at startup with a deprecation warning.
+  # Removal planned for v2.0.
   google:
     clientId: ""
     secretName: studio-oauth-credentials
     secretKey: client-secret
-    callbackURL: "http://localhost:8080/auth/callback"
+    callbackUrl: ""
   cookieSecretName: ""
-  # Admin email allowlist. When empty, all authenticated users are admins.
-  # Viewers can read policies/evidence and chat, but cannot import or upload.
-  admins: []
   # Static bearer token for dev/CI seeding (STUDIO_API_TOKEN).
   # Leave empty to disable.
   apiToken: "dev-seed-token"

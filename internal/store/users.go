@@ -12,33 +12,34 @@ import (
 	"github.com/complytime/complytime-studio/internal/consts"
 )
 
-// UpsertUser inserts a new user or updates name/avatar for an existing one.
-// Preserves the existing role to avoid ReplacingMergeTree overwriting it
-// with the DDL default on every login.
-func (s *Store) UpsertUser(ctx context.Context, email, name, avatarURL string) error {
+// UpsertUser inserts or updates a user keyed on (sub, issuer).
+// If a user with the same email already exists (from before sub-based keying),
+// the row is updated to add sub/issuer. Role is preserved via ReplacingMergeTree.
+func (s *Store) UpsertUser(ctx context.Context, sub, issuer, email, name, avatarURL string) error {
 	existing, err := s.GetUser(ctx, email)
 	switch {
 	case err == nil:
 		return s.conn.Exec(ctx, `
-			INSERT INTO users (email, name, avatar_url, role)
-			VALUES (?, ?, ?, ?)`,
-			email, name, avatarURL, existing.Role,
+			INSERT INTO users (sub, issuer, email, name, avatar_url, role)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			sub, issuer, email, name, avatarURL, existing.Role,
 		)
 	case errors.Is(err, auth.ErrUserNotFound):
 		return s.conn.Exec(ctx, `
-			INSERT INTO users (email, name, avatar_url)
-			VALUES (?, ?, ?)`,
-			email, name, avatarURL,
+			INSERT INTO users (sub, issuer, email, name, avatar_url)
+			VALUES (?, ?, ?, ?, ?)`,
+			sub, issuer, email, name, avatarURL,
 		)
 	default:
 		return fmt.Errorf("upsert user %s: %w", email, err)
 	}
 }
 
-// GetUser retrieves a user by email. Returns auth.ErrSessionNotFound if absent.
+// GetUser retrieves a user by email. Used by the user management API and middleware.
+// Returns auth.ErrUserNotFound if absent.
 func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT email, name, avatar_url, role, created_at
+		SELECT sub, issuer, email, name, avatar_url, role, created_at
 		FROM users FINAL
 		WHERE email = ?`, email)
 	if err != nil {
@@ -50,8 +51,30 @@ func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
 		return nil, fmt.Errorf("get user %s: %w", email, auth.ErrUserNotFound)
 	}
 	var u auth.User
-	if err := rows.Scan(&u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
+	if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 		return nil, fmt.Errorf("get user %s: %w", email, err)
+	}
+	return &u, nil
+}
+
+// GetUserBySub retrieves a user keyed on (sub, issuer). Used by the OIDC callback
+// to detect new vs. returning users without relying on mutable email.
+func (s *Store) GetUserBySub(ctx context.Context, sub, issuer string) (*auth.User, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT sub, issuer, email, name, avatar_url, role, created_at
+		FROM users FINAL
+		WHERE sub = ? AND issuer = ?`, sub, issuer)
+	if err != nil {
+		return nil, fmt.Errorf("get user by sub: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return nil, fmt.Errorf("get user (sub=%s issuer=%s): %w", sub, issuer, auth.ErrUserNotFound)
+	}
+	var u auth.User
+	if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
+		return nil, fmt.Errorf("get user by sub: %w", err)
 	}
 	return &u, nil
 }
@@ -59,7 +82,7 @@ func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
 // ListUsers returns all registered users.
 func (s *Store) ListUsers(ctx context.Context) ([]auth.User, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT email, name, avatar_url, role, created_at
+		SELECT sub, issuer, email, name, avatar_url, role, created_at
 		FROM users FINAL
 		ORDER BY created_at`)
 	if err != nil {
@@ -70,7 +93,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]auth.User, error) {
 	var users []auth.User
 	for rows.Next() {
 		var u auth.User
-		if err := rows.Scan(&u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -85,11 +108,10 @@ func (s *Store) SetRole(ctx context.Context, email, role string) (string, error)
 		return "", fmt.Errorf("set role: user %s not found: %w", email, err)
 	}
 	oldRole := u.Role
-
 	if err := s.conn.Exec(ctx, `
-		INSERT INTO users (email, name, avatar_url, role)
-		VALUES (?, ?, ?, ?)`,
-		u.Email, u.Name, u.AvatarURL, role,
+		INSERT INTO users (sub, issuer, email, name, avatar_url, role)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		u.Sub, u.Issuer, u.Email, u.Name, u.AvatarURL, role,
 	); err != nil {
 		return "", fmt.Errorf("set role for %s: %w", email, err)
 	}
