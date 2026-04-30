@@ -1,0 +1,12 @@
+{
+  "name": "complytime-studio-demo",
+  "private": true,
+  "scripts": {
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run --no-runner-ui",
+    "demo": "cypress run --no-runner-ui --spec 'cypress/e2e/soc2-gap-analysis.cy.ts'",
+    "demo:all": "cypress run --no-runner-ui --spec 'cypress/e2e/*.cy.ts'"
+  },
+  "devDependencies": {}
+  
+}

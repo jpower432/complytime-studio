@@ -35,7 +35,8 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
-	deploy oauth-secret
+	deploy oauth-secret \
+	demo demo-change demo-all
 
 test:
 	go test -v -race -cover ./...
@@ -146,4 +147,20 @@ deploy: gateway-image assistant-image
 # Requires: kubectl port-forward -n kagent svc/studio-gateway 8080:8080
 seed:
 	GATEWAY_URL=http://localhost:$(PORT) ./demo/seed.sh
+
+# Record the baseline SOC 2 gap analysis demo video.
+# Output: demo/cypress/videos/soc2-gap-analysis.cy.ts.mp4
+demo:
+	cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/soc2-gap-analysis.cy.ts'
+
+# Record demo video for a specific change.
+# Usage: CHANGE=generic-oidc-auth make demo-change
+demo-change:
+	@if [ -z "$$CHANGE" ]; then echo "error: CHANGE is required (e.g. CHANGE=generic-oidc-auth make demo-change)"; exit 1; fi
+	cd demo && npx cypress run --no-runner-ui --spec "cypress/e2e/$$CHANGE-demo.cy.ts"
+
+# Record all demo videos (baseline + all change demos).
+# Output: demo/cypress/videos/*.mp4
+demo-all:
+	cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/*.cy.ts'
 
