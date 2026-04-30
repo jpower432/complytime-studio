@@ -6,6 +6,7 @@ module.exports = {
   e2e: {
     baseUrl: process.env.STUDIO_URL || "http://localhost:8080",
     specPattern: "cypress/e2e/**/*.cy.ts",
+    excludeSpecPattern: ["**/_template.cy.ts"],
     supportFile: false,
     video: true,
     videoCompression: false,

@@ -15,7 +15,7 @@
 //   - STUDIO_API_TOKEN env var if auth is enabled
 //
 // Run:
-//   cd demo && npm run demo
+//   cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/soc2-gap-analysis.cy.ts'
 
 // ---------------------------------------------------------------------------
 // Inline helpers (self-contained — no shared import needed)

@@ -118,7 +118,7 @@ demo/
 │   │   └── demo-helpers.ts              # Helper reference (inline in specs)
 │   ├── videos/                          # .mp4 outputs (gitignored)
 │   └── screenshots/                     # Failure screenshots (gitignored)
-├── cypress.config.ts
+├── cypress.config.js
 ├── package.json
 ├── seed.sh
 ├── prompts.md
