@@ -54,8 +54,9 @@ func Discover(ctx context.Context, issuerURL string) (*OIDCProvider, error) {
 		return nil, fmt.Errorf("oidc discover: %s returned %d: %s", wellKnown, resp.StatusCode, string(b))
 	}
 
+	const maxDiscoveryBody = 1 << 20 // 1 MiB
 	var doc discoveryDoc
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBody)).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("oidc discover: decode: %w", err)
 	}
 

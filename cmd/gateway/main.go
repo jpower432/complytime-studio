@@ -196,6 +196,10 @@ func main() {
 
 	// OIDC discovery with bounded startup retry (2s base, 30s cap, 5min total).
 	if authCfg.ClientID != "" {
+		if authCfg.Provider == nil {
+			slog.Error("OIDC_CLIENT_ID is set but OIDC_ISSUER_URL is missing — cannot discover provider")
+			os.Exit(1)
+		}
 		provider, discErr := auth.DiscoverWithRetry(ctx, authCfg.Provider.IssuerURL)
 		if discErr != nil {
 			slog.Error("oidc discovery failed — cannot start with auth enabled", "error", discErr)
@@ -221,7 +225,8 @@ func main() {
 
 	if st != nil {
 		authHandler.SetUserStore(st)
-		slog.Info("persistent user store enabled — first user to sign in becomes admin")
+		slog.Info("persistent user store enabled — role seeding active",
+			"mode", roleSeeedingMode(authCfg))
 	} else {
 		slog.Warn("no user store (ClickHouse not configured) — RBAC disabled, all users treated as reviewer")
 	}
@@ -503,6 +508,16 @@ func (a *certificationAdapter) UpdateEvidenceCertified(
 	ctx context.Context, evidenceID string, certified bool,
 ) error {
 	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
+}
+
+func roleSeeedingMode(cfg auth.Config) string {
+	if len(cfg.BootstrapEmails) > 0 {
+		return "bootstrap-allowlist"
+	}
+	if cfg.RolesClaim != "" {
+		return "jwt-claim + first-admin"
+	}
+	return "first-admin"
 }
 
 // cookieSecretKey returns the 32-byte AES-256 key for session cookie encryption.

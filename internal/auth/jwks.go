@@ -171,8 +171,9 @@ func fetchJWKS(ctx context.Context, url string) (*jwkSet, error) {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("jwks endpoint %d: %s", resp.StatusCode, string(b))
 	}
+	const maxJWKSBody = 1 << 20 // 1 MiB
 	var set jwkSet
-	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBody)).Decode(&set); err != nil {
 		return nil, fmt.Errorf("jwks decode: %w", err)
 	}
 	return &set, nil

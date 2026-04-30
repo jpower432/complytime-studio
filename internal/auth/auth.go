@@ -416,6 +416,15 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 			authCallbackTotal.Add("userinfo_error", 1)
 			return
 		}
+		// Cross-check: UserInfo sub must match the verified ID token sub to
+		// prevent session identity divergence from IdP misconfiguration.
+		if user.Sub != "" && claims.Subject != "" && user.Sub != claims.Subject {
+			slog.Error("oidc: userinfo sub does not match id_token sub — rejecting login",
+				"userinfo_sub", user.Sub, "id_token_sub", claims.Subject)
+			http.Error(w, "authentication failed — identity mismatch", http.StatusBadGateway)
+			authCallbackTotal.Add("sub_mismatch", 1)
+			return
+		}
 	}
 
 	if h.users != nil {

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime/complytime-studio/internal/identity"
 )
 
 // UpsertUser inserts or updates a user keyed on (sub, issuer).
@@ -24,7 +24,7 @@ func (s *Store) UpsertUser(ctx context.Context, sub, issuer, email, name, avatar
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			sub, issuer, email, name, avatarURL, existing.Role,
 		)
-	case errors.Is(err, auth.ErrUserNotFound):
+	case errors.Is(err, identity.ErrUserNotFound):
 		return s.conn.Exec(ctx, `
 			INSERT INTO users (sub, issuer, email, name, avatar_url)
 			VALUES (?, ?, ?, ?, ?)`,
@@ -36,8 +36,8 @@ func (s *Store) UpsertUser(ctx context.Context, sub, issuer, email, name, avatar
 }
 
 // GetUser retrieves a user by email. Used by the user management API and middleware.
-// Returns auth.ErrUserNotFound if absent.
-func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
+// Returns identity.ErrUserNotFound if absent.
+func (s *Store) GetUser(ctx context.Context, email string) (*identity.User, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT sub, issuer, email, name, avatar_url, role, created_at
 		FROM users FINAL
@@ -48,9 +48,9 @@ func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
 	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
-		return nil, fmt.Errorf("get user %s: %w", email, auth.ErrUserNotFound)
+		return nil, fmt.Errorf("get user %s: %w", email, identity.ErrUserNotFound)
 	}
-	var u auth.User
+	var u identity.User
 	if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 		return nil, fmt.Errorf("get user %s: %w", email, err)
 	}
@@ -59,7 +59,7 @@ func (s *Store) GetUser(ctx context.Context, email string) (*auth.User, error) {
 
 // GetUserBySub retrieves a user keyed on (sub, issuer). Used by the OIDC callback
 // to detect new vs. returning users without relying on mutable email.
-func (s *Store) GetUserBySub(ctx context.Context, sub, issuer string) (*auth.User, error) {
+func (s *Store) GetUserBySub(ctx context.Context, sub, issuer string) (*identity.User, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT sub, issuer, email, name, avatar_url, role, created_at
 		FROM users FINAL
@@ -70,9 +70,9 @@ func (s *Store) GetUserBySub(ctx context.Context, sub, issuer string) (*auth.Use
 	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
-		return nil, fmt.Errorf("get user (sub=%s issuer=%s): %w", sub, issuer, auth.ErrUserNotFound)
+		return nil, fmt.Errorf("get user (sub=%s issuer=%s): %w", sub, issuer, identity.ErrUserNotFound)
 	}
-	var u auth.User
+	var u identity.User
 	if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 		return nil, fmt.Errorf("get user by sub: %w", err)
 	}
@@ -80,7 +80,7 @@ func (s *Store) GetUserBySub(ctx context.Context, sub, issuer string) (*auth.Use
 }
 
 // ListUsers returns all registered users.
-func (s *Store) ListUsers(ctx context.Context) ([]auth.User, error) {
+func (s *Store) ListUsers(ctx context.Context) ([]identity.User, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT sub, issuer, email, name, avatar_url, role, created_at
 		FROM users FINAL
@@ -90,9 +90,9 @@ func (s *Store) ListUsers(ctx context.Context) ([]auth.User, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var users []auth.User
+	var users []identity.User
 	for rows.Next() {
-		var u auth.User
+		var u identity.User
 		if err := rows.Scan(&u.Sub, &u.Issuer, &u.Email, &u.Name, &u.AvatarURL, &u.Role, &u.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -139,7 +139,7 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 }
 
 // InsertRoleChange records an immutable role change audit entry.
-func (s *Store) InsertRoleChange(ctx context.Context, change auth.RoleChange) error {
+func (s *Store) InsertRoleChange(ctx context.Context, change identity.RoleChange) error {
 	return s.conn.Exec(ctx, `
 		INSERT INTO role_changes (changed_by, target_email, old_role, new_role, changed_at)
 		VALUES (?, ?, ?, ?, ?)`,
@@ -148,7 +148,7 @@ func (s *Store) InsertRoleChange(ctx context.Context, change auth.RoleChange) er
 }
 
 // ListRoleChanges returns all role change audit entries.
-func (s *Store) ListRoleChanges(ctx context.Context) ([]auth.RoleChange, error) {
+func (s *Store) ListRoleChanges(ctx context.Context) ([]identity.RoleChange, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT changed_by, target_email, old_role, new_role, changed_at
 		FROM role_changes
@@ -158,9 +158,9 @@ func (s *Store) ListRoleChanges(ctx context.Context) ([]auth.RoleChange, error) 
 	}
 	defer func() { _ = rows.Close() }()
 
-	var changes []auth.RoleChange
+	var changes []identity.RoleChange
 	for rows.Next() {
-		var c auth.RoleChange
+		var c identity.RoleChange
 		if err := rows.Scan(&c.ChangedBy, &c.TargetEmail, &c.OldRole, &c.NewRole, &c.ChangedAt); err != nil {
 			return nil, err
 		}
