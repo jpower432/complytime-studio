@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# BYO ADK assistant — standalone Python A2A agent.
+# BYO ADK assistant — kagent Agent CRD (type: BYO).
+# kagent controller manages the Deployment + Service lifecycle.
+# Agent appears in the kagent dashboard and routes A2A through the controller.
 # Connects to KMCP-managed MCP services over HTTP (same infra as declarative agents).
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
 metadata:
   name: studio-assistant
   namespace: {{ .Release.Namespace }}
@@ -10,119 +12,76 @@ metadata:
     {{- include "studio.labels" . | nindent 4 }}
     app.kubernetes.io/component: assistant
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: studio-assistant
-      app.kubernetes.io/component: assistant
-  template:
-    metadata:
-      labels:
-        {{- include "studio.labels" . | nindent 8 }}
-        app.kubernetes.io/name: studio-assistant
-        app.kubernetes.io/component: assistant
-    spec:
-      containers:
-        - name: agent
-          image: "{{ .Values.assistant.image.repository }}:{{ .Values.assistant.image.tag }}"
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 8080
-              protocol: TCP
-          env:
-            - name: PORT
-              value: "8080"
-            {{- $shortName := "assistant" }}
-            {{- $agentOverride := dict }}
-            {{- if hasKey .Values.agents $shortName }}
-            {{- $agentOverride = index .Values.agents $shortName }}
-            {{- end }}
-            {{- $agentModel := dict }}
-            {{- if hasKey $agentOverride "model" }}
-            {{- $agentModel = $agentOverride.model }}
-            {{- end }}
-            - name: MODEL_PROVIDER
-              value: {{ default .Values.model.provider (index $agentModel "provider" | default "") | quote }}
-            - name: MODEL_NAME
-              value: {{ default .Values.model.name (index $agentModel "name" | default "") | quote }}
-            - name: GATEWAY_URL
-              value: "http://studio-gateway:8080"
-            - name: INTERNAL_GATEWAY_URL
-              value: "http://studio-gateway-internal:8081"
-            {{- if .Values.mcpServers.gemara.enabled }}
-            - name: GEMARA_MCP_URL
-              value: "http://studio-gemara-mcp:3000/mcp"
-            {{- end }}
-            {{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
-            - name: CLICKHOUSE_MCP_URL
-              value: "http://studio-clickhouse-mcp:3000/mcp"
-            {{- end }}
-            {{- if .Values.model.vertexAI.credentialsSecret }}
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /var/secrets/gcp/application_default_credentials.json
-            {{- end }}
-            {{- $resolvedProvider := default .Values.model.provider (index $agentModel "provider" | default "") }}
-            {{- $isVertexAI := or (eq $resolvedProvider "GeminiVertexAI") (eq $resolvedProvider "AnthropicVertexAI") }}
-            {{- if eq $resolvedProvider "GeminiVertexAI" }}
-            - name: GOOGLE_GENAI_USE_VERTEXAI
-              value: "1"
-            {{- end }}
-            {{- if $isVertexAI }}
-            {{- with .Values.model.vertexAI.projectID }}
-            - name: GOOGLE_CLOUD_PROJECT
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.model.vertexAI.location }}
-            - name: GOOGLE_CLOUD_LOCATION
-              value: {{ . | quote }}
-            {{- end }}
-            {{- end }}
-          {{- if .Values.model.vertexAI.credentialsSecret }}
-          volumeMounts:
-            - name: gcp-credentials
-              mountPath: /var/secrets/gcp
-              readOnly: true
-          {{- end }}
-          livenessProbe:
-            httpGet:
-              path: /.well-known/agent-card.json
-              port: 8080
-            initialDelaySeconds: 30
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /.well-known/agent-card.json
-              port: 8080
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
+  description: >-
+    ComplyTime Studio assistant — audit preparation, evidence synthesis,
+    cross-framework coverage analysis, and compliance guidance
+  type: BYO
+  byo:
+    deployment:
+      image: "{{ .Values.assistant.image.repository }}:{{ .Values.assistant.image.tag }}"
+      imagePullPolicy: IfNotPresent
+      {{- $shortName := "assistant" }}
+      {{- $agentOverride := dict }}
+      {{- if hasKey .Values.agents $shortName }}
+      {{- $agentOverride = index .Values.agents $shortName }}
+      {{- end }}
+      {{- $agentModel := dict }}
+      {{- if hasKey $agentOverride "model" }}
+      {{- $agentModel = $agentOverride.model }}
+      {{- end }}
+      {{- $resolvedProvider := default .Values.model.provider (index $agentModel "provider" | default "") }}
+      {{- $isVertexAI := or (eq $resolvedProvider "GeminiVertexAI") (eq $resolvedProvider "AnthropicVertexAI") }}
+      env:
+        - name: PORT
+          value: "8080"
+        - name: MODEL_PROVIDER
+          value: {{ default .Values.model.provider (index $agentModel "provider" | default "") | quote }}
+        - name: MODEL_NAME
+          value: {{ default .Values.model.name (index $agentModel "name" | default "") | quote }}
+        - name: GATEWAY_URL
+          value: "http://studio-gateway:8080"
+        - name: INTERNAL_GATEWAY_URL
+          value: "http://studio-gateway-internal:8081"
+        {{- if .Values.mcpServers.gemara.enabled }}
+        - name: GEMARA_MCP_URL
+          value: "http://studio-gemara-mcp:3000/mcp"
+        {{- end }}
+        {{- if .Values.postgres.enabled }}
+        - name: POSTGRES_MCP_URL
+          value: "http://studio-postgres-mcp:3000/mcp"
+        {{- end }}
+        {{- if .Values.model.vertexAI.credentialsSecret }}
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/secrets/gcp/application_default_credentials.json
+        {{- end }}
+        {{- if eq $resolvedProvider "GeminiVertexAI" }}
+        - name: GOOGLE_GENAI_USE_VERTEXAI
+          value: "1"
+        {{- end }}
+        {{- if $isVertexAI }}
+        {{- with .Values.model.vertexAI.projectID }}
+        - name: GOOGLE_CLOUD_PROJECT
+          value: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.model.vertexAI.location }}
+        - name: GOOGLE_CLOUD_LOCATION
+          value: {{ . | quote }}
+        {{- end }}
+        {{- end }}
       {{- if .Values.model.vertexAI.credentialsSecret }}
       volumes:
         - name: gcp-credentials
           secret:
             secretName: {{ .Values.model.vertexAI.credentialsSecret }}
+      volumeMounts:
+        - name: gcp-credentials
+          mountPath: /var/secrets/gcp
+          readOnly: true
       {{- end }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: studio-assistant
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "studio.labels" . | nindent 4 }}
-    app.kubernetes.io/component: assistant
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: studio-assistant
-    app.kubernetes.io/component: assistant
-  ports:
-    - port: 8080
-      targetPort: 8080
-      protocol: TCP
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"

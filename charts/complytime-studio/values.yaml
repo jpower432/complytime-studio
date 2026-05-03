@@ -11,9 +11,9 @@ gateway:
     tag: latest
   autoPersistArtifacts: true
 
-# -- S3-compatible blob storage for evidence attachments (manual POST /api/evidence
-# with multipart file). When disabled, the gateway omits BLOB_* env vars; file
-# uploads return 400. For kind/dev, enable and point at in-cluster MinIO or RustFS.
+# -- S3-compatible blob storage for evidence attachments.
+# When disabled, the gateway omits BLOB_* env vars.
+# For kind/dev, enable and point at in-cluster MinIO or RustFS.
 blobStorage:
   enabled: false
   endpoint: ""
@@ -26,22 +26,38 @@ blobStorage:
   accessKey: ""
   secretKey: ""
 
-# -- Google OAuth for user authentication.
-# Create credentials at https://console.cloud.google.com/apis/credentials
-# Authorized redirect URI: http://localhost:8080/auth/callback
+# -- Authentication via OAuth2 Proxy sidecar.
+# Handles OIDC discovery, PKCE, JWKS, token refresh, and session cookies.
+# Supports any OIDC provider (Keycloak, Okta, Azure AD, Google, Dex, Hydra).
+# When disabled (dev mode), the sidecar is omitted. The gateway middleware
+# still returns 401 for /api/* requests without X-Forwarded-Email or
+# STUDIO_API_TOKEN — set apiToken below for local development.
 auth:
-  google:
+  oauth2Proxy:
+    enabled: true
+    image:
+      repository: quay.io/oauth2-proxy/oauth2-proxy
+      tag: "v7.15.1"
+    # OIDC provider type — "oidc" for generic, "keycloak-oidc" for Keycloak.
+    provider: oidc
+    # Must expose /.well-known/openid-configuration
+    issuerUrl: ""
     clientId: ""
+    # Kubernetes Secret containing client-secret and cookie-secret keys.
     secretName: studio-oauth-credentials
     secretKey: client-secret
-    callbackURL: "http://localhost:8080/auth/callback"
-  cookieSecretName: ""
-  # Admin email allowlist. When empty, all authenticated users are admins.
-  # Viewers can read policies/evidence and chat, but cannot import or upload.
-  admins: []
+    callbackUrl: "http://localhost:8080/oauth2/callback"
+    scopes: "openid email profile"
+    # Set true for production (requires HTTPS).
+    cookieSecure: false
+    # Restrict login by email domain. ["*"] allows all.
+    emailDomains: ["*"]
+    # Restrict login by OIDC group claim. [] allows all.
+    allowedGroups: []
   # Static bearer token for dev/CI seeding (STUDIO_API_TOKEN).
-  # Leave empty to disable.
-  apiToken: "dev-seed-token"
+  # Used by `make seed` to bypass OAuth2 Proxy for data loading.
+  # Override with a strong secret in production. Leave empty to disable.
+  apiToken: "studio-dev-token"
 
 # -- GitHub organization/user and repository name. Single source of truth
 # for platformRepo URL, Chart.yaml home/sources, and workbench links.
@@ -70,12 +86,13 @@ externalSkills:
     path: skills/gemara.md
 
 # -- kagent controller settings.
-# When a2aURL is set, all A2A traffic routes through the kagent controller.
-# Leave empty to route directly to per-agent URLs from agentDirectory (BYO agents).
+# a2aURL routes all A2A traffic through the kagent controller, which manages
+# BYO agent lifecycles and exposes them in the kagent dashboard.
+# Set to empty string only for dev environments without kagent installed.
 kagent:
-  a2aURL: ""
+  a2aURL: "http://kagent-controller:8083"
 
-# -- Standalone A2A reverse proxy. Stateless — no ClickHouse, no session state.
+# -- Standalone A2A reverse proxy. Stateless — no session state.
 # Scales independently from the gateway for concurrent chat load.
 # -- BYO assistant agent. Standalone Python container with MCP sidecars.
 assistant:
@@ -139,28 +156,26 @@ agentDirectory:
 mcpServers:
   gemara:
     enabled: true
-    # Pin to a release tag in production to ensure reproducible deployments.
-    image: ghcr.io/gemaraproj/gemara-mcp:latest
+    image: ghcr.io/gemaraproj/gemara-mcp:0.3.0
   oras:
     enabled: true
     image: ghcr.io/oras-project/oras-mcp:v0.2.1
   # github-mcp removed — not required for audit dashboard workflow.
   # Re-enable if code search or repository access is needed.
 
-# -- ClickHouse evidence and audit store. Required dependency.
-# Stores evidence, policies, mapping documents, and AuditLogs.
+# -- ClickHouse. Disabled by default. Enable for production deployments
+# where evidence volume exceeds PostgreSQL capacity. When enabled, the
+# operator configures pg_clickhouse FDW to route evidence queries to
+# ClickHouse transparently. See docs/decisions/postgres-with-extensions.md.
 clickhouse:
-  enabled: true
+  enabled: false
   image:
     repository: clickhouse/clickhouse-server
     tag: "25.3"
   auth:
     user: default
-    # For production, create a Secret externally and reference it via
-    # clickhouse.auth.existingSecret. This default is for local dev only.
     password: complytime-dev
     existingSecret: ""
-    # Read-only user for clickhouse-mcp (agent queries). SELECT only.
     readerUser: reader
     readerPassword: complytime-reader-dev
   storage:
@@ -176,7 +191,35 @@ clickhouse:
   mcp:
     image:
       repository: docker.io/mcp/clickhouse
-      # Pin to a release tag in production to ensure reproducible deployments.
+      tag: latest
+
+# -- PostgreSQL. Required. Single application database for all data:
+# programs, users, evidence, policies, audit logs, certifications, mappings.
+# For production evidence scaling, enable ClickHouse above and configure
+# pg_clickhouse FDW for transparent query pushdown.
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17"
+  auth:
+    database: studio
+    user: studio
+    password: complytime-dev  # dev only — use existingSecret for production
+    existingSecret: ""
+    sslmode: disable  # Use "require" or "verify-full" for production
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+  mcp:
+    image:
+      repository: ghcr.io/pgedge/postgres-mcp
       tag: latest
 
 # -- Built-in OCI registry (dev only). Disable for production clusters
@@ -199,12 +242,12 @@ registry:
     enabled: true
     image: ghcr.io/oras-project/oras:v1.2.2
 
-# -- NATS lightweight messaging for event-driven evidence processing.
-# When enabled, the gateway subscribes to evidence events and triggers
-# posture checks. The ingest job publishes events after each insert.
+# -- NATS lightweight messaging — required by the gateway for the
+# certification pipeline and draft-audit-log notifications.
+# The gateway exits if NATS_URL is not set.
 # NATS is CNCF-graduated. Single-node, no JetStream — minimal footprint.
 nats:
-  enabled: false
+  enabled: true
   image: nats:2-alpine
   resources:
     requests:
