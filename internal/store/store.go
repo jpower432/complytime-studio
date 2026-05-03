@@ -7,14 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PolicyStore defines read/write operations for policy artifacts.
@@ -29,7 +29,9 @@ type MappingStore interface {
 	InsertMapping(ctx context.Context, m MappingDocument) error
 	ListMappings(ctx context.Context, policyID string) ([]MappingDocument, error)
 	ListAllMappings(ctx context.Context) ([]MappingDocument, error)
+	QueryMappings(ctx context.Context, sourceCatalogID, targetCatalogID string, limit int) ([]gemara.MappingEntry, error)
 	InsertMappingEntries(ctx context.Context, entries []gemara.MappingEntry) error
+	DeleteMappingEntries(ctx context.Context, sourceCatalogID, targetCatalogID string) error
 	CountMappingEntries(ctx context.Context, mappingID string) (int, error)
 }
 
@@ -124,11 +126,11 @@ type NotificationStore interface {
 	UnreadCount(ctx context.Context) (int, error)
 }
 
-// Store provides typed access to ClickHouse tables for policies,
+// Store provides typed access to PostgreSQL tables for policies,
 // mapping documents, evidence, and audit logs. Implements all
 // domain store interfaces.
 type Store struct {
-	conn driver.Conn
+	pool *pgxpool.Pool
 }
 
 // Compile-time interface satisfaction checks.
@@ -147,12 +149,11 @@ var (
 	_ PostureStore            = (*Store)(nil)
 	_ NotificationStore       = (*Store)(nil)
 	_ CertificationStore      = (*Store)(nil)
-	_ auth.UserStore          = (*Store)(nil)
 )
 
-// New wraps an existing ClickHouse connection.
-func New(conn driver.Conn) *Store {
-	return &Store{conn: conn}
+// New wraps a PostgreSQL connection pool.
+func New(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
 }
 
 // Policy represents a stored policy artifact.
@@ -171,20 +172,21 @@ func (s *Store) InsertPolicy(ctx context.Context, p Policy) error {
 	if p.PolicyID == "" {
 		p.PolicyID = uuid.New().String()
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by) VALUES (?, ?, ?, ?, ?, ?)`,
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by) VALUES ($1, $2, $3, $4, $5, $6)`,
 		p.PolicyID, p.Title, p.Version, p.OCIReference, p.Content, p.ImportedBy,
 	)
+	return err
 }
 
 // ListPolicies returns all stored policies ordered by import date.
 func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
-	rows, err := s.conn.Query(ctx,
-		`SELECT policy_id, title, version, oci_reference, imported_at, imported_by FROM policies FINAL ORDER BY imported_at DESC`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT policy_id, title, version, oci_reference, imported_at, imported_by FROM policies ORDER BY imported_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []Policy
 	for rows.Next() {
@@ -194,13 +196,13 @@ func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // GetPolicy returns a single policy with full content.
 func (s *Store) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT policy_id, title, version, oci_reference, content, imported_at, imported_by FROM policies FINAL WHERE policy_id = ?`, policyID)
+	row := s.pool.QueryRow(ctx,
+		`SELECT policy_id, title, version, oci_reference, content, imported_at, imported_by FROM policies WHERE policy_id = $1`, policyID)
 	var p Policy
 	if err := row.Scan(&p.PolicyID, &p.Title, &p.Version, &p.OCIReference, &p.Content, &p.ImportedAt, &p.ImportedBy); err != nil {
 		return nil, fmt.Errorf("get policy: %w", err)
@@ -208,13 +210,14 @@ func (s *Store) GetPolicy(ctx context.Context, policyID string) (*Policy, error)
 	return &p, nil
 }
 
-// MappingDocument represents a crosswalk mapping artifact.
+// MappingDocument represents a global crosswalk mapping artifact.
 type MappingDocument struct {
-	MappingID  string    `json:"mapping_id"`
-	PolicyID   string    `json:"policy_id"`
-	Framework  string    `json:"framework"`
-	Content    string    `json:"content"`
-	ImportedAt time.Time `json:"imported_at"`
+	MappingID       string    `json:"mapping_id"`
+	SourceCatalogID string    `json:"source_catalog_id"`
+	TargetCatalogID string    `json:"target_catalog_id"`
+	Framework       string    `json:"framework"`
+	Content         string    `json:"content"`
+	ImportedAt      time.Time `json:"imported_at"`
 }
 
 // InsertMapping stores a mapping document.
@@ -222,75 +225,157 @@ func (s *Store) InsertMapping(ctx context.Context, m MappingDocument) error {
 	if m.MappingID == "" {
 		m.MappingID = uuid.New().String()
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO mapping_documents (mapping_id, policy_id, framework, content) VALUES (?, ?, ?, ?)`,
-		m.MappingID, m.PolicyID, m.Framework, m.Content,
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO mapping_documents (mapping_id, source_catalog_id, target_catalog_id, framework, content)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (mapping_id) DO UPDATE SET
+		   source_catalog_id = EXCLUDED.source_catalog_id,
+		   target_catalog_id = EXCLUDED.target_catalog_id,
+		   framework = EXCLUDED.framework,
+		   content = EXCLUDED.content,
+		   imported_at = now()`,
+		m.MappingID, m.SourceCatalogID, m.TargetCatalogID, m.Framework, m.Content,
 	)
+	return err
 }
 
-// ListMappings returns mapping documents for a given policy.
+// ListMappings returns mapping documents for a given source catalog (backward-compat shim).
 func (s *Store) ListMappings(ctx context.Context, policyID string) ([]MappingDocument, error) {
-	rows, err := s.conn.Query(ctx,
-		`SELECT mapping_id, policy_id, framework, content, imported_at FROM mapping_documents FINAL WHERE policy_id = ? ORDER BY imported_at DESC`, policyID)
+	rows, err := s.pool.Query(ctx,
+		`SELECT mapping_id, source_catalog_id, target_catalog_id, framework, content, imported_at
+		 FROM mapping_documents WHERE source_catalog_id = $1 OR target_catalog_id = $1
+		 ORDER BY imported_at DESC`, policyID)
 	if err != nil {
 		return nil, fmt.Errorf("list mappings: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []MappingDocument
 	for rows.Next() {
 		var m MappingDocument
-		if err := rows.Scan(&m.MappingID, &m.PolicyID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
+		if err := rows.Scan(&m.MappingID, &m.SourceCatalogID, &m.TargetCatalogID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
 			return nil, fmt.Errorf("scan mapping: %w", err)
 		}
 		out = append(out, m)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-// ListAllMappings returns all mapping documents across all policies.
+// ListAllMappings returns all mapping documents.
 func (s *Store) ListAllMappings(ctx context.Context) ([]MappingDocument, error) {
-	rows, err := s.conn.Query(ctx,
-		`SELECT mapping_id, policy_id, framework, content, imported_at FROM mapping_documents FINAL ORDER BY imported_at DESC`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT mapping_id, source_catalog_id, target_catalog_id, framework, content, imported_at
+		 FROM mapping_documents ORDER BY imported_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list all mappings: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []MappingDocument
 	for rows.Next() {
 		var m MappingDocument
-		if err := rows.Scan(&m.MappingID, &m.PolicyID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
+		if err := rows.Scan(&m.MappingID, &m.SourceCatalogID, &m.TargetCatalogID, &m.Framework, &m.Content, &m.ImportedAt); err != nil {
 			return nil, fmt.Errorf("scan mapping: %w", err)
 		}
 		out = append(out, m)
 	}
+	return out, rows.Err()
+}
+
+// QueryMappings returns mapping entries for a given source/target catalog pair.
+func (s *Store) QueryMappings(ctx context.Context, sourceCatalogID, targetCatalogID string, limit int) ([]gemara.MappingEntry, error) {
+	q := `SELECT mapping_id, source_catalog_id, target_catalog_id, guideline_id,
+	             control_id, requirement_id, framework, reference, strength, confidence
+	      FROM mapping_entries WHERE 1=1`
+	var args []any
+	n := 1
+	if sourceCatalogID != "" {
+		q += fmt.Sprintf(` AND source_catalog_id = $%d`, n)
+		args = append(args, sourceCatalogID)
+		n++
+	}
+	if targetCatalogID != "" {
+		q += fmt.Sprintf(` AND target_catalog_id = $%d`, n)
+		args = append(args, targetCatalogID)
+		n++
+	}
+	q += ` ORDER BY guideline_id, control_id`
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	q += fmt.Sprintf(` LIMIT %d`, limit)
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query mappings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []gemara.MappingEntry
+	for rows.Next() {
+		var e gemara.MappingEntry
+		if err := rows.Scan(
+			&e.MappingID, &e.SourceCatalogID, &e.TargetCatalogID, &e.GuidelineID,
+			&e.ControlID, &e.RequirementID, &e.Framework, &e.Reference,
+			&e.Strength, &e.Confidence,
+		); err != nil {
+			return nil, fmt.Errorf("scan mapping entry: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate mapping entries: %w", err)
+	}
+	if out == nil {
+		out = []gemara.MappingEntry{}
+	}
 	return out, nil
 }
 
-// InsertMappingEntries batch-inserts structured mapping entries.
+// InsertMappingEntries batch-inserts structured mapping entries within a transaction.
 func (s *Store) InsertMappingEntries(ctx context.Context, entries []gemara.MappingEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO mapping_entries (mapping_id, policy_id, control_id, requirement_id, framework, reference, strength, confidence)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare mapping entries batch: %w", err)
+		return fmt.Errorf("begin mapping entries tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO mapping_entries
+		(mapping_id, source_catalog_id, target_catalog_id, guideline_id, control_id, requirement_id, framework, reference, strength, confidence)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (mapping_id, source_catalog_id, guideline_id, target_catalog_id, control_id)
+		DO UPDATE SET strength = EXCLUDED.strength, confidence = EXCLUDED.confidence`
 	for _, e := range entries {
-		if err := batch.Append(e.MappingID, e.PolicyID, e.ControlID, e.RequirementID, e.Framework, e.Reference, e.Strength, e.Confidence); err != nil {
-			return fmt.Errorf("append mapping entry: %w", err)
+		if _, err := tx.Exec(ctx, q,
+			e.MappingID, e.SourceCatalogID, e.TargetCatalogID, e.GuidelineID,
+			e.ControlID, e.RequirementID, e.Framework, e.Reference,
+			e.Strength, e.Confidence,
+		); err != nil {
+			return fmt.Errorf("insert mapping entry: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit mapping entries: %w", err)
+	}
+	return nil
+}
+
+// DeleteMappingEntries removes all entries for a given source/target catalog pair.
+func (s *Store) DeleteMappingEntries(ctx context.Context, sourceCatalogID, targetCatalogID string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM mapping_entries WHERE source_catalog_id = $1 AND target_catalog_id = $2`,
+		sourceCatalogID, targetCatalogID)
+	return err
 }
 
 // CountMappingEntries returns the number of structured entries for a given mapping document.
 func (s *Store) CountMappingEntries(ctx context.Context, mappingID string) (int, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM mapping_entries WHERE mapping_id = ?`, mappingID)
-	var count uint64
+	row := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM mapping_entries WHERE mapping_id = $1`, mappingID)
+	var count int64
 	if err := row.Scan(&count); err != nil {
 		return 0, fmt.Errorf("count mapping entries: %w", err)
 	}
@@ -301,63 +386,95 @@ func (s *Store) InsertControls(ctx context.Context, rows []gemara.ControlRow) er
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO controls (catalog_id, control_id, title, objective, group_id, state, policy_id)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare controls batch: %w", err)
+		return fmt.Errorf("begin controls tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO controls (catalog_id, control_id, title, objective, group_id, state, policy_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (catalog_id, control_id) DO UPDATE SET
+		  title = EXCLUDED.title,
+		  objective = EXCLUDED.objective,
+		  group_id = EXCLUDED.group_id,
+		  state = EXCLUDED.state,
+		  policy_id = EXCLUDED.policy_id`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.CatalogID, r.ControlID, r.Title, r.Objective, r.GroupID, r.State, r.PolicyID,
 		); err != nil {
-			return fmt.Errorf("append control: %w", err)
+			return fmt.Errorf("insert control: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit controls: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) InsertAssessmentRequirements(ctx context.Context, rows []gemara.AssessmentRequirementRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO assessment_requirements (catalog_id, control_id, requirement_id, text, applicability, recommendation, state)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare assessment requirements batch: %w", err)
+		return fmt.Errorf("begin assessment requirements tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO assessment_requirements (catalog_id, control_id, requirement_id, text, applicability, recommendation, state)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (catalog_id, control_id, requirement_id) DO UPDATE SET
+		  text = EXCLUDED.text,
+		  applicability = EXCLUDED.applicability,
+		  recommendation = EXCLUDED.recommendation,
+		  state = EXCLUDED.state`
 	for _, r := range rows {
-		if err := batch.Append(
-			r.CatalogID, r.ControlID, r.RequirementID, r.Text, r.Applicability, r.Recommendation, r.State,
+		app := r.Applicability
+		if app == nil {
+			app = []string{}
+		}
+		if _, err := tx.Exec(ctx, q,
+			r.CatalogID, r.ControlID, r.RequirementID, r.Text, app, r.Recommendation, r.State,
 		); err != nil {
-			return fmt.Errorf("append assessment requirement: %w", err)
+			return fmt.Errorf("insert assessment requirement: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit assessment requirements: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) InsertControlThreats(ctx context.Context, rows []gemara.ControlThreatRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO control_threats (catalog_id, control_id, threat_reference_id, threat_entry_id)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare control threats batch: %w", err)
+		return fmt.Errorf("begin control threats tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO control_threats (catalog_id, control_id, threat_reference_id, threat_entry_id) VALUES ($1, $2, $3, $4)`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.CatalogID, r.ControlID, r.ThreatReferenceID, r.ThreatEntryID,
 		); err != nil {
-			return fmt.Errorf("append control threat: %w", err)
+			return fmt.Errorf("insert control threat: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit control threats: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountControls(ctx context.Context, catalogID string) (int, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM controls WHERE catalog_id = ?`, catalogID)
-	var count uint64
+	row := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM controls WHERE catalog_id = $1`, catalogID)
+	var count int64
 	if err := row.Scan(&count); err != nil {
 		return 0, fmt.Errorf("count controls: %w", err)
 	}
@@ -368,25 +485,30 @@ func (s *Store) InsertThreats(ctx context.Context, rows []gemara.ThreatRow) erro
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO threats (catalog_id, threat_id, title, description, group_id, policy_id)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare threats batch: %w", err)
+		return fmt.Errorf("begin threats tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO threats (catalog_id, threat_id, title, description, group_id, policy_id) VALUES ($1, $2, $3, $4, $5, $6)`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.CatalogID, r.ThreatID, r.Title, r.Description, r.GroupID, r.PolicyID,
 		); err != nil {
-			return fmt.Errorf("append threat: %w", err)
+			return fmt.Errorf("insert threat: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit threats: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountThreats(ctx context.Context, catalogID string) (int, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM threats WHERE catalog_id = ?`, catalogID)
-	var count uint64
+	row := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM threats WHERE catalog_id = $1`, catalogID)
+	var count int64
 	if err := row.Scan(&count); err != nil {
 		return 0, fmt.Errorf("count threats: %w", err)
 	}
@@ -398,11 +520,11 @@ func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, li
 	limit = consts.ClampLimit(limit)
 	query := fmt.Sprintf(`SELECT catalog_id, threat_id, title, description, group_id, policy_id FROM threats`+where+` ORDER BY catalog_id, threat_id LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query threats: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []gemara.ThreatRow
 	for rows.Next() {
@@ -418,13 +540,16 @@ func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, li
 func (s *Store) QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error) {
 	var clauses []string
 	var args []any
+	n := 1
 	if catalogID != "" {
-		clauses = append(clauses, "catalog_id = ?")
+		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
 		args = append(args, catalogID)
+		n++
 	}
 	if controlID != "" {
-		clauses = append(clauses, "control_id = ?")
+		clauses = append(clauses, fmt.Sprintf("control_id = $%d", n))
 		args = append(args, controlID)
+		n++
 	}
 	where := ""
 	if len(clauses) > 0 {
@@ -433,11 +558,11 @@ func (s *Store) QueryControlThreats(ctx context.Context, catalogID, controlID st
 	limit = consts.ClampLimit(limit)
 	query := fmt.Sprintf(`SELECT catalog_id, control_id, threat_reference_id, threat_entry_id FROM control_threats`+where+` ORDER BY catalog_id, control_id, threat_reference_id LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query control threats: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []gemara.ControlThreatRow
 	for rows.Next() {
@@ -454,44 +579,54 @@ func (s *Store) InsertRisks(ctx context.Context, rows []gemara.RiskRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO risks (catalog_id, risk_id, title, description, severity, group_id, impact, policy_id)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare risks batch: %w", err)
+		return fmt.Errorf("begin risks tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO risks (catalog_id, risk_id, title, description, severity, group_id, impact, policy_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.CatalogID, r.RiskID, r.Title, r.Description, r.Severity, r.GroupID, r.Impact, r.PolicyID,
 		); err != nil {
-			return fmt.Errorf("append risk: %w", err)
+			return fmt.Errorf("insert risk: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit risks: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) InsertRiskThreats(ctx context.Context, rows []gemara.RiskThreatRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO risk_threats (catalog_id, risk_id, threat_reference_id, threat_entry_id)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare risk threats batch: %w", err)
+		return fmt.Errorf("begin risk threats tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO risk_threats (catalog_id, risk_id, threat_reference_id, threat_entry_id) VALUES ($1, $2, $3, $4)`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.CatalogID, r.RiskID, r.ThreatReferenceID, r.ThreatEntryID,
 		); err != nil {
-			return fmt.Errorf("append risk threat: %w", err)
+			return fmt.Errorf("insert risk threat: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit risk threats: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountRisks(ctx context.Context, catalogID string) (int, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM risks WHERE catalog_id = ?`, catalogID)
-	var count uint64
+	row := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM risks WHERE catalog_id = $1`, catalogID)
+	var count int64
 	if err := row.Scan(&count); err != nil {
 		return 0, fmt.Errorf("count risks: %w", err)
 	}
@@ -503,11 +638,11 @@ func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limi
 	limit = consts.ClampLimit(limit)
 	query := fmt.Sprintf(`SELECT catalog_id, risk_id, title, description, severity, group_id, impact, policy_id FROM risks`+where+` ORDER BY catalog_id, risk_id LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query risks: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []gemara.RiskRow
 	for rows.Next() {
@@ -523,13 +658,16 @@ func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limi
 func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error) {
 	var clauses []string
 	var args []any
+	n := 1
 	if catalogID != "" {
-		clauses = append(clauses, "catalog_id = ?")
+		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
 		args = append(args, catalogID)
+		n++
 	}
 	if riskID != "" {
-		clauses = append(clauses, "risk_id = ?")
+		clauses = append(clauses, fmt.Sprintf("risk_id = $%d", n))
 		args = append(args, riskID)
+		n++
 	}
 	where := ""
 	if len(clauses) > 0 {
@@ -538,11 +676,11 @@ func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, 
 	limit = consts.ClampLimit(limit)
 	query := fmt.Sprintf(`SELECT catalog_id, risk_id, threat_reference_id, threat_entry_id FROM risk_threats`+where+` ORDER BY catalog_id, risk_id, threat_reference_id LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query risk threats: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []gemara.RiskThreatRow
 	for rows.Next() {
@@ -559,13 +697,16 @@ func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, 
 func buildCatalogPolicyFilter(catalogID, policyID string) (string, []any) {
 	var clauses []string
 	var args []any
+	n := 1
 	if catalogID != "" {
-		clauses = append(clauses, "catalog_id = ?")
+		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
 		args = append(args, catalogID)
+		n++
 	}
 	if policyID != "" {
-		clauses = append(clauses, "policy_id = ?")
+		clauses = append(clauses, fmt.Sprintf("policy_id = $%d", n))
 		args = append(args, policyID)
+		n++
 	}
 	if len(clauses) == 0 {
 		return "", nil
@@ -584,29 +725,32 @@ type RiskSeverityRow struct {
 // risks -> risk_threats -> control_threats -> controls filtered by policy.
 func (s *Store) GetPolicyRiskSeverity(ctx context.Context, policyID string) ([]RiskSeverityRow, error) {
 	query := `
-		SELECT
-			ct.control_id,
-			maxIf(r.severity, r.severity != '') AS max_severity,
-			count(DISTINCT r.risk_id) AS risk_count
-		FROM control_threats ct
-		INNER JOIN risk_threats rt
-			ON rt.threat_reference_id = ct.threat_reference_id
-			AND rt.threat_entry_id = ct.threat_entry_id
-		INNER JOIN risks r
-			ON r.risk_id = rt.risk_id
-			AND r.catalog_id = rt.catalog_id
-		WHERE r.policy_id = ? OR ct.catalog_id IN (
-			SELECT catalog_id FROM controls WHERE policy_id = ?
-		)
-		GROUP BY ct.control_id
-		HAVING max_severity != ''
-		ORDER BY ct.control_id`
+		SELECT control_id, max_severity, risk_count
+		FROM (
+			SELECT
+				ct.control_id,
+				MAX(CASE WHEN r.severity <> '' THEN r.severity END) AS max_severity,
+				COUNT(DISTINCT r.risk_id) AS risk_count
+			FROM control_threats ct
+			INNER JOIN risk_threats rt
+				ON rt.threat_reference_id = ct.threat_reference_id
+				AND rt.threat_entry_id = ct.threat_entry_id
+			INNER JOIN risks r
+				ON r.risk_id = rt.risk_id
+				AND r.catalog_id = rt.catalog_id
+			WHERE r.policy_id = $1 OR ct.catalog_id IN (
+				SELECT catalog_id FROM controls WHERE policy_id = $2
+			)
+			GROUP BY ct.control_id
+		) AS t
+		WHERE COALESCE(max_severity, '') <> ''
+		ORDER BY control_id`
 
-	rows, err := s.conn.Query(ctx, query, policyID, policyID)
+	rows, err := s.pool.Query(ctx, query, policyID, policyID)
 	if err != nil {
 		return nil, fmt.Errorf("risk severity query: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []RiskSeverityRow
 	for rows.Next() {
@@ -666,8 +810,9 @@ type EvidenceRecord struct {
 
 	Certified bool `json:"certified"`
 
-	Owner       string    `json:"owner,omitempty"`
-	CollectedAt time.Time `json:"collected_at"`
+	Owner          string    `json:"owner,omitempty"`
+	CollectedAt    time.Time `json:"collected_at"`
+	Classification string    `json:"classification,omitempty"`
 }
 
 // nullStr returns nil for empty strings, pointer otherwise.
@@ -715,11 +860,26 @@ func normalizeEvidence(r *EvidenceRecord) {
 	if r.EvalResult == "" {
 		r.EvalResult = "Unknown"
 	}
+	if r.ControlApplicability == nil {
+		r.ControlApplicability = []string{}
+	}
+	if r.Requirements == nil {
+		r.Requirements = []string{}
+	}
 }
 
 // InsertEvidence batch-inserts evidence records with full semconv column coverage.
 func (s *Store) InsertEvidence(ctx context.Context, records []EvidenceRecord) (int, error) {
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO evidence (
+	if len(records) == 0 {
+		return 0, nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin evidence tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO evidence (
 		evidence_id, target_id, target_name, target_type, target_env,
 		engine_name, engine_version, rule_id, rule_name, rule_uri,
 		eval_result, eval_message,
@@ -731,16 +891,25 @@ func (s *Store) InsertEvidence(ctx context.Context, records []EvidenceRecord) (i
 		exception_id, exception_active,
 		enrichment_status,
 		attestation_ref, source_registry, blob_ref,
-		collected_at
-	)`)
-	if err != nil {
-		return 0, fmt.Errorf("prepare batch: %w", err)
-	}
+		owner, collected_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+	ON CONFLICT (evidence_id, control_id, requirement_id) DO UPDATE SET
+		target_name = EXCLUDED.target_name,
+		target_type = EXCLUDED.target_type,
+		target_env = EXCLUDED.target_env,
+		engine_name = EXCLUDED.engine_name,
+		engine_version = EXCLUDED.engine_version,
+		eval_result = EXCLUDED.eval_result,
+		eval_message = EXCLUDED.eval_message,
+		compliance_status = EXCLUDED.compliance_status,
+		owner = EXCLUDED.owner,
+		collected_at = EXCLUDED.collected_at`
+
 	count := 0
 	for _, r := range records {
 		normalizeEvidence(&r)
 		warnEvalMessageIfLarge(r)
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.EvidenceID,
 			r.TargetID, nullStr(r.TargetName), nullStr(r.TargetType), nullStr(r.TargetEnv),
 			nullStr(r.EngineName), nullStr(r.EngineVersion), r.RuleID, nullStr(r.RuleName), nullStr(r.RuleURI),
@@ -753,21 +922,21 @@ func (s *Store) InsertEvidence(ctx context.Context, records []EvidenceRecord) (i
 			nullStr(r.ExceptionID), r.ExceptionActive,
 			r.EnrichmentStatus,
 			nullStr(r.AttestationRef), nullStr(r.SourceRegistry), nullStr(r.BlobRef),
-			r.CollectedAt,
+			nullStr(r.Owner), r.CollectedAt,
 		); err != nil {
-			return count, fmt.Errorf("append row: %w", err)
+			return count, fmt.Errorf("insert evidence row: %w", err)
 		}
 		count++
 	}
-	if err := batch.Send(); err != nil {
-		return 0, fmt.Errorf("send batch: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit evidence: %w", err)
 	}
 	return count, nil
 }
 
 // EvidenceFilter holds query parameters for evidence queries.
 type EvidenceFilter struct {
-	PolicyID      string
+	PolicyIDs     []string
 	ControlID     string
 	TargetName    string
 	TargetType    string
@@ -782,70 +951,79 @@ type EvidenceFilter struct {
 
 // QueryEvidence returns evidence rows matching the filter.
 func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]EvidenceRecord, error) {
-	query := `SELECT evidence_id, policy_id, target_id,
-		coalesce(target_name, '') AS target_name,
-		coalesce(target_type, '') AS target_type,
-		coalesce(target_env, '') AS target_env,
-		coalesce(engine_name, '') AS engine_name,
-		coalesce(engine_version, '') AS engine_version,
-		rule_id,
-		coalesce(rule_name, '') AS rule_name,
-		eval_result,
-		coalesce(eval_message, '') AS eval_message,
-		control_id,
-		coalesce(control_catalog_id, '') AS control_catalog_id,
-		coalesce(control_category, '') AS control_category,
-		requirement_id,
-		coalesce(plan_id, '') AS plan_id,
-		coalesce(confidence, '') AS confidence,
-		compliance_status,
-		coalesce(risk_level, '') AS risk_level,
-		requirements,
-		enrichment_status,
-		coalesce(attestation_ref, '') AS attestation_ref,
-		coalesce(source_registry, '') AS source_registry,
-		coalesce(blob_ref, '') AS blob_ref,
-		certified,
-		collected_at
-		FROM evidence WHERE 1=1`
+	query := `SELECT e.evidence_id, e.policy_id, e.target_id,
+		COALESCE(e.target_name, '') AS target_name,
+		COALESCE(e.target_type, '') AS target_type,
+		COALESCE(e.target_env, '') AS target_env,
+		COALESCE(e.engine_name, '') AS engine_name,
+		COALESCE(e.engine_version, '') AS engine_version,
+		e.rule_id,
+		COALESCE(e.rule_name, '') AS rule_name,
+		e.eval_result,
+		COALESCE(e.eval_message, '') AS eval_message,
+		e.control_id,
+		COALESCE(e.control_catalog_id, '') AS control_catalog_id,
+		COALESCE(e.control_category, '') AS control_category,
+		e.requirement_id,
+		COALESCE(e.plan_id, '') AS plan_id,
+		COALESCE(e.confidence, '') AS confidence,
+		e.compliance_status,
+		COALESCE(e.risk_level, '') AS risk_level,
+		e.requirements,
+		e.enrichment_status,
+		COALESCE(e.attestation_ref, '') AS attestation_ref,
+		COALESCE(e.source_registry, '') AS source_registry,
+		COALESCE(e.blob_ref, '') AS blob_ref,
+		e.certified,
+		e.collected_at,
+		COALESCE(ea_latest.classification, '') AS classification
+		FROM evidence e
+		LEFT JOIN LATERAL (
+			SELECT ea2.classification
+			FROM evidence_assessments ea2
+			WHERE ea2.evidence_id = e.evidence_id
+			ORDER BY ea2.assessed_at DESC
+			LIMIT 1
+		) AS ea_latest ON TRUE
+		WHERE 1=1`
 	var args []any
-
-	if f.PolicyID != "" {
-		query += ` AND policy_id = ?`
-		args = append(args, f.PolicyID)
+	n := 1
+	add := func(cond string, v any) {
+		placeholder := "$" + strconv.Itoa(n)
+		n++
+		query += " AND " + strings.Replace(cond, "?", placeholder, 1)
+		args = append(args, v)
+	}
+	if len(f.PolicyIDs) == 1 {
+		add(`e.policy_id = ?`, f.PolicyIDs[0])
+	} else if len(f.PolicyIDs) > 1 {
+		add(`e.policy_id = ANY(?)`, f.PolicyIDs)
 	}
 	if f.ControlID != "" {
-		query += ` AND control_id = ?`
-		args = append(args, f.ControlID)
+		add(`e.control_id = ?`, f.ControlID)
 	}
 	if f.TargetName != "" {
-		query += ` AND target_name = ?`
-		args = append(args, f.TargetName)
+		add(`e.target_name = ?`, f.TargetName)
 	}
 	if f.TargetType != "" {
-		query += ` AND target_type = ?`
-		args = append(args, f.TargetType)
+		add(`e.target_type = ?`, f.TargetType)
 	}
 	if f.TargetEnv != "" {
-		query += ` AND target_env = ?`
-		args = append(args, f.TargetEnv)
+		add(`e.target_env = ?`, f.TargetEnv)
 	}
 	if f.EngineVersion != "" {
-		query += ` AND engine_version = ?`
-		args = append(args, f.EngineVersion)
+		add(`e.engine_version = ?`, f.EngineVersion)
 	}
 	if f.Owner != "" {
-		query += ` AND target_id IN (SELECT DISTINCT target_id FROM evidence WHERE 1=1)`
+		add(`e.owner = ?`, f.Owner)
 	}
 	if !f.Start.IsZero() {
-		query += ` AND collected_at >= ?`
-		args = append(args, f.Start)
+		add(`e.collected_at >= ?`, f.Start)
 	}
 	if !f.End.IsZero() {
-		query += ` AND collected_at <= ?`
-		args = append(args, f.End)
+		add(`e.collected_at <= ?`, f.End)
 	}
-	query += ` ORDER BY collected_at DESC`
+	query += ` ORDER BY e.collected_at DESC`
 	if f.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT %d`, f.Limit)
 	}
@@ -853,11 +1031,11 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 		query += fmt.Sprintf(` OFFSET %d`, f.Offset)
 	}
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query evidence: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []EvidenceRecord
 	for rows.Next() {
@@ -876,12 +1054,13 @@ func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]Evidence
 			&r.AttestationRef, &r.SourceRegistry, &r.BlobRef,
 			&r.Certified,
 			&r.CollectedAt,
+			&r.Classification,
 		); err != nil {
 			return nil, fmt.Errorf("scan evidence: %w", err)
 		}
 		out = append(out, r)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // CertificationRow represents a single certification verdict.
@@ -913,42 +1092,48 @@ func (s *Store) InsertCertifications(ctx context.Context, rows []CertificationRo
 	if len(rows) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare certifications batch: %w", err)
+		return fmt.Errorf("begin certifications tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason) VALUES ($1, $2, $3, $4, $5)`
 	for _, r := range rows {
-		if err := batch.Append(
+		if _, err := tx.Exec(ctx, q,
 			r.EvidenceID, r.Certifier, r.CertifierVersion,
 			r.Result, r.Reason,
 		); err != nil {
-			return fmt.Errorf("append certification: %w", err)
+			return fmt.Errorf("insert certification: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit certifications: %w", err)
+	}
+	return nil
 }
 
 // UpdateEvidenceCertified sets the denormalized certified flag on an evidence row.
 func (s *Store) UpdateEvidenceCertified(
 	ctx context.Context, evidenceID string, certified bool,
 ) error {
-	return s.conn.Exec(ctx,
-		`ALTER TABLE evidence UPDATE certified = ? WHERE evidence_id = ?`,
+	_, err := s.pool.Exec(ctx,
+		`UPDATE evidence SET certified = $1 WHERE evidence_id = $2`,
 		certified, evidenceID)
+	return err
 }
 
 // QueryCertifications returns certification verdicts for a given evidence row.
 func (s *Store) QueryCertifications(
 	ctx context.Context, evidenceID string,
 ) ([]CertificationRow, error) {
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.pool.Query(ctx,
 		`SELECT evidence_id, certifier, certifier_version, result, reason, certified_at
-		 FROM certifications WHERE evidence_id = ? ORDER BY certified_at DESC`, evidenceID)
+		 FROM certifications WHERE evidence_id = $1 ORDER BY certified_at DESC`, evidenceID)
 	if err != nil {
 		return nil, fmt.Errorf("query certifications: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []CertificationRow
 	for rows.Next() {
@@ -968,19 +1153,19 @@ func (s *Store) QueryCertifications(
 func (s *Store) QueryRecentEvidence(
 	ctx context.Context, policyID string, since time.Time,
 ) ([]EvidenceRowLite, error) {
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.pool.Query(ctx,
 		`SELECT evidence_id, target_id, rule_id, eval_result, compliance_status,
-			coalesce(engine_name, '') AS engine_name,
-			coalesce(source_registry, '') AS source_registry,
-			coalesce(attestation_ref, '') AS attestation_ref,
+			COALESCE(engine_name, '') AS engine_name,
+			COALESCE(source_registry, '') AS source_registry,
+			COALESCE(attestation_ref, '') AS attestation_ref,
 			enrichment_status, collected_at
 		 FROM evidence
-		 WHERE policy_id = ? AND ingested_at >= ?
+		 WHERE policy_id = $1 AND ingested_at >= $2
 		 ORDER BY ingested_at DESC`, policyID, since)
 	if err != nil {
 		return nil, fmt.Errorf("query recent evidence: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []EvidenceRowLite
 	for rows.Next() {
@@ -1017,34 +1202,38 @@ func (s *Store) InsertAuditLog(ctx context.Context, a AuditLog) error {
 	if a.AuditID == "" {
 		a.AuditID = uuid.New().String()
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO audit_logs (audit_id, policy_id, audit_start, audit_end, framework, created_by, content, summary, model, prompt_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO audit_logs (audit_id, policy_id, audit_start, audit_end, framework, created_by, content, summary, model, prompt_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		a.AuditID, a.PolicyID, a.AuditStart, a.AuditEnd, a.Framework, a.CreatedBy, a.Content, a.Summary, a.Model, a.PromptVersion,
 	)
+	return err
 }
 
 // ListAuditLogs returns audit logs for a given policy, optionally filtered by time range.
 func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end time.Time, limit int) ([]AuditLog, error) {
-	query := `SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, summary, model, prompt_version FROM audit_logs FINAL WHERE policy_id = ?`
+	query := `SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, summary, model, prompt_version FROM audit_logs WHERE policy_id = $1`
 	args := []any{policyID}
+	n := 2
 
 	if !start.IsZero() {
-		query += ` AND audit_start >= ?`
+		query += ` AND audit_start >= $` + strconv.Itoa(n)
 		args = append(args, start)
+		n++
 	}
 	if !end.IsZero() {
-		query += ` AND audit_end <= ?`
+		query += ` AND audit_end <= $` + strconv.Itoa(n)
 		args = append(args, end)
+		n++
 	}
 	query += ` ORDER BY audit_start DESC`
 	limit = consts.ClampLimit(limit)
 	query += fmt.Sprintf(` LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list audit logs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []AuditLog
 	for rows.Next() {
@@ -1054,13 +1243,13 @@ func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end t
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // GetAuditLog returns a single audit log with full content.
 func (s *Store) GetAuditLog(ctx context.Context, auditID string) (*AuditLog, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary, model, prompt_version FROM audit_logs FINAL WHERE audit_id = ?`, auditID)
+	row := s.pool.QueryRow(ctx,
+		`SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary, model, prompt_version FROM audit_logs WHERE audit_id = $1`, auditID)
 	var a AuditLog
 	if err := row.Scan(&a.AuditID, &a.PolicyID, &a.AuditStart, &a.AuditEnd, &a.Framework, &a.CreatedAt, &a.CreatedBy, &a.Content, &a.Summary, &a.Model, &a.PromptVersion); err != nil {
 		return nil, fmt.Errorf("get audit log: %w", err)
@@ -1078,6 +1267,9 @@ type EvidenceAssessment struct {
 	AssessedAt     time.Time `json:"assessed_at"`
 	AssessedBy     string    `json:"assessed_by"`
 }
+
+// ErrNotFound is returned by MarkRead when the notification ID does not exist.
+var ErrNotFound = errors.New("not found")
 
 // ErrRequirementNotFound is returned by ListRequirementEvidence when the
 // requirement ID is not known for the policy (no matching catalog row and no
@@ -1102,17 +1294,22 @@ func (s *Store) InsertEvidenceAssessments(ctx context.Context, assessments []Evi
 	if len(assessments) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO evidence_assessments (evidence_id, policy_id, plan_id, classification, reason, assessed_at, assessed_by)`)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare evidence assessments batch: %w", err)
+		return fmt.Errorf("begin evidence assessments tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO evidence_assessments (evidence_id, policy_id, plan_id, classification, reason, assessed_at, assessed_by) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	for _, a := range assessments {
-		if err := batch.Append(a.EvidenceID, a.PolicyID, a.PlanID, a.Classification, a.Reason, a.AssessedAt, a.AssessedBy); err != nil {
-			return fmt.Errorf("append evidence assessment: %w", err)
+		if _, err := tx.Exec(ctx, q, a.EvidenceID, a.PolicyID, a.PlanID, a.Classification, a.Reason, a.AssessedAt, a.AssessedBy); err != nil {
+			return fmt.Errorf("insert evidence assessment: %w", err)
 		}
 	}
-	return batch.Send()
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit evidence assessments: %w", err)
+	}
+	return nil
 }
 
 // Catalog represents a stored catalog artifact (ControlCatalog, ThreatCatalog, etc.).
@@ -1125,22 +1322,29 @@ type Catalog struct {
 	ImportedAt  time.Time `json:"imported_at"`
 }
 
-// InsertCatalog stores a raw catalog artifact.
+// InsertCatalog stores a raw catalog artifact, replacing on conflict.
 func (s *Store) InsertCatalog(ctx context.Context, c Catalog) error {
-	return s.conn.Exec(ctx,
-		`INSERT INTO catalogs (catalog_id, catalog_type, title, content, policy_id) VALUES (?, ?, ?, ?, ?)`,
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO catalogs (catalog_id, catalog_type, title, content, policy_id) VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (catalog_id) DO UPDATE SET
+		   catalog_type = EXCLUDED.catalog_type,
+		   title = EXCLUDED.title,
+		   content = EXCLUDED.content,
+		   policy_id = EXCLUDED.policy_id,
+		   imported_at = now()`,
 		c.CatalogID, c.CatalogType, c.Title, c.Content, c.PolicyID,
 	)
+	return err
 }
 
 // ListCatalogs returns all stored catalogs (without content for efficiency).
 func (s *Store) ListCatalogs(ctx context.Context) ([]Catalog, error) {
-	rows, err := s.conn.Query(ctx,
-		`SELECT catalog_id, catalog_type, title, policy_id, imported_at FROM catalogs FINAL ORDER BY imported_at DESC`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT catalog_id, catalog_type, title, policy_id, imported_at FROM catalogs ORDER BY imported_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list catalogs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []Catalog
 	for rows.Next() {
@@ -1150,13 +1354,13 @@ func (s *Store) ListCatalogs(ctx context.Context) ([]Catalog, error) {
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // GetCatalog returns a single catalog with full content.
 func (s *Store) GetCatalog(ctx context.Context, catalogID string) (*Catalog, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT catalog_id, catalog_type, title, content, policy_id, imported_at FROM catalogs FINAL WHERE catalog_id = ?`, catalogID)
+	row := s.pool.QueryRow(ctx,
+		`SELECT catalog_id, catalog_type, title, content, policy_id, imported_at FROM catalogs WHERE catalog_id = $1`, catalogID)
 	var c Catalog
 	if err := row.Scan(&c.CatalogID, &c.CatalogType, &c.Title, &c.Content, &c.PolicyID, &c.ImportedAt); err != nil {
 		return nil, fmt.Errorf("get catalog: %w", err)
@@ -1178,7 +1382,7 @@ type DraftAuditLog struct {
 	AgentReasoning string     `json:"agent_reasoning,omitempty"`
 	Model          string     `json:"model,omitempty"`
 	PromptVersion  string     `json:"prompt_version,omitempty"`
-	ReviewedBy     string     `json:"reviewed_by,omitempty"`
+	ReviewedBy     *string    `json:"reviewed_by,omitempty"`
 	PromotedAt     *time.Time `json:"promoted_at,omitempty"`
 	ReviewerEdits  string     `json:"reviewer_edits,omitempty"`
 }
@@ -1195,29 +1399,30 @@ func (s *Store) InsertDraftAuditLog(ctx context.Context, d DraftAuditLog) error 
 	if edits == "" {
 		edits = "{}"
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO draft_audit_logs (draft_id, policy_id, audit_start, audit_end, framework, status, content, summary, agent_reasoning, model, prompt_version, reviewer_edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO draft_audit_logs (draft_id, policy_id, audit_start, audit_end, framework, status, content, summary, agent_reasoning, model, prompt_version, reviewer_edits) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		d.DraftID, d.PolicyID, d.AuditStart, d.AuditEnd, d.Framework, d.Status, d.Content, d.Summary, d.AgentReasoning, d.Model, d.PromptVersion, edits,
 	)
+	return err
 }
 
 // ListDraftAuditLogs returns drafts filtered by status. Empty status returns all.
 func (s *Store) ListDraftAuditLogs(ctx context.Context, status string, limit int) ([]DraftAuditLog, error) {
-	query := `SELECT draft_id, policy_id, audit_start, audit_end, framework, created_at, status, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits FROM draft_audit_logs FINAL`
+	query := `SELECT draft_id, policy_id, audit_start, audit_end, framework, created_at, status, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits FROM draft_audit_logs`
 	var args []any
 	if status != "" {
-		query += ` WHERE status = ?`
+		query += ` WHERE status = $1`
 		args = append(args, status)
 	}
 	query += ` ORDER BY created_at DESC`
 	limit = consts.ClampLimit(limit)
 	query += fmt.Sprintf(` LIMIT %d`, limit)
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list draft audit logs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []DraftAuditLog
 	for rows.Next() {
@@ -1227,13 +1432,13 @@ func (s *Store) ListDraftAuditLogs(ctx context.Context, status string, limit int
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // GetDraftAuditLog returns a single draft with full content.
 func (s *Store) GetDraftAuditLog(ctx context.Context, draftID string) (*DraftAuditLog, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT draft_id, policy_id, audit_start, audit_end, framework, created_at, status, content, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits FROM draft_audit_logs FINAL WHERE draft_id = ?`, draftID)
+	row := s.pool.QueryRow(ctx,
+		`SELECT draft_id, policy_id, audit_start, audit_end, framework, created_at, status, content, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits FROM draft_audit_logs WHERE draft_id = $1`, draftID)
 	var d DraftAuditLog
 	if err := row.Scan(&d.DraftID, &d.PolicyID, &d.AuditStart, &d.AuditEnd, &d.Framework, &d.CreatedAt, &d.Status, &d.Content, &d.Summary, &d.AgentReasoning, &d.Model, &d.PromptVersion, &d.ReviewedBy, &d.PromotedAt, &d.ReviewerEdits); err != nil {
 		return nil, fmt.Errorf("get draft audit log: %w", err)
@@ -1242,7 +1447,6 @@ func (s *Store) GetDraftAuditLog(ctx context.Context, draftID string) (*DraftAud
 }
 
 // UpdateDraftEdits persists reviewer edits (type overrides, notes) on a pending draft.
-// Uses ClickHouse ReplacingMergeTree — inserts a new row version with updated reviewer_edits.
 func (s *Store) UpdateDraftEdits(ctx context.Context, draftID string, reviewerEdits string) error {
 	draft, err := s.GetDraftAuditLog(ctx, draftID)
 	if err != nil {
@@ -1251,10 +1455,10 @@ func (s *Store) UpdateDraftEdits(ctx context.Context, draftID string, reviewerEd
 	if draft.Status != "pending_review" {
 		return ErrDraftAlreadyPromoted
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO draft_audit_logs (draft_id, policy_id, audit_start, audit_end, framework, status, content, summary, agent_reasoning, model, prompt_version, reviewer_edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		draft.DraftID, draft.PolicyID, draft.AuditStart, draft.AuditEnd, draft.Framework, draft.Status, draft.Content, draft.Summary, draft.AgentReasoning, draft.Model, draft.PromptVersion, reviewerEdits,
-	)
+	_, err = s.pool.Exec(ctx,
+		`UPDATE draft_audit_logs SET reviewer_edits = $1 WHERE draft_id = $2 AND status = 'pending_review'`,
+		reviewerEdits, draftID)
+	return err
 }
 
 // PromoteDraftAuditLog copies a draft to the official audit_logs table and marks it promoted.
@@ -1285,15 +1489,31 @@ func (s *Store) PromoteDraftAuditLog(ctx context.Context, draftID string, review
 		Model:         draft.Model,
 		PromptVersion: draft.PromptVersion,
 	}
-	if err := s.InsertAuditLog(ctx, official); err != nil {
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin promote draft: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO audit_logs (audit_id, policy_id, audit_start, audit_end, framework, created_by, content, summary, model, prompt_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		official.AuditID, official.PolicyID, official.AuditStart, official.AuditEnd, official.Framework, official.CreatedBy, official.Content, official.Summary, official.Model, official.PromptVersion,
+	); err != nil {
 		return fmt.Errorf("insert promoted audit log: %w", err)
 	}
 
-	now := time.Now()
-	return s.conn.Exec(ctx,
-		`INSERT INTO draft_audit_logs (draft_id, policy_id, audit_start, audit_end, framework, status, content, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		draft.DraftID, draft.PolicyID, draft.AuditStart, draft.AuditEnd, draft.Framework, "promoted", draft.Content, draft.Summary, draft.AgentReasoning, draft.Model, draft.PromptVersion, reviewedBy, &now, draft.ReviewerEdits,
-	)
+	if _, err := tx.Exec(ctx,
+		`UPDATE draft_audit_logs SET status = $1, reviewed_by = $2, promoted_at = now() WHERE draft_id = $3`,
+		"promoted", reviewedBy, draft.DraftID,
+	); err != nil {
+		return fmt.Errorf("mark draft promoted: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit promote draft: %w", err)
+	}
+	return nil
 }
 
 // PostureRow is a per-policy compliance posture aggregate with inventory context.
@@ -1321,13 +1541,16 @@ func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]Postur
 	)
 	if !start.IsZero() || !end.IsZero() {
 		evidenceFilter = " WHERE 1=1"
+		n := 1
 		if !start.IsZero() {
-			evidenceFilter += " AND collected_at >= ?"
+			evidenceFilter += " AND collected_at >= $" + strconv.Itoa(n)
 			args = append(args, start)
+			n++
 		}
 		if !end.IsZero() {
-			evidenceFilter += " AND collected_at <= ?"
+			evidenceFilter += " AND collected_at <= $" + strconv.Itoa(n)
 			args = append(args, end)
+			n++
 		}
 	}
 
@@ -1335,25 +1558,25 @@ func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]Postur
 		SELECT
 			p.policy_id,
 			p.title,
-			coalesce(p.version, '') AS policy_version,
-			countIf(e.evidence_id != '') AS total_rows,
-			countIf(e.eval_result = 'Passed') AS passed_rows,
-			countIf(e.eval_result = 'Failed') AS failed_rows,
-			countIf(e.eval_result NOT IN ('Passed', 'Failed')) AS other_rows,
-			if(count(e.evidence_id) > 0, toString(max(e.collected_at)), '') AS latest_at,
-			uniqIf(e.target_id, e.target_id != '') AS target_count,
-			uniqIf(e.control_id, e.control_id != '') AS control_count,
-			if(count(e.evidence_id) > 0, toString(max(e.collected_at)), '') AS latest_evidence_at
-		FROM (SELECT policy_id, title, version FROM policies FINAL) AS p
+			COALESCE(p.version, '') AS policy_version,
+			COUNT(e.evidence_id) AS total_rows,
+			COUNT(*) FILTER (WHERE e.eval_result = 'Passed') AS passed_rows,
+			COUNT(*) FILTER (WHERE e.eval_result = 'Failed') AS failed_rows,
+			COUNT(*) FILTER (WHERE e.eval_result NOT IN ('Passed', 'Failed')) AS other_rows,
+			COALESCE(MAX(e.collected_at)::TEXT, '') AS latest_at,
+			COUNT(DISTINCT e.target_id) FILTER (WHERE e.target_id <> '') AS target_count,
+			COUNT(DISTINCT e.control_id) FILTER (WHERE e.control_id <> '') AS control_count,
+			COALESCE(MAX(e.collected_at)::TEXT, '') AS latest_evidence_at
+		FROM policies p
 		LEFT JOIN (SELECT * FROM evidence` + evidenceFilter + `) e ON e.policy_id = p.policy_id
-		GROUP BY p.policy_id, p.title, policy_version
+		GROUP BY p.policy_id, p.title, COALESCE(p.version, '')
 		ORDER BY p.title`
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list posture: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []PostureRow
 	for rows.Next() {
@@ -1379,8 +1602,8 @@ func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]Postur
 // enrichPostureOwners extracts the accountable contact from each policy's YAML content.
 func (s *Store) enrichPostureOwners(ctx context.Context, posture []PostureRow) {
 	for i, r := range posture {
-		row := s.conn.QueryRow(ctx,
-			`SELECT content FROM policies FINAL WHERE policy_id = ? LIMIT 1`, r.PolicyID)
+		row := s.pool.QueryRow(ctx,
+			`SELECT content FROM policies WHERE policy_id = $1 LIMIT 1`, r.PolicyID)
 		var content string
 		if err := row.Scan(&content); err != nil {
 			continue
@@ -1391,20 +1614,20 @@ func (s *Store) enrichPostureOwners(ctx context.Context, posture []PostureRow) {
 
 // QueryPolicyPosture returns aggregate evidence counts for a single policy.
 func (s *Store) QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error) {
-	row := s.conn.QueryRow(ctx, `
+	row := s.pool.QueryRow(ctx, `
 		SELECT
-			count() AS total,
-			countIf(eval_result = 'Passed') AS passed,
-			countIf(eval_result = 'Failed') AS failed
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE eval_result = 'Passed') AS passed,
+			COUNT(*) FILTER (WHERE eval_result = 'Failed') AS failed
 		FROM evidence
-		WHERE policy_id = ?`, policyID)
+		WHERE policy_id = $1`, policyID)
 	if err := row.Scan(&total, &passed, &failed); err != nil {
 		return 0, 0, 0, fmt.Errorf("query policy posture: %w", err)
 	}
 	return total, passed, failed, nil
 }
 
-// Notification represents an inbox notification stored in ClickHouse.
+// Notification represents an inbox notification stored in PostgreSQL.
 type Notification struct {
 	NotificationID string    `json:"notification_id"`
 	Type           string    `json:"type"`
@@ -1419,50 +1642,55 @@ func (s *Store) InsertNotification(ctx context.Context, n Notification) error {
 	if n.NotificationID == "" {
 		n.NotificationID = uuid.New().String()
 	}
-	return s.conn.Exec(ctx,
-		`INSERT INTO notifications (notification_id, type, policy_id, payload) VALUES (?, ?, ?, ?)`,
-		n.NotificationID, n.Type, n.PolicyID, n.Payload)
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO notifications (notification_id, type, policy_id, payload) VALUES ($1, $2, $3, $4)`,
+		n.NotificationID, n.Type, n.PolicyID, n.Payload,
+	)
+	return err
 }
 
 // ListNotifications returns recent notifications ordered newest-first.
 func (s *Store) ListNotifications(ctx context.Context, limit int) ([]Notification, error) {
 	limit = consts.ClampLimit(limit)
-	rows, err := s.conn.Query(ctx,
-		fmt.Sprintf(`SELECT notification_id, type, policy_id, payload, read, created_at
-			FROM notifications FINAL
-			ORDER BY created_at DESC LIMIT %d`, limit))
+	rows, err := s.pool.Query(ctx,
+		`SELECT notification_id, type, policy_id, payload::TEXT, read, created_at
+			FROM notifications
+			ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []Notification
 	for rows.Next() {
 		var n Notification
-		var readFlag uint8
-		if err := rows.Scan(&n.NotificationID, &n.Type, &n.PolicyID, &n.Payload, &readFlag, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.NotificationID, &n.Type, &n.PolicyID, &n.Payload, &n.Read, &n.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan notification: %w", err)
 		}
-		n.Read = readFlag == 1
 		out = append(out, n)
 	}
 	return out, rows.Err()
 }
 
-// MarkRead marks a notification as read using ReplacingMergeTree semantics.
+// MarkRead marks a notification as read. Returns ErrNotFound when the
+// notification ID does not exist.
 func (s *Store) MarkRead(ctx context.Context, notificationID string) error {
-	return s.conn.Exec(ctx,
-		`INSERT INTO notifications (notification_id, type, policy_id, payload, read, created_at)
-		 SELECT notification_id, type, policy_id, payload, 1, now64(3)
-		 FROM notifications FINAL
-		 WHERE notification_id = ?`, notificationID)
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE notifications SET read = true WHERE notification_id = $1`, notificationID)
+	if err != nil {
+		return fmt.Errorf("mark read: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UnreadCount returns the number of unread notifications.
 func (s *Store) UnreadCount(ctx context.Context) (int, error) {
-	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM notifications FINAL WHERE read = 0`)
-	var count uint64
+	row := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM notifications WHERE NOT read`)
+	var count int64
 	if err := row.Scan(&count); err != nil {
 		return 0, fmt.Errorf("unread count: %w", err)
 	}
@@ -1514,42 +1742,48 @@ type RequirementEvidenceRow struct {
 func (s *Store) ListRequirementMatrix(ctx context.Context, f RequirementFilter) ([]RequirementRow, error) {
 	query := `
 		SELECT
-			coalesce(ar.catalog_id, '') AS catalog_id,
+			COALESCE(ar.catalog_id, '') AS catalog_id,
 			e.control_id,
-			coalesce(c.title, '') AS control_title,
-			coalesce(ar.requirement_id, e.control_id) AS requirement_id,
-			coalesce(ar.text, '') AS requirement_text,
-			count(DISTINCT e.evidence_id) AS evidence_count,
-			if(count(e.evidence_id) > 0, toString(max(e.collected_at)), '') AS latest_evidence,
-			coalesce(any(ea_latest.classification), 'Unassessed') AS classification
+			COALESCE(c.title, '') AS control_title,
+			COALESCE(ar.requirement_id, e.control_id) AS requirement_id,
+			COALESCE(ar.text, c.objective) AS requirement_text,
+			COUNT(DISTINCT e.evidence_id) AS evidence_count,
+			CASE WHEN COUNT(e.evidence_id) > 0 THEN MAX(e.collected_at)::TEXT ELSE '' END AS latest_evidence,
+			CASE
+				WHEN COUNT(e.evidence_id) = 0 THEN 'No Evidence'
+				WHEN COUNT(DISTINCT e.evidence_id) FILTER (WHERE e.eval_result = 'Failed') > 0
+					AND COUNT(DISTINCT e.evidence_id) FILTER (WHERE e.eval_result = 'Passed') > 0 THEN 'Mixed'
+				WHEN COUNT(DISTINCT e.evidence_id) FILTER (WHERE e.eval_result = 'Passed') = COUNT(DISTINCT e.evidence_id) THEN 'Passing'
+				WHEN COUNT(DISTINCT e.evidence_id) FILTER (WHERE e.eval_result = 'Failed') = COUNT(DISTINCT e.evidence_id) THEN 'Failing'
+				ELSE 'Inconclusive'
+			END AS classification
 		FROM evidence e
-		LEFT JOIN (SELECT catalog_id, control_id, title FROM controls FINAL) AS c
-			ON c.control_id = e.control_id
+		LEFT JOIN controls c
+			ON c.control_id = e.control_id AND c.policy_id = e.policy_id
 		LEFT JOIN assessment_requirements ar
 			ON ar.control_id = e.control_id AND ar.catalog_id = c.catalog_id
-		LEFT JOIN (
-			SELECT evidence_id, argMax(classification, assessed_at) AS classification
-			FROM evidence_assessments
-			GROUP BY evidence_id
-		) AS ea_latest ON ea_latest.evidence_id = e.evidence_id
-		WHERE e.policy_id = ?`
+		WHERE e.policy_id = $1`
 
 	args := []any{f.PolicyID}
-
+	argN := 2
 	if !f.Start.IsZero() {
-		query += ` AND e.collected_at >= ?`
+		query += ` AND e.collected_at >= $` + strconv.Itoa(argN)
 		args = append(args, f.Start)
+		argN++
 	}
 	if !f.End.IsZero() {
-		query += ` AND e.collected_at <= ?`
+		query += ` AND e.collected_at <= $` + strconv.Itoa(argN)
 		args = append(args, f.End)
+		argN++
 	}
 	if f.ControlFamily != "" {
-		query += ` AND startsWith(e.control_id, ?)`
+		query += ` AND e.control_id LIKE $` + strconv.Itoa(argN) + ` || '%'`
 		args = append(args, f.ControlFamily)
+		argN++
 	}
 
-	query += ` GROUP BY catalog_id, e.control_id, control_title, requirement_id, requirement_text, ea_latest.classification
+	query += ` GROUP BY COALESCE(ar.catalog_id, ''), e.control_id, COALESCE(c.title, ''),
+			COALESCE(ar.requirement_id, e.control_id), COALESCE(ar.text, c.objective)
 		ORDER BY e.control_id, requirement_id`
 
 	if f.Limit <= 0 {
@@ -1560,11 +1794,11 @@ func (s *Store) ListRequirementMatrix(ctx context.Context, f RequirementFilter) 
 		query += fmt.Sprintf(` OFFSET %d`, f.Offset)
 	}
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list requirement matrix: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []RequirementRow
 	for rows.Next() {
@@ -1586,9 +1820,9 @@ func (s *Store) ListRequirementMatrix(ctx context.Context, f RequirementFilter) 
 // one assessment requirement for the policy's controls or to evidence rows for
 // that policy (control_id or requirement_id match).
 func (s *Store) requirementKnownForPolicy(ctx context.Context, policyID, requirementID string) (bool, error) {
-	var evCount uint64
-	if err := s.conn.QueryRow(ctx,
-		`SELECT count() FROM evidence WHERE policy_id = ? AND (control_id = ? OR requirement_id = ?)`,
+	var evCount int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM evidence WHERE policy_id = $1 AND (control_id = $2 OR requirement_id = $3)`,
 		policyID, requirementID, requirementID,
 	).Scan(&evCount); err != nil {
 		return false, fmt.Errorf("count evidence for requirement: %w", err)
@@ -1597,12 +1831,12 @@ func (s *Store) requirementKnownForPolicy(ctx context.Context, policyID, require
 		return true, nil
 	}
 
-	var arCount uint64
-	if err := s.conn.QueryRow(ctx,
-		`SELECT count() FROM assessment_requirements ar
-		 INNER JOIN (SELECT catalog_id, control_id, policy_id FROM controls FINAL) AS c
+	var arCount int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM assessment_requirements ar
+		 INNER JOIN controls c
 		   ON c.catalog_id = ar.catalog_id AND c.control_id = ar.control_id
-		 WHERE ar.requirement_id = ? AND c.policy_id = ?`,
+		 WHERE ar.requirement_id = $1 AND c.policy_id = $2`,
 		requirementID, policyID,
 	).Scan(&arCount); err != nil {
 		return false, fmt.Errorf("count assessment requirements for requirement: %w", err)
@@ -1624,35 +1858,37 @@ func (s *Store) ListRequirementEvidence(ctx context.Context, requirementID strin
 		SELECT
 			e.evidence_id,
 			e.target_id,
-			coalesce(e.target_name, '') AS target_name,
+			COALESCE(e.target_name, '') AS target_name,
 			e.rule_id,
 			e.eval_result,
-			coalesce(ea_latest.classification, '') AS classification,
-			coalesce(ea_latest.last_assessed, '') AS assessed_at,
-			toString(e.collected_at) AS collected_at,
-			coalesce(e.source_registry, '') AS source_registry
+			COALESCE(ea_latest.classification, '') AS classification,
+			COALESCE(ea_latest.last_assessed::TEXT, '') AS assessed_at,
+			e.collected_at::TEXT AS collected_at,
+			COALESCE(e.source_registry, '') AS source_registry
 		FROM evidence e
-		LEFT JOIN (
-			SELECT evidence_id,
-				argMax(classification, assessed_at) AS classification,
-				toString(max(assessed_at)) AS last_assessed
-			FROM evidence_assessments
-			GROUP BY evidence_id
-		) AS ea_latest ON ea_latest.evidence_id = e.evidence_id
-		WHERE (e.control_id = ? OR e.control_id IN (
+		LEFT JOIN LATERAL (
+			SELECT ea2.classification, ea2.assessed_at AS last_assessed
+			FROM evidence_assessments ea2
+			WHERE ea2.evidence_id = e.evidence_id
+			ORDER BY ea2.assessed_at DESC
+			LIMIT 1
+		) AS ea_latest ON TRUE
+		WHERE (e.control_id = $1 OR e.control_id IN (
 			SELECT control_id FROM assessment_requirements
-			WHERE requirement_id = ?
-		)) AND e.policy_id = ?`
+			WHERE requirement_id = $2
+		)) AND e.policy_id = $3`
 
 	args := []any{requirementID, requirementID, f.PolicyID}
-
+	argN := 4
 	if !f.Start.IsZero() {
-		query += ` AND e.collected_at >= ?`
+		query += ` AND e.collected_at >= $` + strconv.Itoa(argN)
 		args = append(args, f.Start)
+		argN++
 	}
 	if !f.End.IsZero() {
-		query += ` AND e.collected_at <= ?`
+		query += ` AND e.collected_at <= $` + strconv.Itoa(argN)
 		args = append(args, f.End)
+		argN++
 	}
 
 	query += ` ORDER BY e.collected_at DESC`
@@ -1665,11 +1901,11 @@ func (s *Store) ListRequirementEvidence(ctx context.Context, requirementID strin
 		query += fmt.Sprintf(` OFFSET %d`, f.Offset)
 	}
 
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list requirement evidence: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []RequirementEvidenceRow
 	for rows.Next() {

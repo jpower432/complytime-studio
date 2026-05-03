@@ -8,6 +8,9 @@ import (
 )
 
 // CORSOptions configures the CORS middleware.
+//
+// Deprecated: the gateway uses Echo's CORS middleware. Retained for tests
+// and internal tooling that embed net/http directly.
 type CORSOptions struct {
 	// AllowedOrigins is the set of origins permitted to make requests.
 	// An empty slice rejects all cross-origin requests.
@@ -16,6 +19,8 @@ type CORSOptions struct {
 
 // CORS returns middleware that sets Access-Control headers. Preflight
 // OPTIONS requests are handled and short-circuited.
+//
+// Deprecated: the gateway uses Echo's CORS middleware.
 func CORS(opts CORSOptions) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(opts.AllowedOrigins))
 	for _, o := range opts.AllowedOrigins {

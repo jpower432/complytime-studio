@@ -8,6 +8,11 @@ const (
 	// MaxRequestBody is the maximum allowed HTTP request body size (8 MiB).
 	MaxRequestBody int64 = 8 << 20
 
+	// MaxInternalRequestBody is the body limit for the internal (agent-only)
+	// listener. AuditLog drafts include full YAML with evidence and can
+	// exceed the public API limit.
+	MaxInternalRequestBody int64 = 64 << 20
+
 	// HTTPClientTimeout is the default timeout for outbound HTTP clients.
 	HTTPClientTimeout = 15 * time.Second
 
@@ -32,18 +37,6 @@ const (
 	// EvalMessageWarnBytes triggers a warning when eval_message exceeds this
 	// length, indicating the field may contain raw data rather than a summary.
 	EvalMessageWarnBytes = 4096
-
-	// MaxExportRequirementRows caps matrix rows for auditor exports (CSV, Excel,
-	// PDF). Requests that would exceed this return 413.
-	MaxExportRequirementRows = 10000
-
-	// MaxExportEvidenceRows caps evidence rows on the Excel Evidence Inventory
-	// sheet. Exceeding this returns 413.
-	MaxExportEvidenceRows = 50000
-
-	// ExportHandlerTimeout bounds work for export handlers (kept under
-	// ServerWriteTimeout).
-	ExportHandlerTimeout = 90 * time.Second
 
 	// DefaultQueryLimit is the default row limit for list endpoints when
 	// the caller omits the limit parameter.
