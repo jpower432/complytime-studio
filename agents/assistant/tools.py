@@ -170,3 +170,5 @@ def _extract_reasoning(doc: dict) -> str:
         if reasoning:
             reasons.append(f"{rid}: {reasoning}")
     return "\n".join(reasons)
+
+

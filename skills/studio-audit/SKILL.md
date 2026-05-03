@@ -1,6 +1,6 @@
 ---
 name: studio-audit
-description: Audit methodology, classification criteria, coverage mapping, and ClickHouse table reference
+description: Audit methodology, classification criteria, coverage mapping, and PostgreSQL schema reference
 ---
 
 # Studio Audit
@@ -14,7 +14,7 @@ description: Audit methodology, classification criteria, coverage mapping, and C
 | Gap | No evidence rows in audit window |
 | Observation | eval_result = Needs Review, or mixed results |
 
-Use most recent evidence per control+requirement. Enforcement with `remediation_status = Success` can convert Finding → Strength. Exception with `exception_active = true` converts Finding → annotated Strength.
+Use most recent evidence per control+requirement. Enforcement with `remediation_status = Success` can convert Finding -> Strength. Exception with `exception_active = true` converts Finding -> annotated Strength.
 
 ## Satisfaction
 
@@ -48,64 +48,69 @@ Multiple controls mapping to the same external entry: use strongest coverage. No
 
 **validate_gemara_artifact**: `artifact_content` (YAML string), `definition` (e.g. `#AuditLog`), `version` (optional)
 **migrate_gemara_artifact**: `artifact_content` (YAML string), `artifact_type` (optional), `gemara_version` (optional)
+**query_database**: `query` (string) — execute a read-only SELECT against PostgreSQL
+**get_schema_info**: `schema_name` (optional), `table_name` (optional) — introspect database tables and columns
 
 ## Workbench posture list vs. SQL
 
 The workbench calls `GET /api/posture` with optional `start` and `end` query parameters to limit rows to evidence whose `collected_at` falls in that window (omitting both parameters includes all evidence). When you run ad-hoc SQL that should match the on-screen posture numbers, apply the same `collected_at` range the user selected (including workbench time presets: 7d, 30d, 90d, or all-time).
 
-## ClickHouse Tables
+## PostgreSQL Tables
 
-Database: `default`. Query via `run_select_query`. Use `DESCRIBE TABLE <name>` for column types.
+All data lives in PostgreSQL. Use `query_database` for SQL access and `get_schema_info` to discover tables.
 
-```
-evidence: evidence_id, target_id, target_name, target_type, target_env, engine_name, engine_version, rule_id, rule_name, eval_result, eval_message, policy_id, control_id, control_catalog_id, control_category, control_applicability, requirement_id, plan_id, confidence, compliance_status, risk_level, requirements, remediation_action, remediation_status, remediation_desc, exception_id, exception_active, enrichment_status, collected_at, ingested_at, attestation_ref
-policies: policy_id, title, version, oci_reference, content, imported_at, imported_by
-noncompliant_evidence: (same schema as evidence, pre-filtered to failing/non-compliant rows)
-evidence_assessments: evidence_id, policy_id, plan_id, classification, reason, assessed_at, assessed_by
-mapping_documents: mapping_id, policy_id, framework, content, imported_at
-mapping_entries: mapping_id, policy_id, control_id, requirement_id, framework, reference, strength, confidence, imported_at
-catalogs: catalog_id, catalog_type, title, content, policy_id, imported_at
-controls: catalog_id, control_id, title, objective, group_id, state, policy_id, imported_at
-assessment_requirements: catalog_id, control_id, requirement_id, text, applicability, recommendation, state, imported_at
-control_threats: catalog_id, control_id, threat_reference_id, threat_entry_id, imported_at
-threats: catalog_id, threat_id, title, description, group_id, policy_id, imported_at
-risks: catalog_id, risk_id, title, description, severity, group_id, impact, policy_id, imported_at
-risk_threats: catalog_id, risk_id, threat_reference_id, threat_entry_id, imported_at
-audit_logs: audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, content, summary, model, prompt_version
-draft_audit_logs: draft_id, policy_id, audit_start, audit_end, framework, created_at, status, content, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits
-```
+| Table | Key Columns | Purpose |
+|:--|:--|:--|
+| `policies` | policy_id, title, content (YAML), oci_reference | Imported L3 policies |
+| `evidence` | evidence_id, target_id, policy_id, control_id, requirement_id, eval_result, compliance_status, collected_at | Flattened evaluation evidence |
+| `mapping_documents` | mapping_id, policy_id, framework, content | Cross-framework mappings |
+| `mapping_entries` | mapping_id, policy_id, control_id, requirement_id, framework, reference, strength | Individual mapping links |
+| `catalogs` | catalog_id, catalog_type, title, policy_id | Control/threat/risk catalogs |
+| `controls` | catalog_id, control_id, title, objective, policy_id | Individual controls |
+| `assessment_requirements` | catalog_id, control_id, requirement_id, text | Assessment criteria |
+| `threats` | catalog_id, threat_id, title, description, policy_id | Threat entries |
+| `risks` | catalog_id, risk_id, title, severity, impact, policy_id | Risk entries |
+| `control_threats` | catalog_id, control_id, threat_reference_id, threat_entry_id | Control-threat links |
+| `risk_threats` | catalog_id, risk_id, threat_reference_id, threat_entry_id | Risk-threat links |
+| `audit_logs` | audit_id, policy_id, audit_start, audit_end, content, summary | Promoted audit logs |
+| `draft_audit_logs` | draft_id, policy_id, status, content, agent_reasoning | Draft audit logs |
+| `certifications` | id, evidence_id, certifier, result, reason | Evidence certification verdicts |
+| `evidence_assessments` | id, evidence_id, policy_id, plan_id, classification, reason | Posture check results |
+| `programs` | id, name, description, owner, policy_ids | Compliance programs |
 
-## Risk Severity Queries
-
-Derive risk severity for failing evidence via threat linkage:
-
-```sql
-SELECT e.control_id, e.eval_result, r.risk_id, r.title AS risk_title, r.severity
-FROM evidence e
-INNER JOIN control_threats ct ON e.control_id = ct.control_id
-INNER JOIN risk_threats rt ON ct.threat_entry_id = rt.threat_entry_id
-INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
-WHERE e.policy_id = ? AND e.eval_result = 'Failed'
-```
-
-Risk exposure summary (counts by severity):
+## Example Queries
 
 ```sql
-SELECT r.severity, count(DISTINCT r.risk_id) AS risk_count, count(DISTINCT e.control_id) AS affected_controls
-FROM evidence e
-INNER JOIN control_threats ct ON e.control_id = ct.control_id
-INNER JOIN risk_threats rt ON ct.threat_entry_id = rt.threat_entry_id
-INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
-WHERE e.policy_id = ? AND e.eval_result = 'Failed'
+-- All evidence for a policy within an audit window
+SELECT evidence_id, target_id, control_id, eval_result, collected_at
+FROM evidence
+WHERE policy_id = 'ampel-branch-protection'
+  AND collected_at BETWEEN '2026-01-01' AND '2026-03-31'
+ORDER BY collected_at DESC;
+
+-- Risk exposure by severity
+SELECT r.severity, COUNT(*) AS risk_count
+FROM risks r
 GROUP BY r.severity
-```
+ORDER BY CASE r.severity
+  WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+  WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5
+END;
 
-Unmitigated risks (threats with no control):
+-- Failing evidence with threat chain
+SELECT e.evidence_id, e.control_id, e.eval_result,
+       t.title AS threat, r.title AS risk, r.severity
+FROM evidence e
+JOIN control_threats ct ON ct.control_id = e.control_id
+JOIN threats t ON t.threat_id = ct.threat_entry_id
+JOIN risk_threats rt ON rt.threat_entry_id = t.threat_id
+JOIN risks r ON r.risk_id = rt.risk_id
+WHERE e.policy_id = 'ampel-branch-protection'
+  AND e.eval_result = 'Failed';
 
-```sql
-SELECT r.risk_id, r.title, r.severity
-FROM risk_threats rt
-INNER JOIN risks r ON r.risk_id = rt.risk_id AND r.catalog_id = rt.catalog_id
-LEFT JOIN control_threats ct ON rt.threat_entry_id = ct.threat_entry_id
-WHERE ct.control_id IS NULL
+-- Coverage matrix: controls mapped to external frameworks
+SELECT me.control_id, me.framework, me.reference, me.strength
+FROM mapping_entries me
+WHERE me.policy_id = 'ampel-branch-protection'
+ORDER BY me.framework, me.reference;
 ```

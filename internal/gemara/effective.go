@@ -57,7 +57,55 @@ func ResolveEffectiveControls(pol sdk.Policy, catalogs []sdk.ControlCatalog) ([]
 	return result, nil
 }
 
-// ExtractControlRows converts effective controls into ClickHouse-ready rows.
+// ResolveGuidanceRefsFromPolicy extracts guidance catalog IDs from a
+// parsed Policy's imports.guidance section by resolving each reference-id
+// through the policy's mapping-references index.
+func ResolveGuidanceRefsFromPolicy(pol sdk.Policy) []string {
+	refIndex := buildRefIndex(pol.Metadata.MappingReferences)
+	var ids []string
+	for _, imp := range pol.Imports.Guidance {
+		if metaID, ok := refIndex[imp.ReferenceId]; ok {
+			ids = append(ids, metaID)
+		}
+	}
+	return ids
+}
+
+// ResolveGuidanceRefs parses raw policy YAML content and returns the
+// guidance catalog IDs referenced in imports.guidance. Returns nil
+// (not an error) if the content cannot be parsed or has no guidance imports.
+func ResolveGuidanceRefs(content string) []string {
+	var partial struct {
+		Metadata struct {
+			Type              string              `yaml:"type"`
+			MappingReferences []sdk.MappingReference `yaml:"mapping-references"`
+		} `yaml:"metadata"`
+		Imports struct {
+			Guidance []struct {
+				ReferenceId string `yaml:"reference-id"`
+			} `yaml:"guidance"`
+		} `yaml:"imports"`
+	}
+	if err := UnmarshalYAML([]byte(content), &partial); err != nil {
+		return nil
+	}
+	if partial.Metadata.Type != "Policy" || len(partial.Imports.Guidance) == 0 {
+		return nil
+	}
+	refIndex := make(map[string]string, len(partial.Metadata.MappingReferences))
+	for _, ref := range partial.Metadata.MappingReferences {
+		refIndex[ref.Id] = ref.Id
+	}
+	var ids []string
+	for _, imp := range partial.Imports.Guidance {
+		if metaID, ok := refIndex[imp.ReferenceId]; ok {
+			ids = append(ids, metaID)
+		}
+	}
+	return ids
+}
+
+// ExtractControlRows converts effective controls into database-ready rows.
 func ExtractControlRows(eff []EffectiveControls, policyID string) ([]ControlRow, []AssessmentRequirementRow, []ControlThreatRow) {
 	var controls []ControlRow
 	var reqs []AssessmentRequirementRow

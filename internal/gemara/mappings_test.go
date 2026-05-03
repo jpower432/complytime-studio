@@ -44,7 +44,7 @@ mappings:
         strength: 8
         confidence-level: High
 `
-	entries, err := ParseMappingEntries(content, "map-1", "policy-1", "SOC 2")
+	entries, err := ParseMappingEntries(content, "map-1", "soc2-2024", "ccc-v4", "SOC 2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,10 +53,16 @@ mappings:
 	}
 
 	e := entries[0]
-	if e.ControlID != "BP-1" || e.Reference != "CC8.1" || e.Strength != 9 || e.Confidence != "High" {
+	if e.GuidelineID != "BP-1" {
+		t.Errorf("expected guideline_id 'BP-1' (m.Source), got %q", e.GuidelineID)
+	}
+	if e.ControlID != "CC8.1" {
+		t.Errorf("expected control_id 'CC8.1' (t.EntryId), got %q", e.ControlID)
+	}
+	if e.Reference != "CC8.1" || e.Strength != 9 || e.Confidence != "High" {
 		t.Errorf("unexpected first entry: %+v", e)
 	}
-	if e.MappingID != "map-1" || e.PolicyID != "policy-1" || e.Framework != "SOC 2" {
+	if e.MappingID != "map-1" || e.SourceCatalogID != "soc2-2024" || e.TargetCatalogID != "ccc-v4" || e.Framework != "SOC 2" {
 		t.Errorf("unexpected metadata on entry: %+v", e)
 	}
 	if e.RequirementID != "bp1-map" {
@@ -64,12 +70,12 @@ mappings:
 	}
 
 	e2 := entries[1]
-	if e2.ControlID != "BP-1" || e2.Reference != "CC6.1" || e2.Strength != 6 {
+	if e2.GuidelineID != "BP-1" || e2.ControlID != "CC6.1" || e2.Reference != "CC6.1" || e2.Strength != 6 {
 		t.Errorf("unexpected second entry: %+v", e2)
 	}
 
 	e3 := entries[2]
-	if e3.ControlID != "BP-2" || e3.RequirementID != "bp2-map" {
+	if e3.GuidelineID != "BP-2" || e3.ControlID != "CC8.1" || e3.RequirementID != "bp2-map" {
 		t.Errorf("unexpected third entry: %+v", e3)
 	}
 }
@@ -99,7 +105,7 @@ mappings:
     targets:
       - entry-id: A.8.9
 `
-	entries, err := ParseMappingEntries(content, "map-2", "pol-2", "ISO 27001")
+	entries, err := ParseMappingEntries(content, "map-2", "iso27001", "target-cat-1", "ISO 27001")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,6 +113,12 @@ mappings:
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
 	e := entries[0]
+	if e.GuidelineID != "CTL-1" {
+		t.Errorf("expected guideline_id 'CTL-1' (m.Source), got %q", e.GuidelineID)
+	}
+	if e.ControlID != "A.8.9" {
+		t.Errorf("expected control_id 'A.8.9' (t.EntryId), got %q", e.ControlID)
+	}
 	if e.Strength != 0 {
 		t.Errorf("expected strength 0, got %d", e.Strength)
 	}
@@ -116,7 +128,7 @@ mappings:
 }
 
 func TestParseMappingEntries_InvalidYAML(t *testing.T) {
-	_, err := ParseMappingEntries("not: [valid: yaml", "m", "p", "f")
+	_, err := ParseMappingEntries("not: [valid: yaml", "m", "s", "t", "f")
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
@@ -142,7 +154,7 @@ target-reference:
   reference-id: tgt
 mappings: []
 `
-	entries, err := ParseMappingEntries(content, "m", "p", "f")
+	entries, err := ParseMappingEntries(content, "m", "s", "t", "f")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +182,7 @@ target-reference:
   entry-type: AssessmentRequirement
   reference-id: tgt
 `
-	entries, err := ParseMappingEntries(content, "m", "p", "f")
+	entries, err := ParseMappingEntries(content, "m", "s", "t", "f")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
