@@ -44,7 +44,7 @@ export function Header({ user }: { user: UserInfo }) {
             : <span class="user-avatar-placeholder">{(user.name || user.login || "?").charAt(0).toUpperCase()}</span>
           }
           <span class="user-login">{user.name || user.login}</span>
-          <a href="/auth/logout" class="logout-link">Logout</a>
+          <a href="/oauth2/sign_out?rd=%2Fauth%2Flogged-out" class="logout-link">Logout</a>
         </div>
       </nav>
     </header>

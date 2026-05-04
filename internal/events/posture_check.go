@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 )
 
 // RateCache is a concurrency-safe cache of last-known pass rates per policy.
@@ -48,19 +47,9 @@ type PostureQuerier interface {
 	QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error)
 }
 
-// NotificationWriter inserts notifications.
+// NotificationWriter inserts notifications without exposing store types.
 type NotificationWriter interface {
-	InsertNotification(ctx context.Context, n Notification) error
-}
-
-// Notification mirrors store.Notification but lives here to avoid import cycles.
-type Notification struct {
-	NotificationID string    `json:"notification_id"`
-	Type           string    `json:"type"`
-	PolicyID       string    `json:"policy_id"`
-	Payload        string    `json:"payload"`
-	Read           bool      `json:"read"`
-	CreatedAt      time.Time `json:"created_at"`
+	InsertNotification(ctx context.Context, notifType, policyID, payload string) error
 }
 
 // PostureCheckHandler returns a debounce handler that queries posture, computes
@@ -105,11 +94,7 @@ func PostureCheckHandler(
 		}
 
 		payload, _ := json.Marshal(delta)
-		if err := notifier.InsertNotification(ctx, Notification{
-			Type:     "posture_change",
-			PolicyID: evt.PolicyID,
-			Payload:  string(payload),
-		}); err != nil {
+		if err := notifier.InsertNotification(ctx, "posture_change", evt.PolicyID, string(payload)); err != nil {
 			slog.Warn("failed to insert posture notification", "policy_id", evt.PolicyID, "error", err)
 		} else {
 			slog.Info("posture change notification created",
@@ -127,11 +112,7 @@ func notifyEvidenceArrival(ctx context.Context, notifier NotificationWriter, evt
 		"record_count": evt.RecordCount,
 		"timestamp":    evt.Timestamp,
 	})
-	if err := notifier.InsertNotification(ctx, Notification{
-		Type:     "evidence_arrival",
-		PolicyID: evt.PolicyID,
-		Payload:  string(payload),
-	}); err != nil {
+	if err := notifier.InsertNotification(ctx, "evidence_arrival", evt.PolicyID, string(payload)); err != nil {
 		slog.Warn("failed to insert evidence arrival notification", "policy_id", evt.PolicyID, "error", err)
 	}
 }

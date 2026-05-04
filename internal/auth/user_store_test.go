@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/labstack/echo/v4"
 )
 
 type memoryUserStore struct {
@@ -25,19 +26,33 @@ func newMemoryUserStore() *memoryUserStore {
 	return &memoryUserStore{users: make(map[string]*User)}
 }
 
-func (m *memoryUserStore) UpsertUser(_ context.Context, email, name, avatarURL string) error {
+func (m *memoryUserStore) UpsertUser(_ context.Context, sub, issuer, email, name, avatarURL string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u, ok := m.users[email]; ok {
+		u.Sub = sub
+		u.Issuer = issuer
 		u.Name = name
 		u.AvatarURL = avatarURL
 		return nil
 	}
 	m.users[email] = &User{
+		Sub: sub, Issuer: issuer,
 		Email: email, Name: name, AvatarURL: avatarURL,
 		Role: consts.RoleReviewer, CreatedAt: time.Now(),
 	}
 	return nil
+}
+
+func (m *memoryUserStore) GetUserBySub(_ context.Context, sub, issuer string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if u.Sub == sub && u.Issuer == issuer {
+			return u, nil
+		}
+	}
+	return nil, ErrUserNotFound
 }
 
 func (m *memoryUserStore) GetUser(_ context.Context, email string) (*User, error) {
@@ -104,38 +119,286 @@ func (m *memoryUserStore) ListRoleChanges(_ context.Context) ([]RoleChange, erro
 	return m.changes, nil
 }
 
-func TestRequireAdmin_WithUserStore(t *testing.T) {
-	h := testHandler(t)
+func (m *memoryUserStore) BootstrapAdmin(_ context.Context, email string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.Role == "admin" {
+			return "", ErrAdminExists
+		}
+	}
+	u, ok := m.users[email]
+	if !ok {
+		return "", ErrUserNotFound
+	}
+	old := u.Role
+	u.Role = "admin"
+	return old, nil
+}
+
+func testHandlerWithStore(t *testing.T) (*Handler, *memoryUserStore) {
+	t.Helper()
 	us := newMemoryUserStore()
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	h := NewHandler("")
+	h.SetUserStore(us)
+	return h, us
+}
+
+func TestMiddleware_ProxyHeaders(t *testing.T) {
+	h, _ := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		sess, ok := SessionFrom(c.Request().Context())
+		if !ok {
+			return c.String(http.StatusUnauthorized, "no session")
+		}
+		return c.JSON(http.StatusOK, map[string]string{"email": sess.Email, "name": sess.Name})
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Forwarded-Email", "alice@example.com")
+	req.Header.Set("X-Forwarded-Preferred-Username", "alice")
+	req.Header.Set("X-Forwarded-User", "auth0|abc123")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["email"] != "alice@example.com" {
+		t.Fatalf("email = %q, want alice@example.com", body["email"])
+	}
+	if body["name"] != "alice" {
+		t.Fatalf("name = %q, want alice", body["name"])
+	}
+}
+
+func TestMiddleware_NoHeaders_Returns401(t *testing.T) {
+	h, _ := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMiddleware_SkipsNonAPI(t *testing.T) {
+	h, _ := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (non-API path should pass)", rec.Code)
+	}
+}
+
+func TestMiddleware_SkipsAPIConfig(t *testing.T) {
+	h, _ := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/config", func(c echo.Context) error {
+		return c.String(http.StatusOK, "config")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (/api/config should pass without auth)", rec.Code)
+	}
+}
+
+func TestMiddleware_APIToken(t *testing.T) {
+	h := NewHandler("test-api-token-123")
+	us := newMemoryUserStore()
+	h.SetUserStore(us)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		sess, ok := SessionFrom(c.Request().Context())
+		if !ok {
+			return c.String(http.StatusUnauthorized, "no session")
+		}
+		if !sess.ServiceAccount {
+			return c.String(http.StatusForbidden, "not service account")
+		}
+		return c.NoContent(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("Authorization", "Bearer test-api-token-123")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestMiddleware_UpsertUserOnFirstSeen(t *testing.T) {
+	h, us := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Forwarded-Email", "new@example.com")
+	req.Header.Set("X-Forwarded-User", "sub-new")
+	req.Header.Set("X-Forwarded-Preferred-Username", "New User")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	u, err := us.GetUser(context.TODO(), "new@example.com")
+	if err != nil {
+		t.Fatalf("user not upserted: %v", err)
+	}
+	if u.Role != consts.RoleReviewer {
+		t.Fatalf("role = %q, want reviewer (default)", u.Role)
+	}
+}
+
+func TestMiddleware_RoleSeedFromGroups(t *testing.T) {
+	h, us := testHandlerWithStore(t)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Forwarded-Email", "first-admin@example.com")
+	req.Header.Set("X-Forwarded-User", "sub-admin")
+	req.Header.Set("X-Forwarded-Groups", "engineering,admins")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	u, err := us.GetUser(context.TODO(), "first-admin@example.com")
+	if err != nil {
+		t.Fatalf("user not found: %v", err)
+	}
+	if u.Role != consts.RoleAdmin {
+		t.Fatalf("role = %q, want admin (seeded from groups)", u.Role)
+	}
+	changes, _ := us.ListRoleChanges(context.TODO())
+	if len(changes) != 1 {
+		t.Fatalf("role changes = %d, want 1", len(changes))
+	}
+}
+
+func TestMiddleware_RoleSeedSkipsIfAdminExists(t *testing.T) {
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-existing", "oauth2-proxy", "existing-admin@example.com", "Admin", "")
+	_, _ = us.SetRole(context.TODO(), "existing-admin@example.com", consts.RoleAdmin)
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	e.GET("/api/test", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Forwarded-Email", "second@example.com")
+	req.Header.Set("X-Forwarded-User", "sub-second")
+	req.Header.Set("X-Forwarded-Groups", "admins")
+	e.ServeHTTP(rec, req)
+
+	u, _ := us.GetUser(context.TODO(), "second@example.com")
+	if u.Role != consts.RoleReviewer {
+		t.Fatalf("role = %q, want reviewer (admin already exists, no seed)", u.Role)
+	}
+}
+
+func TestTokenFromRequest_XForwardedAccessToken(t *testing.T) {
+	h := NewHandler("")
+	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
+	req.Header.Set("X-Forwarded-Access-Token", "ya29.access-token-123")
+
+	token, ok := h.TokenFromRequest(req)
+	if !ok || token != "ya29.access-token-123" {
+		t.Fatalf("TokenFromRequest = (%q, %v), want (ya29.access-token-123, true)", token, ok)
+	}
+}
+
+func TestTokenFromRequest_NoHeader(t *testing.T) {
+	h := NewHandler("")
+	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
+
+	_, ok := h.TokenFromRequest(req)
+	if ok {
+		t.Fatal("expected false when no X-Forwarded-Access-Token header")
+	}
+}
+
+func TestRequireAdmin_WithUserStore(t *testing.T) {
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-viewer", "oauth2-proxy", "viewer@co.com", "Viewer", "")
 
 	guard := RequireAdmin(us)
 
-	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
 	t.Run("admin passes", func(t *testing.T) {
-		sess := ServerSession{Email: "admin@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-		cookie := createSession(t, h, sess)
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
-		req.AddCookie(cookie)
-		h.Middleware(guard(inner)).ServeHTTP(rec, req)
+		req.Header.Set("X-Forwarded-Email", "admin@co.com")
+		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
 	})
 
 	t.Run("reviewer blocked", func(t *testing.T) {
-		sess := ServerSession{Email: "viewer@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-		cookie := createSession(t, h, sess)
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
-		req.AddCookie(cookie)
-		h.Middleware(guard(inner)).ServeHTTP(rec, req)
+		req.Header.Set("X-Forwarded-Email", "viewer@co.com")
+		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", rec.Code)
 		}
@@ -143,23 +406,20 @@ func TestRequireAdmin_WithUserStore(t *testing.T) {
 }
 
 func TestHandleMe_WithUserStore(t *testing.T) {
-	h := testHandler(t)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	_ = us.UpsertUser(context.TODO(), "test@co.com", "Test", "")
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-test", "oauth2-proxy", "test@co.com", "Test", "")
 	_, _ = us.SetRole(context.TODO(), "test@co.com", consts.RoleAdmin)
 
-	sess := ServerSession{
-		Login: "test@co.com", Email: "test@co.com", Name: "Test",
-		ExpiresAt: time.Now().Add(time.Hour).Unix(),
-	}
-	cookie := createSession(t, h, sess)
+	e := echo.New()
+	e.Use(h.Middleware())
+	h.Register(e)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
-	req.AddCookie(cookie)
-	h.handleMe(rec, req)
+	req.Header.Set("X-Forwarded-Email", "test@co.com")
+	req.Header.Set("X-Forwarded-User", "sub-test")
+	req.Header.Set("X-Forwarded-Preferred-Username", "Test")
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -172,27 +432,21 @@ func TestHandleMe_WithUserStore(t *testing.T) {
 }
 
 func TestHandleSetRole(t *testing.T) {
-	h := testHandler(t)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "target@co.com", "Target", "")
+	_ = us.UpsertUser(context.TODO(), "sub-target", "oauth2-proxy", "target@co.com", "Target", "")
 
-	sess := ServerSession{Email: "admin@co.com", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	cookie := createSession(t, h, sess)
-
-	mux := http.NewServeMux()
-	h.RegisterUserAPI(mux)
+	e := echo.New()
+	e.Use(h.Middleware())
+	h.RegisterUserAPI(e.Group("/api"))
 
 	body := strings.NewReader(`{"role":"` + consts.RoleAdmin + `"}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPatch, "/api/users/target@co.com/role", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
-	ctx := context.WithValue(req.Context(), sessionKey, &Session{Email: "admin@co.com"})
-	mux.ServeHTTP(rec, req.WithContext(ctx))
+	req.Header.Set("X-Forwarded-Email", "admin@co.com")
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -204,31 +458,32 @@ func TestHandleSetRole(t *testing.T) {
 	}
 
 	changes, _ := us.ListRoleChanges(context.TODO())
-	if len(changes) != 1 {
-		t.Fatalf("changes = %d, want 1", len(changes))
+	found := false
+	for _, c := range changes {
+		if c.TargetEmail == "target@co.com" && c.OldRole == consts.RoleReviewer && c.NewRole == consts.RoleAdmin {
+			found = true
+		}
 	}
-	if changes[0].OldRole != consts.RoleReviewer || changes[0].NewRole != consts.RoleAdmin {
-		t.Fatalf("change = %s -> %s, want reviewer -> admin", changes[0].OldRole, changes[0].NewRole)
+	if !found {
+		t.Fatal("expected role change audit entry for target@co.com")
 	}
 }
 
 func TestHandleSetRole_InvalidRole(t *testing.T) {
-	h := testHandler(t)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
 
-	mux := http.NewServeMux()
-	h.RegisterUserAPI(mux)
+	e := echo.New()
+	e.Use(h.Middleware())
+	h.RegisterUserAPI(e.Group("/api"))
 
 	body := strings.NewReader(`{"role":"superadmin"}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPatch, "/api/users/someone@co.com/role", body)
 	req.Header.Set("Content-Type", "application/json")
-	ctx := context.WithValue(req.Context(), sessionKey, &Session{Email: "admin@co.com"})
-	mux.ServeHTTP(rec, req.WithContext(ctx))
+	req.Header.Set("X-Forwarded-Email", "admin@co.com")
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
@@ -236,22 +491,20 @@ func TestHandleSetRole_InvalidRole(t *testing.T) {
 }
 
 func TestHandleListUsers_AdminRequired(t *testing.T) {
-	h := testHandler(t)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	_ = us.UpsertUser(context.TODO(), "admin@co.com", "Admin", "")
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
-	_ = us.UpsertUser(context.TODO(), "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-viewer", "oauth2-proxy", "viewer@co.com", "Viewer", "")
 
-	mux := http.NewServeMux()
-	h.RegisterUserAPI(mux)
+	e := echo.New()
+	e.Use(h.Middleware())
+	h.RegisterUserAPI(e.Group("/api"))
 
 	t.Run("admin can list", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
-		ctx := context.WithValue(req.Context(), sessionKey, &Session{Email: "admin@co.com"})
-		mux.ServeHTTP(rec, req.WithContext(ctx))
+		req.Header.Set("X-Forwarded-Email", "admin@co.com")
+		e.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", rec.Code)
@@ -266,8 +519,8 @@ func TestHandleListUsers_AdminRequired(t *testing.T) {
 	t.Run("reviewer blocked", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
-		ctx := context.WithValue(req.Context(), sessionKey, &Session{Email: "viewer@co.com"})
-		mux.ServeHTTP(rec, req.WithContext(ctx))
+		req.Header.Set("X-Forwarded-Email", "viewer@co.com")
+		e.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", rec.Code)
@@ -277,10 +530,169 @@ func TestHandleListUsers_AdminRequired(t *testing.T) {
 	t.Run("unauthenticated blocked", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
-		mux.ServeHTTP(rec, req)
+		e.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", rec.Code)
 		}
 	})
+}
+
+func TestSplitGroups(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"", 0},
+		{"admins", 1},
+		{"admins,engineering,dev", 3},
+		{"admins, engineering , dev", 3},
+	}
+	for _, tt := range tests {
+		got := splitGroups(tt.input)
+		if len(got) != tt.want {
+			t.Errorf("splitGroups(%q) = %d groups, want %d", tt.input, len(got), tt.want)
+		}
+	}
+}
+
+func TestAPIToken_WritePathScoped(t *testing.T) {
+	const token = "test-scoped-token"
+	h := NewHandler(token)
+	us := newMemoryUserStore()
+	h.SetUserStore(us)
+
+	guard := RequireAdmin(us)
+
+	t.Run("token allowed on ingest path", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.POST("/api/evidence/ingest", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/evidence/ingest", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (token should be allowed on ingest)", rec.Code)
+		}
+	})
+
+	t.Run("token blocked on admin-only path", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.DELETE("/api/programs/123", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/api/programs/123", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (token should be blocked on admin paths)", rec.Code)
+		}
+	})
+}
+
+func TestStripUntrustedProxyHeaders(t *testing.T) {
+	t.Run("strips headers without matching secret", func(t *testing.T) {
+		strip := StripUntrustedProxyHeaders("shared-secret-123")
+		h := NewHandler("")
+		us := newMemoryUserStore()
+		h.SetUserStore(us)
+
+		e := echo.New()
+		e.Use(strip)
+		e.Use(h.Middleware())
+		e.GET("/api/test", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set("X-Forwarded-Email", "spoofed@evil.com")
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (headers should be stripped)", rec.Code)
+		}
+	})
+
+	t.Run("passes headers with matching secret", func(t *testing.T) {
+		strip := StripUntrustedProxyHeaders("shared-secret-123")
+		h := NewHandler("")
+		us := newMemoryUserStore()
+		h.SetUserStore(us)
+
+		e := echo.New()
+		e.Use(strip)
+		e.Use(h.Middleware())
+		e.GET("/api/test", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set("X-Forwarded-Email", "legit@example.com")
+		req.Header.Set("X-Proxy-Secret", "shared-secret-123")
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (trusted proxy)", rec.Code)
+		}
+	})
+
+	t.Run("no-op when secret is empty (dev mode)", func(t *testing.T) {
+		strip := StripUntrustedProxyHeaders("")
+		h := NewHandler("")
+		us := newMemoryUserStore()
+		h.SetUserStore(us)
+
+		e := echo.New()
+		e.Use(strip)
+		e.Use(h.Middleware())
+		e.GET("/api/test", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set("X-Forwarded-Email", "dev@local.com")
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (dev mode, no strip)", rec.Code)
+		}
+	})
+}
+
+func TestBootstrapAdmin_RaceProtection(t *testing.T) {
+	h, us := testHandlerWithStore(t)
+	_ = us.UpsertUser(context.TODO(), "sub-a", "oauth2-proxy", "a@co.com", "A", "")
+	_ = us.UpsertUser(context.TODO(), "sub-b", "oauth2-proxy", "b@co.com", "B", "")
+
+	e := echo.New()
+	e.Use(h.Middleware())
+	h.RegisterUserAPI(e.Group("/api"))
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/api/bootstrap", nil)
+	req1.Header.Set("X-Forwarded-Email", "a@co.com")
+	e.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first bootstrap status = %d, want 200", rec1.Code)
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/bootstrap", nil)
+	req2.Header.Set("X-Forwarded-Email", "b@co.com")
+	e.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("second bootstrap status = %d, want 409", rec2.Code)
+	}
 }

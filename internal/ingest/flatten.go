@@ -68,13 +68,19 @@ func FlattenEvaluationLog(log *gemara.EvaluationLog, policyID string) ([]Evidenc
 			reqID := al.Requirement.EntryId
 			steps := uint16(al.StepsExecuted)
 
-			row := EvidenceRow{
-				EvidenceID: log.Metadata.Id,
+		row := EvidenceRow{
+			EvidenceID: log.Metadata.Id,
 
-				TargetID:  log.Target.Id,
-				TargetEnv: strPtr(log.Target.Environment),
+			TargetID:   log.Target.Id,
+			TargetName: strPtr(log.Target.Name),
+			TargetType: strPtr(log.Target.Type.String()),
+			TargetEnv:  strPtr(log.Target.Environment),
+			Owner:      strPtr(log.Target.Owner.Name),
 
-				RuleID: eval.Control.EntryId,
+			EngineName:    strPtr(log.Metadata.Author.Name),
+			EngineVersion: strPtr(log.Metadata.Version),
+
+			RuleID: eval.Control.EntryId,
 
 				EvalResult:  al.Result.String(),
 				EvalMessage: strPtr(al.Message),
@@ -164,8 +170,14 @@ func FlattenEnforcementLog(log *gemara.EnforcementLog, policyID string) ([]Evide
 			rows = append(rows, EvidenceRow{
 				EvidenceID: log.Metadata.Id,
 
-				TargetID:  log.Target.Id,
-				TargetEnv: strPtr(log.Target.Environment),
+				TargetID:   log.Target.Id,
+				TargetName: strPtr(log.Target.Name),
+				TargetType: strPtr(log.Target.Type.String()),
+				TargetEnv:  strPtr(log.Target.Environment),
+				Owner:      strPtr(log.Target.Owner.Name),
+
+				EngineName:    strPtr(log.Metadata.Author.Name),
+				EngineVersion: strPtr(log.Metadata.Version),
 
 				RuleID: action.Method.EntryId,
 

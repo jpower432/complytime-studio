@@ -7,18 +7,14 @@ import (
 	"testing"
 )
 
-// OTel log attribute compliance.source.registry maps to ClickHouse column
-// source_registry (see docs/design/evidence-semconv-alignment.md). The
+// OTel log attribute compliance.source.registry maps to the
+// source_registry column (see docs/design/evidence-semconv-alignment.md). The
 // collector exporter in complytime-collector-components must use the same
-// column name; this test locks the struct tag contract for that path.
-func TestEvidenceRow_SourceRegistryCHTagMatchesSemconvColumn(t *testing.T) {
+// column name; this test locks the field contract for that path.
+func TestEvidenceRow_SourceRegistryFieldExists(t *testing.T) {
 	t.Parallel()
-	f, ok := reflect.TypeOf(EvidenceRow{}).FieldByName("SourceRegistry")
+	_, ok := reflect.TypeOf(EvidenceRow{}).FieldByName("SourceRegistry")
 	if !ok {
-		t.Fatal("SourceRegistry field missing")
-	}
-	tag := f.Tag.Get("ch")
-	if tag != "source_registry" {
-		t.Fatalf("ch tag %q, want source_registry", tag)
+		t.Fatal("SourceRegistry field missing from EvidenceRow")
 	}
 }

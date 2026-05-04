@@ -4,8 +4,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,15 +14,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+
 	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
 	"github.com/complytime/complytime-studio/internal/certifier"
-	chclient "github.com/complytime/complytime-studio/internal/clickhouse"
 	"github.com/complytime/complytime-studio/internal/config"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
+	pgstore "github.com/complytime/complytime-studio/internal/postgres"
 	"github.com/complytime/complytime-studio/internal/proxy"
 	"github.com/complytime/complytime-studio/internal/publish"
 	"github.com/complytime/complytime-studio/internal/registry"
@@ -42,187 +44,153 @@ func main() {
 	port := httputil.EnvOr("PORT", "8080")
 	mux := http.NewServeMux()
 
-	var chClient *chclient.Client
-	if chAddr := os.Getenv("CLICKHOUSE_ADDR"); chAddr != "" {
-		chCfg := chclient.Config{
-			Addr:     chAddr,
-			User:     httputil.EnvOr("CLICKHOUSE_USER", "default"),
-			Password: os.Getenv("CLICKHOUSE_PASSWORD"),
-		}
-		maxRetries := 90
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			var err error
-			chClient, err = chclient.New(ctx, chCfg)
-			if err == nil {
-				break
-			}
-			if attempt == maxRetries {
-				slog.Error("clickhouse connection failed after retries", "error", err, "attempts", maxRetries)
-				os.Exit(1)
-			}
-			slog.Warn("clickhouse not ready, retrying", "attempt", attempt, "error", err)
-			select {
-			case <-ctx.Done():
-				os.Exit(1)
-			case <-time.After(2 * time.Second):
-			}
-		}
-		if err := chClient.EnsureSchema(ctx, 24); err != nil {
-			slog.Error("clickhouse schema init failed", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("clickhouse ready")
-	}
-
-	var st *store.Store
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if chClient != nil {
-			if err := chClient.Ping(r.Context()); err != nil {
-				http.Error(w, "clickhouse unreachable", http.StatusServiceUnavailable)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	internalPort := httputil.EnvOr("INTERNAL_PORT", consts.DefaultInternalPort)
-	internalMux := http.NewServeMux()
-
-	if chClient != nil {
-		st = store.New(chClient.Conn())
-
-		var blobStore blob.BlobStore
-		if cfg, ok := blob.ConfigFromEnv(); ok {
-			if cfg.AccessKey == "" || cfg.SecretKey == "" {
-				slog.Error("blob storage enabled but BLOB_ACCESS_KEY / BLOB_SECRET_KEY missing")
-				os.Exit(1)
-			}
-			bs, err := blob.NewMinioBlobStore(ctx, cfg)
-			if err != nil {
-				slog.Error("blob storage init failed", "error", err)
-				os.Exit(1)
-			}
-			blobStore = bs
-			slog.Info("blob storage configured", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
-		}
-
-		registryAddr := os.Getenv("REGISTRY_INSECURE")
-		if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, registryAddr); err != nil {
-			slog.Warn("catalog seed from registry failed", "error", err)
-		}
-
-		if err := store.PopulateMappingEntries(ctx, st); err != nil {
-			slog.Warn("mapping entries backfill failed", "error", err)
-		}
-		if err := store.PopulateControls(ctx, st, st); err != nil {
-			slog.Warn("controls backfill failed", "error", err)
-		}
-		if err := store.PopulateThreats(ctx, st, st); err != nil {
-			slog.Warn("threats backfill failed", "error", err)
-		}
-		if err := store.PopulateRisks(ctx, st, st); err != nil {
-			slog.Warn("risks backfill failed", "error", err)
-		}
-		if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
-			slog.Warn("effective controls backfill failed", "error", err)
-		}
-		if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
-			slog.Warn("policy criteria backfill failed", "error", err)
-		}
-		bus, busErr := events.Connect(os.Getenv("NATS_URL"))
-		if busErr != nil {
-			slog.Warn("nats connection failed — event-driven posture checks disabled", "error", busErr)
-		}
-		if bus != nil {
-			defer bus.Close()
-		}
-
-		var pub store.EvidencePublisher
-		if bus != nil {
-			pub = bus
-		}
-
-		stores := store.Stores{
-			Policies:            st,
-			Mappings:            st,
-			Evidence:            st,
-			Blob:                blobStore,
-			AuditLogs:           st,
-			DraftAuditLogs:      st,
-			Requirements:        st,
-			Controls:            st,
-			Threats:             st,
-			Risks:               st,
-			Catalogs:            st,
-			EvidenceAssessments: st,
-			Posture:             st,
-			Notifications:       st,
-			Certifications:      st,
-			EventPublisher:      pub,
-		}
-		store.Register(mux, stores)
-		store.RegisterInternal(internalMux, stores)
-		slog.Info("store API registered", "routes", []string{
-			"/api/policies", "/api/evidence", "/api/audit-logs", "/api/mappings",
-		})
-
-		if bus != nil {
-			adapter := &notificationAdapter{store: st}
-			rateCache := events.NewRateCache()
-			postureHandler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
-			postureDebouncer := events.NewDebouncer(30*time.Second, postureHandler)
-
-			pipeline := buildCertifierPipeline()
-			certAdapter := &certificationAdapter{store: st}
-			certHandler := events.CertificationHandler(ctx, pipeline, certAdapter, certAdapter)
-			certDebouncer := events.NewDebouncer(30*time.Second, certHandler)
-
-			sub, err := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
-				postureDebouncer.Push(evt)
-				certDebouncer.Push(evt)
-			})
-			if err != nil {
-				slog.Warn("nats subscribe failed", "error", err)
-			} else if sub != nil {
-				defer func() { _ = sub.Unsubscribe() }()
-				slog.Info("nats evidence subscription active", "subject", events.SubjectPrefix+".>")
-			}
-		}
-	}
-
-	authCfg := auth.Config{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		CallbackURL:  httputil.EnvOr("GOOGLE_CALLBACK_URL", "http://localhost:8080/auth/callback"),
-	}
-	secretKey := cookieSecretKey(authCfg.ClientID != "")
-	sessionStore := auth.NewMemorySessionStore()
-	authHandler, err := auth.NewHandler(authCfg, secretKey, sessionStore)
-	if err != nil {
-		slog.Error("auth handler init failed", "error", err)
+	pgCfg, ok := pgstore.ConfigFromEnv()
+	if !ok {
+		slog.Error("POSTGRES_URL is required")
 		os.Exit(1)
 	}
-	if st != nil {
-		authHandler.SetUserStore(st)
-		slog.Info("persistent user store enabled — first user to sign in becomes admin")
-	} else {
-		slog.Warn("no user store (ClickHouse not configured) — RBAC disabled, all users treated as reviewer")
+	pgClient, err := pgstore.New(ctx, pgCfg)
+	if err != nil {
+		slog.Error("postgres connection failed", "error", err)
+		os.Exit(1)
+	}
+	defer pgClient.Close()
+	if err = pgClient.EnsureSchema(ctx); err != nil {
+		slog.Error("postgres schema init failed", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("postgres ready")
+	st := store.New(pgClient.Pool())
+
+	// healthz and system-info are registered on Echo directly (below, after e is created).
+
+	internalPort := httputil.EnvOr("INTERNAL_PORT", consts.DefaultInternalPort)
+
+	var blobStore blob.BlobStore
+	if cfg, ok := blob.ConfigFromEnv(); ok {
+		if cfg.AccessKey == "" || cfg.SecretKey == "" {
+			slog.Error("blob storage enabled but BLOB_ACCESS_KEY / BLOB_SECRET_KEY missing")
+			os.Exit(1)
+		}
+		bs, err := blob.NewMinioBlobStore(ctx, cfg)
+		if err != nil {
+			slog.Error("blob storage init failed", "error", err)
+			os.Exit(1)
+		}
+		blobStore = bs
+		slog.Info("blob storage configured", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
 	}
 
-	authHandler.Register(mux)
-	authHandler.RegisterUserAPI(mux)
-	authHandler.RegisterChatHistory(mux, sessionStore)
+	registryAddr := os.Getenv("REGISTRY_INSECURE")
+	if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, registryAddr); err != nil {
+		slog.Warn("catalog seed from registry failed", "error", err)
+	}
 
-	if apiToken := os.Getenv("STUDIO_API_TOKEN"); apiToken != "" {
-		authHandler.SetAPIToken(apiToken)
+	if err := store.PopulateMappingEntries(ctx, st); err != nil {
+		slog.Warn("mapping entries backfill failed", "error", err)
+	}
+	if err := store.PopulateControls(ctx, st, st); err != nil {
+		slog.Warn("controls backfill failed", "error", err)
+	}
+	if err := store.PopulateThreats(ctx, st, st); err != nil {
+		slog.Warn("threats backfill failed", "error", err)
+	}
+	if err := store.PopulateRisks(ctx, st, st); err != nil {
+		slog.Warn("risks backfill failed", "error", err)
+	}
+	if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+		slog.Warn("effective controls backfill failed", "error", err)
+	}
+	if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
+		slog.Warn("policy criteria backfill failed", "error", err)
+	}
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		slog.Error("NATS_URL is required — event bus drives the certification pipeline")
+		os.Exit(1)
+	}
+	bus, busErr := events.Connect(natsURL)
+	if busErr != nil {
+		slog.Error("nats connection failed", "error", busErr)
+		os.Exit(1)
+	}
+	defer bus.Close()
+	slog.Info("nats ready")
+
+	var pub store.EventPublisher = bus
+
+	var notifStore store.NotificationStore = st
+
+	stores := store.Stores{
+		Policies:            st,
+		Mappings:            st,
+		Evidence:            st,
+		Blob:                blobStore,
+		AuditLogs:           st,
+		DraftAuditLogs:      st,
+		Requirements:        st,
+		Controls:            st,
+		Threats:             st,
+		Risks:               st,
+		Catalogs:            st,
+		EvidenceAssessments: st,
+		Posture:             st,
+		Notifications:       notifStore,
+		Certifications:      st,
+		EventPublisher:      pub,
+		HealthChecker:       pgClient,
+	}
+	slog.Info("store API registered", "routes", []string{
+		"/api/policies", "/api/evidence/ingest", "/api/audit-logs", "/api/mappings",
+	})
+
+	adapter := &notificationAdapter{store: notifStore}
+	rateCache := events.NewRateCache()
+	postureHandler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
+	postureDebouncer := events.NewDebouncer(30*time.Second, postureHandler)
+
+	pipeline := buildCertifierPipeline()
+	certAdapter := &certificationAdapter{store: st}
+	certHandler := events.CertificationHandler(ctx, pipeline, certAdapter, certAdapter)
+	certDebouncer := events.NewDebouncer(30*time.Second, certHandler)
+
+	sub, subErr := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
+		postureDebouncer.Push(evt)
+		certDebouncer.Push(evt)
+	})
+	if subErr != nil {
+		slog.Error("nats subscribe failed", "error", subErr)
+		os.Exit(1)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
+
+	draftSub, draftSubErr := bus.SubscribeDraftAuditLog(func(evt events.DraftAuditLogEvent) {
+		payload := fmt.Sprintf(`{"draft_id":%q,"summary":%q}`, evt.DraftID, evt.Summary)
+		if err := adapter.InsertNotification(ctx, "draft_audit_log", evt.PolicyID, payload); err != nil {
+			slog.Warn("draft notification insert failed", "draft_id", evt.DraftID, "error", err)
+		}
+	})
+	if draftSubErr != nil {
+		slog.Error("nats draft subscribe failed", "error", draftSubErr)
+		os.Exit(1)
+	}
+	defer func() { _ = draftSub.Unsubscribe() }()
+	slog.Info("nats draft-audit-log subscription active", "subject", events.SubjectDraft+".>")
+
+	apiToken := auth.APITokenFromEnv()
+	authHandler := auth.NewHandler(apiToken)
+	authHandler.SetUserStore(pgClient)
+
+	chatStore := auth.NewMemoryChatStore()
+
+	if apiToken != "" {
 		if apiToken == consts.DefaultDevAPIToken {
 			slog.Warn("STUDIO_API_TOKEN is the default dev value — rotate before production use")
 		}
 		slog.Info("api token auth enabled for seed/CI scripts")
 	}
-
-	registerGemaraProxy(mux, os.Getenv("GEMARA_MCP_URL"))
+	slog.Info("auth: OAuth2 Proxy handles OIDC externally, gateway trusts X-Forwarded-* headers")
 
 	insecureRaw := os.Getenv("REGISTRY_INSECURE")
 	insecureList := splitComma(insecureRaw)
@@ -263,42 +231,134 @@ func main() {
 		},
 	})
 
-	web.Register(mux, workbench.Assets)
+	// --- Echo server setup ---
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
 
-	var handler http.Handler = mux
-	if authCfg.ClientID != "" {
-		var userStore auth.UserStore
-		if st != nil {
-			userStore = st
-		}
-		adminGuard := auth.RequireAdmin(userStore)
-		handler = authHandler.Middleware(writeProtect(mux, adminGuard))
-		slog.Info("auth enabled", "provider", "google-oauth")
-	} else {
-		slog.Info("auth disabled")
-	}
+	e.Use(middleware.Recover())
+	e.Use(middleware.RequestID())
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus: true, LogURI: true, LogMethod: true, LogLatency: true, LogError: true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			slog.Info("request",
+				"method", v.Method, "uri", v.URI,
+				"status", v.Status, "latency_ms", v.Latency.Milliseconds(),
+				"error", v.Error,
+			)
+			return nil
+		},
+	}))
+	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
+		ContentSecurityPolicy: httputil.ContentSecurityPolicy,
+		XFrameOptions:         "DENY",
+		ContentTypeNosniff:    "nosniff",
+		ReferrerPolicy:        "strict-origin-when-cross-origin",
+	}))
 
 	if origins := splitComma(os.Getenv("CORS_ORIGINS")); len(origins) > 0 {
-		handler = httputil.CORS(httputil.CORSOptions{AllowedOrigins: origins})(handler)
+		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+			AllowOrigins:     origins,
+			AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+			AllowHeaders:     []string{"Content-Type", "Authorization"},
+			AllowCredentials: true,
+			MaxAge:           86400,
+		}))
 		slog.Info("CORS enabled", "origins", origins)
 	}
 
-	handler = httputil.SecurityHeaders(handler)
+	subsystems := map[string]pgstore.Pinger{
+		"postgres": pgClient,
+	}
+	e.Use(echo.WrapMiddleware(pgstore.DegradedMiddleware(subsystems)))
+
+	proxySecret := os.Getenv("PROXY_SECRET")
+	if proxySecret != "" {
+		slog.Info("proxy secret configured — X-Forwarded-* headers will be stripped from untrusted requests")
+	} else {
+		slog.Warn("PROXY_SECRET is not set — X-Forwarded-* headers are trusted from any source",
+			"hint", "set PROXY_SECRET to a shared secret between OAuth2 Proxy and the gateway for production")
+	}
+	e.Use(auth.StripUntrustedProxyHeaders(proxySecret))
+
+	authHandler.Register(e)
+	e.Use(authHandler.Middleware())
+	e.Use(writeProtect(auth.RequireAdmin(pgClient)))
+
+	e.GET("/healthz", func(c echo.Context) error {
+		if err := pgClient.Ping(c.Request().Context()); err != nil {
+			return c.String(http.StatusServiceUnavailable, "postgres unreachable")
+		}
+		return c.String(http.StatusOK, "ok")
+	})
+
+	apiGroup := e.Group("/api")
+	apiGroup.Use(middleware.BodyLimit(fmt.Sprintf("%dM", consts.MaxRequestBody>>20)))
+	store.Register(apiGroup, stores)
+	authHandler.RegisterUserAPI(apiGroup)
+	authHandler.RegisterChatHistory(apiGroup, chatStore)
+	registerGemaraProxy(apiGroup, os.Getenv("GEMARA_MCP_URL"))
+
+	apiGroup.GET("/system-info", func(c echo.Context) error {
+		authProvider := "OAuth2 Proxy (external)"
+		if os.Getenv("OAUTH2_PROXY_ENABLED") == "false" {
+			authProvider = "none (dev mode)"
+		}
+		modelProvider := httputil.EnvOr("MODEL_PROVIDER", "not configured")
+		modelName := httputil.EnvOr("MODEL_NAME", "")
+		if modelName != "" {
+			modelProvider = modelProvider + " (" + modelName + ")"
+		}
+		dbStatus := "connected"
+		if err := pgClient.Ping(c.Request().Context()); err != nil {
+			dbStatus = "unreachable"
+		}
+		agentNames := []string{}
+		ns := os.Getenv("KAGENT_AGENT_NAMESPACE")
+		if ns != "" {
+			agentNames = append(agentNames, "kagent (ns: "+ns+")")
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"version":        httputil.EnvOr("STUDIO_VERSION", "dev"),
+			"database":       "PostgreSQL — " + dbStatus,
+			"auth_provider":  authProvider,
+			"model_provider": modelProvider,
+			"agents":         agentNames,
+		})
+	})
+
+	slog.Info("api routes registered", "groups", []string{"store", "users", "gemara-proxy"})
+
+	// Legacy API routes (agents, a2a, registry, publish, config) are registered
+	// on the mux with full /api/ prefixes. The root catch-all delegates to them.
+	// The SPA fallback is handled in the same catch-all for non-API paths.
+	web.RegisterEchoWithMux(e, workbench.Assets, mux)
 
 	addr := net.JoinHostPort("0.0.0.0", port)
 	internalAddr := net.JoinHostPort("0.0.0.0", internalPort)
 
-	srv := &http.Server{
-		Addr:           addr,
-		Handler:        handler,
-		ReadTimeout:    consts.ServerReadTimeout,
-		WriteTimeout:   consts.ServerWriteTimeout,
-		IdleTimeout:    consts.ServerIdleTimeout,
-		MaxHeaderBytes: 1 << 20,
+	internalE := echo.New()
+	internalE.HideBanner = true
+	internalE.HidePort = true
+	internalE.HTTPErrorHandler = func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		he, ok := err.(*echo.HTTPError)
+		if ok {
+			msg := fmt.Sprintf("%v", he.Message)
+			_ = c.JSON(he.Code, map[string]string{"error": msg})
+		} else {
+			slog.Error("internal handler error", "error", err, "path", c.Request().URL.Path)
+			_ = c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		}
 	}
+	internalE.Use(middleware.BodyLimit(fmt.Sprintf("%dM", consts.MaxInternalRequestBody>>20)))
+	store.RegisterInternal(internalE.Group(""), stores)
+
 	internalSrv := &http.Server{
 		Addr:           internalAddr,
-		Handler:        internalMux,
+		Handler:        internalE,
 		ReadTimeout:    consts.ServerReadTimeout,
 		WriteTimeout:   consts.ServerWriteTimeout,
 		IdleTimeout:    consts.ServerIdleTimeout,
@@ -309,7 +369,7 @@ func main() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		_ = e.Shutdown(shutdownCtx)
 		_ = internalSrv.Shutdown(shutdownCtx)
 	}()
 
@@ -325,19 +385,25 @@ func main() {
 		}
 	}()
 
+	e.Server.ReadTimeout = consts.ServerReadTimeout
+	e.Server.WriteTimeout = consts.ServerWriteTimeout
+	e.Server.IdleTimeout = consts.ServerIdleTimeout
+	e.Server.MaxHeaderBytes = 1 << 20
+
 	slog.Info("gateway starting", "addr", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 		slog.Error("http server failed", "error", err)
 		os.Exit(1)
 	}
-	_ = ctx
 }
 
-func registerGemaraProxy(mux *http.ServeMux, mcpURL string) {
+func registerGemaraProxy(g *echo.Group, mcpURL string) {
+	unavail := func(c echo.Context) error {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "gemara-mcp unavailable"})
+	}
 	if mcpURL == "" {
-		unavailable := httputil.UnavailableHandler("gemara-mcp unavailable")
-		mux.HandleFunc("/api/validate", unavailable)
-		mux.HandleFunc("/api/migrate", unavailable)
+		g.POST("/validate", unavail)
+		g.POST("/migrate", unavail)
 		slog.Info("gemara-mcp proxy disabled", "reason", "GEMARA_MCP_URL not set")
 		return
 	}
@@ -346,14 +412,13 @@ func registerGemaraProxy(mux *http.ServeMux, mcpURL string) {
 	p, err := proxy.New(transport)
 	if err != nil {
 		slog.Warn("gemara-mcp proxy disabled", "error", err)
-		unavailable := httputil.UnavailableHandler("gemara-mcp unavailable")
-		mux.HandleFunc("/api/validate", unavailable)
-		mux.HandleFunc("/api/migrate", unavailable)
+		g.POST("/validate", unavail)
+		g.POST("/migrate", unavail)
 		return
 	}
 
-	mux.HandleFunc("/api/validate", p.ValidateHandler())
-	mux.HandleFunc("/api/migrate", p.MigrateHandler())
+	g.POST("/validate", echo.WrapHandler(http.HandlerFunc(p.ValidateHandler())))
+	g.POST("/migrate", echo.WrapHandler(http.HandlerFunc(p.MigrateHandler())))
 	slog.Info("gemara-mcp proxy registered", "routes", []string{"/api/validate", "/api/migrate"})
 }
 
@@ -371,44 +436,44 @@ func splitComma(raw string) []string {
 	return out
 }
 
-// writeProtect wraps a handler so that POST/PUT/PATCH/DELETE requests to /api/*
-// pass through the adminGuard middleware first. GET and non-API requests are unaffected.
-// /internal/* paths are served on the internal port only — reject on the public mux.
-// See docs/decisions/internal-endpoint-isolation.md.
-func writeProtect(next http.Handler, adminGuard func(http.Handler) http.Handler) http.Handler {
-	guarded := adminGuard(next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/internal/") {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet {
-			if r.URL.Path == "/api/chat/history" || r.URL.Path == "/api/bootstrap" || strings.HasPrefix(r.URL.Path, "/api/a2a/") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			guarded.ServeHTTP(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
+// writeProtect gates POST/PUT/PATCH/DELETE on /api/* through adminGuard.
+// GET and non-API requests pass through. /internal/* is rejected on the
+// public port. See docs/decisions/internal-endpoint-isolation.md.
+func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		guarded := adminGuard(next)
+		return func(c echo.Context) error {
+			path := c.Request().URL.Path
+			method := c.Request().Method
 
-// notificationAdapter adapts store.Store to events.NotificationWriter.
-type notificationAdapter struct {
-	store interface {
-		InsertNotification(ctx context.Context, n store.Notification) error
+			if strings.HasPrefix(path, "/internal/") {
+				return c.String(http.StatusNotFound, "not found")
+			}
+			if strings.HasPrefix(path, "/api/") && method != http.MethodGet {
+				if path == "/api/chat/history" || path == "/api/bootstrap" ||
+					strings.HasPrefix(path, "/api/a2a/") ||
+					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) {
+					return next(c)
+				}
+				return guarded(c)
+			}
+			return next(c)
+		}
 	}
 }
 
+// notificationAdapter adapts store.NotificationStore to events.NotificationWriter.
+type notificationAdapter struct {
+	store store.NotificationStore
+}
+
 func (a *notificationAdapter) InsertNotification(
-	ctx context.Context, n events.Notification,
+	ctx context.Context, notifType, policyID, payload string,
 ) error {
 	return a.store.InsertNotification(ctx, store.Notification{
-		NotificationID: n.NotificationID,
-		Type:           n.Type,
-		PolicyID:       n.PolicyID,
-		Payload:        n.Payload,
+		Type:     notifType,
+		PolicyID: policyID,
+		Payload:  payload,
 	})
 }
 
@@ -489,30 +554,3 @@ func (a *certificationAdapter) UpdateEvidenceCertified(
 	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
 }
 
-// cookieSecretKey returns the 32-byte AES-256 key for session cookie encryption.
-// Reads hex-encoded key from COOKIE_SECRET. Falls back to COOKIE_SIGN_KEY for
-// backward compatibility. Generates an ephemeral key for development only.
-func cookieSecretKey(authEnabled bool) []byte {
-	raw := os.Getenv("COOKIE_SECRET")
-	if raw == "" {
-		raw = os.Getenv("COOKIE_SIGN_KEY")
-	}
-	if raw != "" {
-		key, err := hex.DecodeString(raw)
-		if err != nil || len(key) != 32 {
-			slog.Error("COOKIE_SECRET must be 64 hex chars (32 bytes)", "hint", "openssl rand -hex 32")
-			os.Exit(1)
-		}
-		return key
-	}
-	if authEnabled {
-		slog.Error("COOKIE_SECRET is required when auth is enabled", "hint", "openssl rand -hex 32")
-		os.Exit(1)
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		slog.Error("failed to generate cookie secret", "error", err)
-		os.Exit(1)
-	}
-	return key
-}

@@ -40,7 +40,7 @@ func PopulateMappingEntries(ctx context.Context, s MappingStore) error {
 			continue
 		}
 
-		entries, parseErr := gemarapkg.ParseMappingEntries(doc.Content, doc.MappingID, doc.PolicyID, doc.Framework)
+		entries, parseErr := gemarapkg.ParseMappingEntries(doc.Content, doc.MappingID, doc.SourceCatalogID, doc.TargetCatalogID, doc.Framework)
 		if parseErr != nil {
 			slog.Warn("retroactive parse failed, skipping", "mapping_id", doc.MappingID, "error", parseErr)
 			continue
@@ -391,6 +391,34 @@ func PopulatePolicyCriteria(ctx context.Context, ps PolicyStore, ctrlS ControlSt
 		return fmt.Errorf("list policies: %w", err)
 	}
 
+	var totalControls int
+	for _, p := range policies {
+		count, _ := ctrlS.CountControls(ctx, p.PolicyID)
+		if count > 0 {
+			continue
+		}
+		full, err := ps.GetPolicy(ctx, p.PolicyID)
+		if err != nil {
+			slog.Warn("get policy content for criteria", "policy_id", p.PolicyID, "error", err)
+			continue
+		}
+		n, extractErr := ExtractPolicyCriteria(ctx, p.PolicyID, full.Content, ctrlS)
+		if extractErr != nil {
+			slog.Warn("policy criteria extraction failed", "policy_id", p.PolicyID, "error", extractErr)
+			continue
+		}
+		totalControls += n
+	}
+	if totalControls > 0 {
+		slog.Info("policy criteria backfilled", "total_controls", totalControls)
+	}
+	return nil
+}
+
+// ExtractPolicyCriteria parses a policy's criteria section and inserts
+// the resulting controls and assessment requirements. Returns the number
+// of controls inserted. Safe to call on every import (uses upsert).
+func ExtractPolicyCriteria(ctx context.Context, policyID, content string, ctrlS ControlStore) (int, error) {
 	type parsedCriteria struct {
 		Criteria []struct {
 			ID                     string `yaml:"id"`
@@ -404,71 +432,50 @@ func PopulatePolicyCriteria(ctx context.Context, ps PolicyStore, ctrlS ControlSt
 		} `yaml:"criteria"`
 	}
 
-	var totalControls int
-	for _, p := range policies {
-		full, err := ps.GetPolicy(ctx, p.PolicyID)
-		if err != nil {
-			slog.Warn("get policy content for criteria", "policy_id", p.PolicyID, "error", err)
-			continue
-		}
+	var pol parsedCriteria
+	if err := goyaml.Unmarshal([]byte(content), &pol); err != nil {
+		return 0, fmt.Errorf("parse policy criteria: %w", err)
+	}
+	if len(pol.Criteria) == 0 {
+		return 0, nil
+	}
 
-		var pol parsedCriteria
-		if err := goyaml.Unmarshal([]byte(full.Content), &pol); err != nil {
-			slog.Warn("parse policy criteria", "policy_id", p.PolicyID, "error", err)
-			continue
-		}
-		if len(pol.Criteria) == 0 {
-			continue
-		}
+	catalogID := policyID
+	var controls []gemarapkg.ControlRow
+	var reqs []gemarapkg.AssessmentRequirementRow
 
-		catalogID := p.PolicyID
-		count, _ := ctrlS.CountControls(ctx, catalogID)
-		if count > 0 {
-			continue
-		}
-
-		var controls []gemarapkg.ControlRow
-		var reqs []gemarapkg.AssessmentRequirementRow
-
-		for _, c := range pol.Criteria {
-			controls = append(controls, gemarapkg.ControlRow{
-				CatalogID: catalogID,
-				ControlID: c.ID,
-				Title:     c.Title,
-				Objective: c.Description,
-				State:     "Active",
-				PolicyID:  p.PolicyID,
+	for _, c := range pol.Criteria {
+		controls = append(controls, gemarapkg.ControlRow{
+			CatalogID: catalogID,
+			ControlID: c.ID,
+			Title:     c.Title,
+			Objective: c.Description,
+			State:     "Active",
+			PolicyID:  policyID,
+		})
+		for _, ar := range c.AssessmentRequirements {
+			reqs = append(reqs, gemarapkg.AssessmentRequirementRow{
+				CatalogID:     catalogID,
+				ControlID:     c.ID,
+				RequirementID: ar.ID,
+				Text:          ar.Description,
+				State:         "Active",
 			})
-			for _, ar := range c.AssessmentRequirements {
-				reqs = append(reqs, gemarapkg.AssessmentRequirementRow{
-					CatalogID:     catalogID,
-					ControlID:     c.ID,
-					RequirementID: ar.ID,
-					Text:          ar.Description,
-					State:         "Active",
-				})
-			}
 		}
-
-		if len(controls) > 0 {
-			if err := ctrlS.InsertControls(ctx, controls); err != nil {
-				slog.Warn("policy criteria controls insert failed", "policy_id", p.PolicyID, "error", err)
-				continue
-			}
-		}
-		if len(reqs) > 0 {
-			if err := ctrlS.InsertAssessmentRequirements(ctx, reqs); err != nil {
-				slog.Warn("policy criteria ARs insert failed", "policy_id", p.PolicyID, "error", err)
-			}
-		}
-		totalControls += len(controls)
-		slog.Info("policy criteria extracted", "policy_id", p.PolicyID, "controls", len(controls), "requirements", len(reqs))
 	}
 
-	if totalControls > 0 {
-		slog.Info("policy criteria backfilled", "total_controls", totalControls)
+	if len(controls) > 0 {
+		if err := ctrlS.InsertControls(ctx, controls); err != nil {
+			return 0, fmt.Errorf("insert controls: %w", err)
+		}
 	}
-	return nil
+	if len(reqs) > 0 {
+		if err := ctrlS.InsertAssessmentRequirements(ctx, reqs); err != nil {
+			slog.Warn("policy criteria ARs insert failed", "policy_id", policyID, "error", err)
+		}
+	}
+	slog.Info("policy criteria extracted", "policy_id", policyID, "controls", len(controls), "requirements", len(reqs))
+	return len(controls), nil
 }
 
 // fetchOCILayer retrieves the first layer blob from an OCI manifest

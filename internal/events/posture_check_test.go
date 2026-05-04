@@ -55,27 +55,33 @@ func (m *mockQuerier) QueryPolicyPosture(_ context.Context, _ string) (uint64, u
 	return m.total, m.passed, m.failed, nil
 }
 
-type mockNotifier struct {
-	mu    sync.Mutex
-	calls []Notification
+type notifCall struct {
+	Type     string
+	PolicyID string
+	Payload  string
 }
 
-func (m *mockNotifier) InsertNotification(_ context.Context, n Notification) error {
+type mockNotifier struct {
+	mu    sync.Mutex
+	calls []notifCall
+}
+
+func (m *mockNotifier) InsertNotification(_ context.Context, notifType, policyID, payload string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calls = append(m.calls, n)
+	m.calls = append(m.calls, notifCall{Type: notifType, PolicyID: policyID, Payload: payload})
 	return nil
 }
 
-func (m *mockNotifier) notifications() []Notification {
+func (m *mockNotifier) notifications() []notifCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]Notification, len(m.calls))
+	out := make([]notifCall, len(m.calls))
 	copy(out, m.calls)
 	return out
 }
 
-func countType(calls []Notification, typ string) int {
+func countType(calls []notifCall, typ string) int {
 	n := 0
 	for _, c := range calls {
 		if c.Type == typ {
