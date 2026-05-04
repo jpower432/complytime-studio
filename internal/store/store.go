@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var psql = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 
 // PolicyStore defines read/write operations for policy artifacts.
 type PolicyStore interface {
@@ -284,28 +286,26 @@ func (s *Store) ListAllMappings(ctx context.Context) ([]MappingDocument, error) 
 
 // QueryMappings returns mapping entries for a given source/target catalog pair.
 func (s *Store) QueryMappings(ctx context.Context, sourceCatalogID, targetCatalogID string, limit int) ([]gemara.MappingEntry, error) {
-	q := `SELECT mapping_id, source_catalog_id, target_catalog_id, guideline_id,
-	             control_id, requirement_id, framework, reference, strength, confidence
-	      FROM mapping_entries WHERE 1=1`
-	var args []any
-	n := 1
-	if sourceCatalogID != "" {
-		q += fmt.Sprintf(` AND source_catalog_id = $%d`, n)
-		args = append(args, sourceCatalogID)
-		n++
-	}
-	if targetCatalogID != "" {
-		q += fmt.Sprintf(` AND target_catalog_id = $%d`, n)
-		args = append(args, targetCatalogID)
-		n++
-	}
-	q += ` ORDER BY guideline_id, control_id`
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	q += fmt.Sprintf(` LIMIT %d`, limit)
+	qb := psql.Select("mapping_id", "source_catalog_id", "target_catalog_id", "guideline_id",
+		"control_id", "requirement_id", "framework", "reference", "strength", "confidence").
+		From("mapping_entries").
+		OrderBy("guideline_id", "control_id").
+		Limit(uint64(limit))
+	if sourceCatalogID != "" {
+		qb = qb.Where(sq.Eq{"source_catalog_id": sourceCatalogID})
+	}
+	if targetCatalogID != "" {
+		qb = qb.Where(sq.Eq{"target_catalog_id": targetCatalogID})
+	}
 
-	rows, err := s.pool.Query(ctx, q, args...)
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query mappings: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query mappings: %w", err)
 	}
@@ -516,10 +516,21 @@ func (s *Store) CountThreats(ctx context.Context, catalogID string) (int, error)
 }
 
 func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.ThreatRow, error) {
-	where, args := buildCatalogPolicyFilter(catalogID, policyID)
-	limit = consts.ClampLimit(limit)
-	query := fmt.Sprintf(`SELECT catalog_id, threat_id, title, description, group_id, policy_id FROM threats`+where+` ORDER BY catalog_id, threat_id LIMIT %d`, limit)
+	qb := psql.Select("catalog_id", "threat_id", "title", "description", "group_id", "policy_id").
+		From("threats").
+		OrderBy("catalog_id", "threat_id").
+		Limit(uint64(consts.ClampLimit(limit)))
+	if catalogID != "" {
+		qb = qb.Where(sq.Eq{"catalog_id": catalogID})
+	}
+	if policyID != "" {
+		qb = qb.Where(sq.Eq{"policy_id": policyID})
+	}
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query threats: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query threats: %w", err)
@@ -538,26 +549,21 @@ func (s *Store) QueryThreats(ctx context.Context, catalogID, policyID string, li
 }
 
 func (s *Store) QueryControlThreats(ctx context.Context, catalogID, controlID string, limit int) ([]gemara.ControlThreatRow, error) {
-	var clauses []string
-	var args []any
-	n := 1
+	qb := psql.Select("catalog_id", "control_id", "threat_reference_id", "threat_entry_id").
+		From("control_threats").
+		OrderBy("catalog_id", "control_id", "threat_reference_id").
+		Limit(uint64(consts.ClampLimit(limit)))
 	if catalogID != "" {
-		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
-		args = append(args, catalogID)
-		n++
+		qb = qb.Where(sq.Eq{"catalog_id": catalogID})
 	}
 	if controlID != "" {
-		clauses = append(clauses, fmt.Sprintf("control_id = $%d", n))
-		args = append(args, controlID)
-		n++
+		qb = qb.Where(sq.Eq{"control_id": controlID})
 	}
-	where := ""
-	if len(clauses) > 0 {
-		where = " WHERE " + strings.Join(clauses, " AND ")
-	}
-	limit = consts.ClampLimit(limit)
-	query := fmt.Sprintf(`SELECT catalog_id, control_id, threat_reference_id, threat_entry_id FROM control_threats`+where+` ORDER BY catalog_id, control_id, threat_reference_id LIMIT %d`, limit)
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query control threats: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query control threats: %w", err)
@@ -634,10 +640,21 @@ func (s *Store) CountRisks(ctx context.Context, catalogID string) (int, error) {
 }
 
 func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error) {
-	where, args := buildCatalogPolicyFilter(catalogID, policyID)
-	limit = consts.ClampLimit(limit)
-	query := fmt.Sprintf(`SELECT catalog_id, risk_id, title, description, severity, group_id, impact, policy_id FROM risks`+where+` ORDER BY catalog_id, risk_id LIMIT %d`, limit)
+	qb := psql.Select("catalog_id", "risk_id", "title", "description", "severity", "group_id", "impact", "policy_id").
+		From("risks").
+		OrderBy("catalog_id", "risk_id").
+		Limit(uint64(consts.ClampLimit(limit)))
+	if catalogID != "" {
+		qb = qb.Where(sq.Eq{"catalog_id": catalogID})
+	}
+	if policyID != "" {
+		qb = qb.Where(sq.Eq{"policy_id": policyID})
+	}
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query risks: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query risks: %w", err)
@@ -656,26 +673,21 @@ func (s *Store) QueryRisks(ctx context.Context, catalogID, policyID string, limi
 }
 
 func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error) {
-	var clauses []string
-	var args []any
-	n := 1
+	qb := psql.Select("catalog_id", "risk_id", "threat_reference_id", "threat_entry_id").
+		From("risk_threats").
+		OrderBy("catalog_id", "risk_id", "threat_reference_id").
+		Limit(uint64(consts.ClampLimit(limit)))
 	if catalogID != "" {
-		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
-		args = append(args, catalogID)
-		n++
+		qb = qb.Where(sq.Eq{"catalog_id": catalogID})
 	}
 	if riskID != "" {
-		clauses = append(clauses, fmt.Sprintf("risk_id = $%d", n))
-		args = append(args, riskID)
-		n++
+		qb = qb.Where(sq.Eq{"risk_id": riskID})
 	}
-	where := ""
-	if len(clauses) > 0 {
-		where = " WHERE " + strings.Join(clauses, " AND ")
-	}
-	limit = consts.ClampLimit(limit)
-	query := fmt.Sprintf(`SELECT catalog_id, risk_id, threat_reference_id, threat_entry_id FROM risk_threats`+where+` ORDER BY catalog_id, risk_id, threat_reference_id LIMIT %d`, limit)
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query risk threats: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query risk threats: %w", err)
@@ -693,26 +705,6 @@ func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, 
 	return out, rows.Err()
 }
 
-// buildCatalogPolicyFilter builds a WHERE clause for optional catalog_id and policy_id filters.
-func buildCatalogPolicyFilter(catalogID, policyID string) (string, []any) {
-	var clauses []string
-	var args []any
-	n := 1
-	if catalogID != "" {
-		clauses = append(clauses, fmt.Sprintf("catalog_id = $%d", n))
-		args = append(args, catalogID)
-		n++
-	}
-	if policyID != "" {
-		clauses = append(clauses, fmt.Sprintf("policy_id = $%d", n))
-		args = append(args, policyID)
-		n++
-	}
-	if len(clauses) == 0 {
-		return "", nil
-	}
-	return " WHERE " + strings.Join(clauses, " AND "), args
-}
 
 // RiskSeverityRow maps a control to its highest-severity risk for a given policy.
 type RiskSeverityRow struct {
@@ -951,86 +943,83 @@ type EvidenceFilter struct {
 
 // QueryEvidence returns evidence rows matching the filter.
 func (s *Store) QueryEvidence(ctx context.Context, f EvidenceFilter) ([]EvidenceRecord, error) {
-	query := `SELECT e.evidence_id, e.policy_id, e.target_id,
-		COALESCE(e.target_name, '') AS target_name,
-		COALESCE(e.target_type, '') AS target_type,
-		COALESCE(e.target_env, '') AS target_env,
-		COALESCE(e.engine_name, '') AS engine_name,
-		COALESCE(e.engine_version, '') AS engine_version,
-		e.rule_id,
-		COALESCE(e.rule_name, '') AS rule_name,
-		e.eval_result,
-		COALESCE(e.eval_message, '') AS eval_message,
-		e.control_id,
-		COALESCE(e.control_catalog_id, '') AS control_catalog_id,
-		COALESCE(e.control_category, '') AS control_category,
-		e.requirement_id,
-		COALESCE(e.plan_id, '') AS plan_id,
-		COALESCE(e.confidence, '') AS confidence,
-		e.compliance_status,
-		COALESCE(e.risk_level, '') AS risk_level,
-		e.requirements,
-		e.enrichment_status,
-		COALESCE(e.attestation_ref, '') AS attestation_ref,
-		COALESCE(e.source_registry, '') AS source_registry,
-		COALESCE(e.blob_ref, '') AS blob_ref,
-		e.certified,
-		e.collected_at,
-		COALESCE(ea_latest.classification, '') AS classification
-		FROM evidence e
+	qb := psql.Select(
+		"e.evidence_id", "e.policy_id", "e.target_id",
+		"COALESCE(e.target_name, '') AS target_name",
+		"COALESCE(e.target_type, '') AS target_type",
+		"COALESCE(e.target_env, '') AS target_env",
+		"COALESCE(e.engine_name, '') AS engine_name",
+		"COALESCE(e.engine_version, '') AS engine_version",
+		"e.rule_id",
+		"COALESCE(e.rule_name, '') AS rule_name",
+		"e.eval_result",
+		"COALESCE(e.eval_message, '') AS eval_message",
+		"e.control_id",
+		"COALESCE(e.control_catalog_id, '') AS control_catalog_id",
+		"COALESCE(e.control_category, '') AS control_category",
+		"e.requirement_id",
+		"COALESCE(e.plan_id, '') AS plan_id",
+		"COALESCE(e.confidence, '') AS confidence",
+		"e.compliance_status",
+		"COALESCE(e.risk_level, '') AS risk_level",
+		"e.requirements",
+		"e.enrichment_status",
+		"COALESCE(e.attestation_ref, '') AS attestation_ref",
+		"COALESCE(e.source_registry, '') AS source_registry",
+		"COALESCE(e.blob_ref, '') AS blob_ref",
+		"e.certified",
+		"e.collected_at",
+		"COALESCE(ea_latest.classification, '') AS classification",
+	).From(`evidence e
 		LEFT JOIN LATERAL (
 			SELECT ea2.classification
 			FROM evidence_assessments ea2
 			WHERE ea2.evidence_id = e.evidence_id
 			ORDER BY ea2.assessed_at DESC
 			LIMIT 1
-		) AS ea_latest ON TRUE
-		WHERE 1=1`
-	var args []any
-	n := 1
-	add := func(cond string, v any) {
-		placeholder := "$" + strconv.Itoa(n)
-		n++
-		query += " AND " + strings.Replace(cond, "?", placeholder, 1)
-		args = append(args, v)
-	}
+		) AS ea_latest ON TRUE`).
+		OrderBy("e.collected_at DESC")
+
 	if len(f.PolicyIDs) == 1 {
-		add(`e.policy_id = ?`, f.PolicyIDs[0])
+		qb = qb.Where(sq.Eq{"e.policy_id": f.PolicyIDs[0]})
 	} else if len(f.PolicyIDs) > 1 {
-		add(`e.policy_id = ANY(?)`, f.PolicyIDs)
+		qb = qb.Where(sq.Eq{"e.policy_id": f.PolicyIDs})
 	}
 	if f.ControlID != "" {
-		add(`e.control_id = ?`, f.ControlID)
+		qb = qb.Where(sq.Eq{"e.control_id": f.ControlID})
 	}
 	if f.TargetName != "" {
-		add(`e.target_name = ?`, f.TargetName)
+		qb = qb.Where(sq.Eq{"e.target_name": f.TargetName})
 	}
 	if f.TargetType != "" {
-		add(`e.target_type = ?`, f.TargetType)
+		qb = qb.Where(sq.Eq{"e.target_type": f.TargetType})
 	}
 	if f.TargetEnv != "" {
-		add(`e.target_env = ?`, f.TargetEnv)
+		qb = qb.Where(sq.Eq{"e.target_env": f.TargetEnv})
 	}
 	if f.EngineVersion != "" {
-		add(`e.engine_version = ?`, f.EngineVersion)
+		qb = qb.Where(sq.Eq{"e.engine_version": f.EngineVersion})
 	}
 	if f.Owner != "" {
-		add(`e.owner = ?`, f.Owner)
+		qb = qb.Where(sq.Eq{"e.owner": f.Owner})
 	}
 	if !f.Start.IsZero() {
-		add(`e.collected_at >= ?`, f.Start)
+		qb = qb.Where(sq.GtOrEq{"e.collected_at": f.Start})
 	}
 	if !f.End.IsZero() {
-		add(`e.collected_at <= ?`, f.End)
+		qb = qb.Where(sq.LtOrEq{"e.collected_at": f.End})
 	}
-	query += ` ORDER BY e.collected_at DESC`
 	if f.Limit > 0 {
-		query += fmt.Sprintf(` LIMIT %d`, f.Limit)
+		qb = qb.Limit(uint64(f.Limit))
 	}
 	if f.Offset > 0 {
-		query += fmt.Sprintf(` OFFSET %d`, f.Offset)
+		qb = qb.Offset(uint64(f.Offset))
 	}
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build query evidence: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query evidence: %w", err)
@@ -1211,24 +1200,23 @@ func (s *Store) InsertAuditLog(ctx context.Context, a AuditLog) error {
 
 // ListAuditLogs returns audit logs for a given policy, optionally filtered by time range.
 func (s *Store) ListAuditLogs(ctx context.Context, policyID string, start, end time.Time, limit int) ([]AuditLog, error) {
-	query := `SELECT audit_id, policy_id, audit_start, audit_end, framework, created_at, created_by, summary, model, prompt_version FROM audit_logs WHERE policy_id = $1`
-	args := []any{policyID}
-	n := 2
-
+	qb := psql.Select("audit_id", "policy_id", "audit_start", "audit_end", "framework",
+		"created_at", "created_by", "summary", "model", "prompt_version").
+		From("audit_logs").
+		Where(sq.Eq{"policy_id": policyID}).
+		OrderBy("audit_start DESC").
+		Limit(uint64(consts.ClampLimit(limit)))
 	if !start.IsZero() {
-		query += ` AND audit_start >= $` + strconv.Itoa(n)
-		args = append(args, start)
-		n++
+		qb = qb.Where(sq.GtOrEq{"audit_start": start})
 	}
 	if !end.IsZero() {
-		query += ` AND audit_end <= $` + strconv.Itoa(n)
-		args = append(args, end)
-		n++
+		qb = qb.Where(sq.LtOrEq{"audit_end": end})
 	}
-	query += ` ORDER BY audit_start DESC`
-	limit = consts.ClampLimit(limit)
-	query += fmt.Sprintf(` LIMIT %d`, limit)
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build list audit logs: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list audit logs: %w", err)
@@ -1408,16 +1396,20 @@ func (s *Store) InsertDraftAuditLog(ctx context.Context, d DraftAuditLog) error 
 
 // ListDraftAuditLogs returns drafts filtered by status. Empty status returns all.
 func (s *Store) ListDraftAuditLogs(ctx context.Context, status string, limit int) ([]DraftAuditLog, error) {
-	query := `SELECT draft_id, policy_id, audit_start, audit_end, framework, created_at, status, summary, agent_reasoning, model, prompt_version, reviewed_by, promoted_at, reviewer_edits FROM draft_audit_logs`
-	var args []any
+	qb := psql.Select("draft_id", "policy_id", "audit_start", "audit_end", "framework",
+		"created_at", "status", "summary", "agent_reasoning", "model", "prompt_version",
+		"reviewed_by", "promoted_at", "reviewer_edits").
+		From("draft_audit_logs").
+		OrderBy("created_at DESC").
+		Limit(uint64(consts.ClampLimit(limit)))
 	if status != "" {
-		query += ` WHERE status = $1`
-		args = append(args, status)
+		qb = qb.Where(sq.Eq{"status": status})
 	}
-	query += ` ORDER BY created_at DESC`
-	limit = consts.ClampLimit(limit)
-	query += fmt.Sprintf(` LIMIT %d`, limit)
 
+	query, args, err := qb.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build list draft audit logs: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list draft audit logs: %w", err)
@@ -1550,7 +1542,6 @@ func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]Postur
 		if !end.IsZero() {
 			evidenceFilter += " AND collected_at <= $" + strconv.Itoa(n)
 			args = append(args, end)
-			n++
 		}
 	}
 
@@ -1779,7 +1770,6 @@ func (s *Store) ListRequirementMatrix(ctx context.Context, f RequirementFilter) 
 	if f.ControlFamily != "" {
 		query += ` AND e.control_id LIKE $` + strconv.Itoa(argN) + ` || '%'`
 		args = append(args, f.ControlFamily)
-		argN++
 	}
 
 	query += ` GROUP BY COALESCE(ar.catalog_id, ''), e.control_id, COALESCE(c.title, ''),
@@ -1888,7 +1878,6 @@ func (s *Store) ListRequirementEvidence(ctx context.Context, requirementID strin
 	if !f.End.IsZero() {
 		query += ` AND e.collected_at <= $` + strconv.Itoa(argN)
 		args = append(args, f.End)
-		argN++
 	}
 
 	query += ` ORDER BY e.collected_at DESC`
