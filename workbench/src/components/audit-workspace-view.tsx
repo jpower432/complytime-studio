@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
-import { selectedAuditId, navigate, navigateToPolicy } from "../app";
+import { selectedAuditId, selectedPolicyId, selectedEvidenceTargetId, navigate, navigateToPolicy } from "../app";
 import { apiFetch } from "../api/fetch";
 import { downloadYaml, auditLogFilename } from "../lib/download";
 import { fmtDate, fmtDateTime, displayName } from "../lib/format";
@@ -205,7 +205,7 @@ export function AuditWorkspaceView() {
   })();
 
   if (!auditId) {
-    navigate("inbox");
+    navigate("reviews");
     return null;
   }
 
@@ -219,7 +219,7 @@ export function AuditWorkspaceView() {
   return (
     <section class="audit-workspace">
       <nav class="breadcrumb" aria-label="Breadcrumb">
-        <button class="breadcrumb-link" onClick={() => navigate("posture")}>Posture</button>
+        <button class="breadcrumb-link" onClick={() => navigate("reviews")}>Reviews</button>
         <span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
         <button class="breadcrumb-link" onClick={() => navigateToPolicy(artifact.policy_id)}>{artifact.policy_id}</button>
         <span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
@@ -329,7 +329,11 @@ export function AuditWorkspaceView() {
             <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "requirements")}>
               Requirements Matrix
             </button>
-            <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "evidence")}>
+            <button class="btn btn-sm btn-secondary" onClick={() => {
+              selectedPolicyId.value = artifact.policy_id;
+              selectedEvidenceTargetId.value = null;
+              navigate("evidence");
+            }}>
               Evidence Library
             </button>
             <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "history")}>

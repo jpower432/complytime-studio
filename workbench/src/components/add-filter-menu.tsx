@@ -3,10 +3,25 @@
 import { useState } from "preact/hooks";
 import type { FilterChipsState } from "./filter-chip";
 
+export type FilterOption = { value: string; label: string };
+
+function normalizeOptions(
+  opts: string[] | FilterOption[],
+): FilterOption[] {
+  return opts.map((o) =>
+    typeof o === "string" ? { value: o, label: o } : o,
+  );
+}
+
 interface FilterField {
   key: string;
   label: string;
-  options: string[] | (() => string[]);
+  options:
+    | string[]
+    | (() => string[])
+    | FilterOption[]
+    | (() => FilterOption[]);
+  pick?: (value: string) => void;
 }
 
 export function AddFilterMenu({
@@ -28,7 +43,11 @@ export function AddFilterMenu({
 
   const handleValuePick = (value: string) => {
     if (selecting) {
-      chipState.add(selecting.key, value);
+      if (selecting.pick) {
+        selecting.pick(value);
+      } else {
+        chipState.add(selecting.key, value);
+      }
     }
     setSelecting(null);
     setOpen(false);
@@ -40,7 +59,11 @@ export function AddFilterMenu({
   };
 
   if (selecting) {
-    const opts = typeof selecting.options === "function" ? selecting.options() : selecting.options;
+    const raw =
+      typeof selecting.options === "function"
+        ? selecting.options()
+        : selecting.options;
+    const opts = normalizeOptions(raw);
     return (
       <div class="add-filter-wrapper">
         <div class="add-filter-value-row">
@@ -54,7 +77,7 @@ export function AddFilterMenu({
           >
             <option value="">{selecting.label}...</option>
             {opts.map((o) => (
-              <option key={o} value={o}>{o}</option>
+              <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
         </div>
