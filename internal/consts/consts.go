@@ -57,6 +57,9 @@ const (
 	// RoleAdmin is the admin role value stored in the users table.
 	RoleAdmin = "admin"
 
+	// RoleWriter is the writer role value stored in the users table.
+	RoleWriter = "writer"
+
 	// RoleReviewer is the default role for new users.
 	RoleReviewer = "reviewer"
 )

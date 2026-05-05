@@ -1,0 +1,123 @@
+title: Kubernetes Security Baseline
+metadata:
+  type: Policy
+  id: kube-security-baseline
+  version: 1.0.0
+  gemara-version: 1.0.0
+  description: >-
+    Security baseline for Kubernetes clusters covering pod security,
+    network policy, image signing, RBAC, and secrets encryption.
+  author:
+    id: complytime
+    name: ComplyTime
+    type: Software Assisted
+  mapping-references:
+    - id: kube-security-controls
+      title: Kubernetes Security Controls
+      version: 1.0.0
+      description: Control catalog for Kubernetes security hardening
+
+contacts:
+  responsible:
+    - name: Platform Team
+  accountable:
+    - name: Security Team
+
+scope:
+  in:
+    technologies:
+      - Kubernetes
+    users:
+      - Platform engineers
+
+criteria:
+  - id: KSB-1
+    title: Enforce Pod Security Standards
+    description: Pods must conform to the Restricted pod security standard.
+    catalog-ref: kube-security-controls/KSB-1
+    assessment-requirements:
+      - id: KSB-1.01
+        description: Namespaces MUST enforce the Restricted pod security standard via admission control.
+        frequency: daily
+
+  - id: KSB-2
+    title: Require Network Policies
+    description: Every namespace must have a default-deny NetworkPolicy.
+    catalog-ref: kube-security-controls/KSB-2
+    assessment-requirements:
+      - id: KSB-2.01
+        description: A default-deny ingress NetworkPolicy MUST exist in each namespace.
+        frequency: daily
+
+  - id: KSB-3
+    title: Require Image Signing
+    description: Only signed container images may be admitted to the cluster.
+    catalog-ref: kube-security-controls/KSB-3
+    assessment-requirements:
+      - id: KSB-3.01
+        description: Admission controller MUST reject unsigned images.
+        frequency: daily
+
+  - id: KSB-4
+    title: Enforce Least-Privilege RBAC
+    description: ClusterRoleBindings must follow least-privilege.
+    catalog-ref: kube-security-controls/KSB-4
+    assessment-requirements:
+      - id: KSB-4.01
+        description: No ClusterRoleBinding SHOULD grant cluster-admin to service accounts.
+        frequency: weekly
+
+  - id: KSB-5
+    title: Encrypt Secrets at Rest
+    description: Kubernetes secrets must be encrypted at rest using a KMS provider.
+    catalog-ref: kube-security-controls/KSB-5
+    assessment-requirements:
+      - id: KSB-5.01
+        description: EncryptionConfiguration MUST use a KMS provider for secrets.
+        frequency: weekly
+
+adherence:
+  evaluation-methods:
+    - type: automated
+      description: Kyverno policy engine enforcement and Trivy cluster scanning
+      executor:
+        id: kyverno
+        name: Kyverno
+        type: Software
+  assessment-plans:
+    - id: KSB-1.01
+      requirement-id: KSB-1.01
+      frequency: daily
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: kyverno
+    - id: KSB-2.01
+      requirement-id: KSB-2.01
+      frequency: daily
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: kyverno
+    - id: KSB-3.01
+      requirement-id: KSB-3.01
+      frequency: daily
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: kyverno
+    - id: KSB-4.01
+      requirement-id: KSB-4.01
+      frequency: weekly
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: kyverno
+    - id: KSB-5.01
+      requirement-id: KSB-5.01
+      frequency: weekly
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: kyverno
+

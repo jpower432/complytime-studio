@@ -236,7 +236,9 @@ var defaultSeedCatalogs = []registryCatalog{
 // PopulateCatalogsFromRegistry fetches well-known seed catalogs from an
 // in-cluster OCI registry and inserts them into the catalogs table if
 // they don't already exist. Safe to call on every startup.
-func PopulateCatalogsFromRegistry(ctx context.Context, cs CatalogStore, ctrlS ControlStore, threatS ThreatStore, riskS RiskStore, registryAddr string) error {
+func PopulateCatalogsFromRegistry(
+	ctx context.Context, cs CatalogStore, ctrlS ControlStore, threatS ThreatStore, riskS RiskStore, guidanceS GuidanceStore, registryAddr string,
+) error {
 	if registryAddr == "" {
 		return nil
 	}
@@ -275,7 +277,7 @@ func PopulateCatalogsFromRegistry(ctx context.Context, cs CatalogStore, ctrlS Co
 			continue
 		}
 
-		parseCatalogStructuredRows(ctx, sc.Type, content, catalogID, "", ctrlS, threatS, riskS)
+		parseCatalogStructuredRows(ctx, sc.Type, content, catalogID, "", ctrlS, threatS, riskS, guidanceS)
 		imported++
 		slog.Info("seed catalog imported from registry", "catalog_id", catalogID, "type", sc.Type)
 	}

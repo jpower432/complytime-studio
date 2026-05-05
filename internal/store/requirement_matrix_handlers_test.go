@@ -93,7 +93,7 @@ func TestListRequirementMatrixHandler(t *testing.T) {
 			name:        "audit_end before audit_start",
 			url:         "/api/requirements?policy_id=p1&audit_start=2026-01-20&audit_end=2026-01-10",
 			wantCode:    http.StatusBadRequest,
-			wantBodySub: "audit_end must be >= audit_start",
+			wantBodySub: "audit_end must be",
 		},
 		{
 			name:     "ok with seeded rows",

@@ -1,0 +1,74 @@
+title: Branch Protection to SOC 2 Mapping
+metadata:
+  type: MappingDocument
+  id: ampel-bp-soc2
+  gemara-version: 1.0.0
+  version: 1.0.0
+  description: Maps AMPEL branch protection controls to SOC 2 Trust Services Criteria
+  author:
+    id: complytime
+    name: ComplyTime
+    type: Software Assisted
+  mapping-references:
+    - id: ampel-bp
+      title: AMPEL Branch Protection Controls
+      version: 1.0.0
+    - id: soc2-tsc
+      title: SOC 2 Trust Services Criteria
+      version: '2017'
+source-reference:
+  entry-type: Control
+  reference-id: ampel-bp
+target-reference:
+  entry-type: AssessmentRequirement
+  reference-id: soc2-tsc
+mappings:
+  - id: bp1-to-soc2
+    source: BP-1
+    relationship: supports
+    targets:
+      - entry-id: CC8.1
+        strength: 9
+        confidence-level: High
+        rationale: >-
+          The entity authorizes, designs, develops or acquires, configures,
+          documents, tests, approves, and implements changes to infrastructure,
+          data, software, and procedures to meet its objectives.
+      - entry-id: CC6.1
+        strength: 6
+        confidence-level: Medium
+        rationale: >-
+          The entity implements logical access security software, infrastructure,
+          and architectures over protected information assets.
+  - id: bp2-to-soc2
+    source: BP-2
+    relationship: supports
+    targets:
+      - entry-id: CC8.1
+        strength: 8
+        confidence-level: High
+  - id: bp3-to-soc2
+    source: BP-3
+    relationship: supports
+    targets:
+      - entry-id: CC8.1
+        strength: 7
+        confidence-level: Medium
+  - id: bp4-to-soc2
+    source: BP-4
+    relationship: supports
+    targets:
+      - entry-id: CC8.1
+        strength: 8
+        confidence-level: High
+      - entry-id: CC6.1
+        strength: 7
+        confidence-level: Medium
+  - id: bp5-to-soc2
+    source: BP-5
+    relationship: supports
+    targets:
+      - entry-id: CC8.1
+        strength: 6
+        confidence-level: Medium
+

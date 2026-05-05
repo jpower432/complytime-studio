@@ -28,6 +28,8 @@ import (
 	pgstore "github.com/complytime/complytime-studio/internal/postgres"
 	"github.com/complytime/complytime-studio/internal/proxy"
 	"github.com/complytime/complytime-studio/internal/publish"
+	"github.com/complytime/complytime-studio/internal/posture"
+	"github.com/complytime/complytime-studio/internal/recommend"
 	"github.com/complytime/complytime-studio/internal/registry"
 	"github.com/complytime/complytime-studio/internal/store"
 	"github.com/complytime/complytime-studio/internal/web"
@@ -82,27 +84,47 @@ func main() {
 	}
 
 	registryAddr := os.Getenv("REGISTRY_INSECURE")
-	if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, registryAddr); err != nil {
-		slog.Warn("catalog seed from registry failed", "error", err)
-	}
+	registryConfig := store.LoadRegistryConfig()
+
+	// Seed from registry in background — the Helm seed job may not have
+	// pushed artifacts yet when the gateway starts (post-install hook race).
+	go func() {
+		const maxAttempts = 10
+		const delay = 15 * time.Second
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, st, registryAddr); err != nil {
+				slog.Warn("catalog seed from registry failed, will retry", "attempt", attempt, "error", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(delay):
+					continue
+				}
+			}
+			// Run dependent backfills after catalogs are seeded.
+			if err := store.PopulateControls(ctx, st, st); err != nil {
+				slog.Warn("controls backfill failed", "error", err)
+			}
+			if err := store.PopulateThreats(ctx, st, st); err != nil {
+				slog.Warn("threats backfill failed", "error", err)
+			}
+			if err := store.PopulateRisks(ctx, st, st); err != nil {
+				slog.Warn("risks backfill failed", "error", err)
+			}
+			if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+				slog.Warn("effective controls backfill failed", "error", err)
+			}
+			if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
+				slog.Warn("policy criteria backfill failed", "error", err)
+			}
+			slog.Info("registry seed populate complete", "attempt", attempt)
+			return
+		}
+		slog.Warn("registry seed exhausted retries", "attempts", maxAttempts)
+	}()
 
 	if err := store.PopulateMappingEntries(ctx, st); err != nil {
 		slog.Warn("mapping entries backfill failed", "error", err)
-	}
-	if err := store.PopulateControls(ctx, st, st); err != nil {
-		slog.Warn("controls backfill failed", "error", err)
-	}
-	if err := store.PopulateThreats(ctx, st, st); err != nil {
-		slog.Warn("threats backfill failed", "error", err)
-	}
-	if err := store.PopulateRisks(ctx, st, st); err != nil {
-		slog.Warn("risks backfill failed", "error", err)
-	}
-	if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
-		slog.Warn("effective controls backfill failed", "error", err)
-	}
-	if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
-		slog.Warn("policy criteria backfill failed", "error", err)
 	}
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -120,6 +142,7 @@ func main() {
 	var pub store.EventPublisher = bus
 
 	var notifStore store.NotificationStore = st
+	programStores := pgstore.NewProgramPG(pgClient.Pool())
 
 	stores := store.Stores{
 		Policies:            st,
@@ -130,6 +153,7 @@ func main() {
 		DraftAuditLogs:      st,
 		Requirements:        st,
 		Controls:            st,
+		Guidance:            st,
 		Threats:             st,
 		Risks:               st,
 		Catalogs:            st,
@@ -139,6 +163,12 @@ func main() {
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,
+		Programs:            programStores,
+		Jobs:                programStores,
+		Inventory:           st,
+		Users:               pgClient,
+		Recommender:         recommend.New(pgClient.Pool()),
+		Registry:            registryConfig,
 	}
 	slog.Info("store API registered", "routes", []string{
 		"/api/policies", "/api/evidence/ingest", "/api/audit-logs", "/api/mappings",
@@ -164,6 +194,18 @@ func main() {
 	}
 	defer func() { _ = sub.Unsubscribe() }()
 	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
+
+	postureEngine := posture.New(pgClient.Pool())
+	postureNotifier := func(ctx context.Context, msg, severity string) error {
+		return adapter.InsertNotification(ctx, "posture_change", severity, msg)
+	}
+	postureSub := posture.NewSubscriber(postureEngine, programStores, bus, postureNotifier)
+	go func() {
+		if err := postureSub.Start(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("posture subscriber stopped", "error", err)
+		}
+	}()
+	slog.Info("posture subscriber started")
 
 	draftSub, draftSubErr := bus.SubscribeDraftAuditLog(func(evt events.DraftAuditLogEvent) {
 		payload := fmt.Sprintf(`{"draft_id":%q,"summary":%q}`, evt.DraftID, evt.Summary)
@@ -283,7 +325,7 @@ func main() {
 
 	authHandler.Register(e)
 	e.Use(authHandler.Middleware())
-	e.Use(writeProtect(auth.RequireAdmin(pgClient)))
+	e.Use(writeProtect(auth.RequireWrite(pgClient)))
 
 	e.GET("/healthz", func(c echo.Context) error {
 		if err := pgClient.Ping(c.Request().Context()); err != nil {
@@ -436,12 +478,12 @@ func splitComma(raw string) []string {
 	return out
 }
 
-// writeProtect gates POST/PUT/PATCH/DELETE on /api/* through adminGuard.
+// writeProtect gates POST/PUT/PATCH/DELETE on /api/* through writeGuard.
 // GET and non-API requests pass through. /internal/* is rejected on the
 // public port. See docs/decisions/internal-endpoint-isolation.md.
-func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
+func writeProtect(writeGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		guarded := adminGuard(next)
+		guarded := writeGuard(next)
 		return func(c echo.Context) error {
 			path := c.Request().URL.Path
 			method := c.Request().Method
@@ -452,7 +494,9 @@ func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 			if strings.HasPrefix(path, "/api/") && method != http.MethodGet {
 				if path == "/api/chat/history" || path == "/api/bootstrap" ||
 					strings.HasPrefix(path, "/api/a2a/") ||
-					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) {
+					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) ||
+					(method == http.MethodPost && path == "/api/audit-logs/promote") ||
+					(method == http.MethodPatch && strings.HasPrefix(path, "/api/draft-audit-logs/")) {
 					return next(c)
 				}
 				return guarded(c)
@@ -553,4 +597,3 @@ func (a *certificationAdapter) UpdateEvidenceCertified(
 ) error {
 	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
 }
-

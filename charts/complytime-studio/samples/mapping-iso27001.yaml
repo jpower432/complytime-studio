@@ -1,0 +1,84 @@
+title: Supply Chain Attestation to ISO 27001 Mapping
+metadata:
+  type: MappingDocument
+  id: sca-iso27001
+  gemara-version: 1.0.0
+  version: 1.0.0
+  description: Maps supply chain attestation controls to ISO 27001:2022 Annex A controls
+  author:
+    id: complytime
+    name: ComplyTime
+    type: Software Assisted
+  mapping-references:
+    - id: supply-chain-attestation
+      title: Supply Chain Attestation Controls
+      version: 1.0.0
+    - id: iso27001-2022
+      title: ISO/IEC 27001:2022
+      version: '2022'
+source-reference:
+  entry-type: Control
+  reference-id: supply-chain-attestation
+target-reference:
+  entry-type: AssessmentRequirement
+  reference-id: iso27001-2022
+mappings:
+  - id: sca1-to-iso
+    source: SCA-1
+    relationship: supports
+    targets:
+      - entry-id: A.8.9
+        strength: 8
+        confidence-level: High
+        rationale: >-
+          SBOM generation supports A.8.9 Configuration management by
+          documenting all software components in deployed artifacts.
+      - entry-id: A.8.28
+        strength: 7
+        confidence-level: Medium
+        rationale: >-
+          SBOM supports A.8.28 Secure coding by providing visibility
+          into third-party dependencies.
+  - id: sca2-to-iso
+    source: SCA-2
+    relationship: supports
+    targets:
+      - entry-id: A.8.25
+        strength: 9
+        confidence-level: High
+        rationale: >-
+          Build provenance directly supports A.8.25 Secure development
+          life cycle by providing cryptographic proof of build origin.
+  - id: sca3-to-iso
+    source: SCA-3
+    relationship: supports
+    targets:
+      - entry-id: A.8.28
+        strength: 9
+        confidence-level: High
+        rationale: >-
+          Dependency scanning directly implements A.8.28 Secure coding
+          by identifying known vulnerabilities in dependencies.
+      - entry-id: A.8.8
+        strength: 7
+        confidence-level: Medium
+        rationale: >-
+          Vulnerability scanning supports A.8.8 Management of technical
+          vulnerabilities.
+  - id: sca4-to-iso
+    source: SCA-4
+    relationship: supports
+    targets:
+      - entry-id: A.8.24
+        strength: 8
+        confidence-level: High
+        rationale: >-
+          Artifact signing supports A.8.24 Use of cryptography by
+          applying cryptographic signatures to ensure integrity.
+      - entry-id: A.8.25
+        strength: 7
+        confidence-level: Medium
+        rationale: >-
+          Signed artifacts support A.8.25 Secure development life cycle
+          by ensuring artifact integrity in the release pipeline.
+

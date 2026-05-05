@@ -241,6 +241,12 @@ registry:
   seed:
     enabled: true
     image: ghcr.io/oras-project/oras:v1.2.2
+  # Operator-configured read-only credentials for external registries.
+  # When set, the Secret is mounted into the gateway and read at startup.
+  # Format: JSON object mapping host -> read-only token.
+  # Example: {"ghcr.io": "ghp_readonly...", "quay.io": "quay_token..."}
+  credentials:
+    secretName: ""
 
 # -- NATS lightweight messaging — required by the gateway for the
 # certification pipeline and draft-audit-log notifications.

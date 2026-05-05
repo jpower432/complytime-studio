@@ -1,0 +1,65 @@
+# Sample Policy — Container Management Tool Security
+# Conforms to Gemara #Policy schema.
+
+title: Container Management Tool Security Policy
+
+metadata:
+  id: POL.SEC.SLAM.CM
+  type: Policy
+  gemara-version: "1.0.0-rc.0"
+  description: |
+    Sample security policy for container management tools. Imports the
+    SEC.SLAM.CM control catalog and defines assessment criteria.
+  version: 1.0.0
+  author:
+    id: example
+    name: Example
+    type: Human
+
+imports:
+  catalogs:
+    - id: SEC.SLAM.CM
+      version: "1.0.0"
+
+criteria:
+  - id: POL.SEC.SLAM.CM-01
+    title: Image Provenance Verification
+    description: |
+      Container images MUST be verified for provenance and integrity
+      before deployment to production environments.
+    catalog-ref: SEC.SLAM.CM
+    assessment-requirements:
+      - id: POL.SEC.SLAM.CM-01.AR-01
+        description: |
+          Verify that image signatures are checked against a trusted
+          key or certificate before container start.
+      - id: POL.SEC.SLAM.CM-01.AR-02
+        description: |
+          Verify that an SBOM attestation exists for each deployed image.
+
+  - id: POL.SEC.SLAM.CM-02
+    title: Runtime Privilege Restriction
+    description: |
+      Containers MUST NOT run with elevated privileges unless explicitly
+      approved through an exception process.
+    catalog-ref: SEC.SLAM.CM
+    assessment-requirements:
+      - id: POL.SEC.SLAM.CM-02.AR-01
+        description: |
+          Verify that allowPrivilegeEscalation is set to false for all
+          container security contexts.
+      - id: POL.SEC.SLAM.CM-02.AR-02
+        description: |
+          Verify that containers do not run as root (runAsNonRoot: true).
+
+  - id: POL.SEC.SLAM.CM-03
+    title: Network Segmentation
+    description: |
+      Container workloads MUST enforce network segmentation via
+      NetworkPolicy or equivalent service mesh controls.
+    catalog-ref: SEC.SLAM.CM
+    assessment-requirements:
+      - id: POL.SEC.SLAM.CM-03.AR-01
+        description: |
+          Verify that a default-deny NetworkPolicy exists in every
+          namespace running application workloads.

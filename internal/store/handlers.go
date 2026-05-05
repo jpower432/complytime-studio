@@ -21,7 +21,12 @@ import (
 	"github.com/complytime/complytime-studio/internal/consts"
 	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
 	"github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/complytime/complytime-studio/internal/identity"
 )
+
+func jsonError(c echo.Context, code int, msg string) error {
+	return c.JSON(code, map[string]string{"error": msg})
+}
 
 // EventPublisher emits NATS events for evidence and draft audit logs.
 // Implemented by *events.Bus; nil-safe (callers check before use).
@@ -45,6 +50,7 @@ type Stores struct {
 	DraftAuditLogs      DraftAuditLogStore
 	Requirements        RequirementStore
 	Controls            ControlStore
+	Guidance            GuidanceStore
 	Threats             ThreatStore
 	Risks               RiskStore
 	Catalogs            CatalogStore
@@ -54,6 +60,12 @@ type Stores struct {
 	Certifications      CertificationStore
 	EventPublisher      EventPublisher
 	HealthChecker       HealthChecker
+	Programs            ProgramStore
+	Jobs                JobStore
+	Inventory           InventoryStore
+	Users               identity.UserStore
+	Recommender         Recommender
+	Registry            *RegistryConfig
 }
 
 // Register mounts all public store API endpoints on g (typically e.Group("/api")).
@@ -61,17 +73,17 @@ type Stores struct {
 func Register(g *echo.Group, s Stores) {
 	g.GET("/policies", listPoliciesHandler(s.Policies))
 	g.GET("/policies/:id", getPolicyHandler(s.Policies, s.Mappings))
-	g.POST("/policies/import", importPolicyHandler(s.Policies, s.Controls))
-	g.POST("/mappings/import", importMappingHandler(s.Mappings))
+	registerImportRoute(g, s)
 	g.GET("/evidence", queryEvidenceHandler(s.Evidence))
 	g.POST("/evidence/ingest", echo.WrapHandler(IngestGemaraHandler(s.Evidence, s.EventPublisher)))
+	registerInventoryRoutes(g, s)
 	if s.Certifications != nil {
 		g.GET("/certifications", queryCertificationsHandler(s.Certifications))
 	}
 	g.GET("/audit-logs/:id", getAuditLogHandler(s.AuditLogs))
 	g.GET("/audit-logs", listAuditLogsHandler(s.AuditLogs))
 	g.POST("/audit-logs", createAuditLogHandler(s.AuditLogs))
-	g.POST("/catalogs/import", importCatalogHandler(s.Catalogs, s.Controls, s.Threats, s.Risks))
+	registerCatalogRoutes(g, s)
 	if s.Posture != nil {
 		g.GET("/posture", listPostureHandler(s.Posture))
 	}
@@ -100,6 +112,10 @@ func Register(g *echo.Group, s Stores) {
 		g.PATCH("/notifications/:id/read", markReadHandler(s.Notifications))
 		g.POST("/notifications", createNotificationHandler(s.Notifications))
 	}
+	if s.Programs != nil {
+		registerProgramRoutes(g, s)
+		registerRecommendationRoutes(g, s)
+	}
 }
 
 // RegisterInternal mounts agent-only endpoints. Pass root = e.Group("") so
@@ -125,7 +141,7 @@ func listPoliciesHandler(s PolicyStore) echo.HandlerFunc {
 		policies, err := s.ListPolicies(c.Request().Context())
 		if err != nil {
 			slog.Error("list policies failed", "error", err)
-			return c.String(http.StatusInternalServerError, "internal error")
+			return jsonError(c, http.StatusInternalServerError, "internal error")
 		}
 		if policies == nil {
 			policies = []Policy{}
@@ -138,15 +154,15 @@ func getPolicyHandler(ps PolicyStore, ms MappingStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		id := c.Param("id")
 		if id == "" {
-			return c.String(http.StatusBadRequest, "missing policy id")
+			return jsonError(c, http.StatusBadRequest, "missing policy id")
 		}
 		p, err := ps.GetPolicy(c.Request().Context(), id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return c.String(http.StatusNotFound, "not found")
+				return jsonError(c, http.StatusNotFound, "not found")
 			}
 			slog.Error("get policy failed", "error", err, "id", id)
-			return c.String(http.StatusInternalServerError, "internal server error")
+			return jsonError(c, http.StatusInternalServerError, "internal server error")
 		}
 		mappings, _ := ms.ListMappings(c.Request().Context(), id)
 		if mappings == nil {
@@ -160,110 +176,16 @@ func getPolicyHandler(ps PolicyStore, ms MappingStore) echo.HandlerFunc {
 	}
 }
 
-func importPolicyHandler(ps PolicyStore, ctrlS ControlStore) echo.HandlerFunc {
-	type importReq struct {
-		OCIReference string `json:"oci_reference"`
-		Content      string `json:"content"`
-		Title        string `json:"title"`
-		Version      string `json:"version"`
-		PolicyID     string `json:"policy_id"`
-	}
-	type importResp struct {
-		Status   string `json:"status"`
-		PolicyID string `json:"policy_id"`
-	}
-	return func(c echo.Context) error {
-		var req importReq
-		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		}
-		if req.Content == "" || req.Title == "" {
-			return c.String(http.StatusBadRequest, "content and title required")
-		}
-		p := Policy{
-			PolicyID:     req.PolicyID,
-			Title:        req.Title,
-			Version:      req.Version,
-			OCIReference: req.OCIReference,
-			Content:      req.Content,
-		}
-		if err := ps.InsertPolicy(c.Request().Context(), p); err != nil {
-			slog.Error("insert policy failed", "error", err)
-			return c.String(http.StatusInternalServerError, "insert failed")
-		}
-
-		resp := importResp{Status: "imported", PolicyID: p.PolicyID}
-
-		if ctrlS != nil {
-			if _, err := ExtractPolicyCriteria(c.Request().Context(), p.PolicyID, req.Content, ctrlS); err != nil {
-				slog.Warn("inline criteria extraction failed", "policy_id", p.PolicyID, "error", err)
-			}
-		}
-
-		return c.JSON(http.StatusCreated, resp)
-	}
-}
-
-func importMappingHandler(s MappingStore) echo.HandlerFunc {
-	type importReq struct {
-		MappingID       string `json:"mapping_id"`
-		SourceCatalogID string `json:"source_catalog_id"`
-		TargetCatalogID string `json:"target_catalog_id"`
-		Framework       string `json:"framework"`
-		Content         string `json:"content"`
-	}
-	return func(c echo.Context) error {
-		var req importReq
-		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		}
-		if req.SourceCatalogID == "" || req.TargetCatalogID == "" || req.Content == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "source_catalog_id, target_catalog_id, and content required",
-			})
-		}
-		m := MappingDocument{
-			MappingID:       req.MappingID,
-			SourceCatalogID: req.SourceCatalogID,
-			TargetCatalogID: req.TargetCatalogID,
-			Framework:       req.Framework,
-			Content:         req.Content,
-		}
-		if err := s.InsertMapping(c.Request().Context(), m); err != nil {
-			slog.Error("insert mapping failed", "error", err)
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "insert failed"})
-		}
-
-		entries, parseErr := gemarapkg.ParseMappingEntries(
-			req.Content, m.MappingID, req.SourceCatalogID, req.TargetCatalogID, req.Framework,
-		)
-		if parseErr != nil {
-			slog.Warn("mapping YAML parse failed, structured entries skipped",
-				"mapping_id", m.MappingID, "error", parseErr)
-		} else if len(entries) > 0 {
-			if err := s.InsertMappingEntries(c.Request().Context(), entries); err != nil {
-				slog.Warn("insert mapping entries failed",
-					"mapping_id", m.MappingID, "error", err)
-			} else {
-				slog.Info("mapping entries stored",
-					"mapping_id", m.MappingID, "count", len(entries))
-			}
-		}
-
-		return c.JSON(http.StatusCreated, map[string]string{"status": "imported", "mapping_id": m.MappingID})
-	}
-}
-
 func queryCertificationsHandler(s CertificationStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		evidenceID := c.QueryParam("evidence_id")
 		if evidenceID == "" {
-			return c.String(http.StatusBadRequest, "evidence_id required")
+			return jsonError(c, http.StatusBadRequest, "evidence_id required")
 		}
 		rows, err := s.QueryCertifications(c.Request().Context(), evidenceID)
 		if err != nil {
 			slog.Error("query certifications failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []CertificationRow{}
@@ -296,9 +218,7 @@ func queryEvidenceHandler(s EvidenceStore) echo.HandlerFunc {
 			}
 		}
 		if len(f.PolicyIDs) > maxPolicyIDs {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("too many policy_ids (max %d)", maxPolicyIDs),
-			})
+			return jsonError(c, http.StatusBadRequest, fmt.Sprintf("too many policy_ids (max %d)", maxPolicyIDs))
 		}
 		if v := c.QueryParam("start"); v != "" {
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -329,7 +249,7 @@ func queryEvidenceHandler(s EvidenceStore) echo.HandlerFunc {
 		records, err := s.QueryEvidence(c.Request().Context(), f)
 		if err != nil {
 			slog.Error("query evidence failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if records == nil {
 			records = []EvidenceRecord{}
@@ -342,15 +262,15 @@ func getAuditLogHandler(s AuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		id := c.Param("id")
 		if id == "" {
-			return c.String(http.StatusBadRequest, "missing audit id")
+			return jsonError(c, http.StatusBadRequest, "missing audit id")
 		}
 		a, err := s.GetAuditLog(c.Request().Context(), id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return c.String(http.StatusNotFound, "not found")
+				return jsonError(c, http.StatusNotFound, "not found")
 			}
 			slog.Error("get audit log failed", "error", err, "id", id)
-			return c.String(http.StatusInternalServerError, "internal server error")
+			return jsonError(c, http.StatusInternalServerError, "internal server error")
 		}
 		return c.JSON(http.StatusOK, a)
 	}
@@ -360,7 +280,7 @@ func listAuditLogsHandler(s AuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		policyID := c.QueryParam("policy_id")
 		if policyID == "" {
-			return c.String(http.StatusBadRequest, "policy_id required")
+			return jsonError(c, http.StatusBadRequest, "policy_id required")
 		}
 		var start, end time.Time
 		if v := c.QueryParam("start"); v != "" {
@@ -383,7 +303,7 @@ func listAuditLogsHandler(s AuditLogStore) echo.HandlerFunc {
 		logs, err := s.ListAuditLogs(c.Request().Context(), policyID, start, end, limit)
 		if err != nil {
 			slog.Error("list audit logs failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if logs == nil {
 			logs = []AuditLog{}
@@ -402,16 +322,16 @@ func createAuditLogHandler(s AuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req createReq
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return jsonError(c, http.StatusBadRequest, "invalid json")
 		}
 		if req.PolicyID == "" || req.Content == "" {
-			return c.String(http.StatusBadRequest, "policy_id and content required")
+			return jsonError(c, http.StatusBadRequest, "policy_id and content required")
 		}
 
 		summary, parseErr := gemarapkg.ParseAuditLog(req.Content)
 		if parseErr != nil {
 			slog.Warn("audit log YAML parse failed", "policy_id", req.PolicyID, "error", parseErr)
-			return c.String(http.StatusBadRequest, fmt.Sprintf("invalid audit log content: %v", parseErr))
+			return jsonError(c, http.StatusBadRequest, fmt.Sprintf("invalid audit log content: %v", parseErr))
 		}
 
 		a := AuditLog{
@@ -430,163 +350,17 @@ func createAuditLogHandler(s AuditLogStore) echo.HandlerFunc {
 
 		if err := s.InsertAuditLog(c.Request().Context(), a); err != nil {
 			slog.Error("insert audit log failed", "error", err)
-			return c.String(http.StatusInternalServerError, "insert failed")
+			return jsonError(c, http.StatusInternalServerError, "insert failed")
 		}
 		return c.JSON(http.StatusCreated, map[string]string{"status": "stored", "audit_id": a.AuditID})
 	}
-}
-
-func importCatalogHandler(cs CatalogStore, ctrlS ControlStore, threatS ThreatStore, riskS RiskStore) echo.HandlerFunc {
-	type importReq struct {
-		CatalogID string `json:"catalog_id"`
-		PolicyID  string `json:"policy_id"`
-		Content   string `json:"content"`
-	}
-	return func(c echo.Context) error {
-		var req importReq
-		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		}
-		if req.Content == "" {
-			return c.String(http.StatusBadRequest, "content required")
-		}
-
-		catalogType, title := detectCatalogType(req.Content)
-		if catalogType == "" {
-			return c.String(http.StatusBadRequest,
-				"could not detect catalog type from content (expected ControlCatalog, ThreatCatalog, or RiskCatalog)")
-		}
-
-		catalogID := req.CatalogID
-		if catalogID == "" {
-			catalogID = detectCatalogID(req.Content)
-		}
-
-		if cs != nil {
-			if err := cs.InsertCatalog(c.Request().Context(), Catalog{
-				CatalogID:   catalogID,
-				CatalogType: catalogType,
-				Title:       title,
-				Content:     req.Content,
-				PolicyID:    req.PolicyID,
-			}); err != nil {
-				slog.Error("insert catalog failed", "error", err)
-				return c.String(http.StatusInternalServerError, "insert failed")
-			}
-		}
-
-		parseCatalogStructuredRows(c.Request().Context(), catalogType, req.Content, catalogID, req.PolicyID, ctrlS, threatS, riskS)
-
-		return c.JSON(http.StatusCreated, map[string]string{
-			"status":       "imported",
-			"catalog_id":   catalogID,
-			"catalog_type": catalogType,
-		})
-	}
-}
-
-func parseCatalogStructuredRows(ctx context.Context, catalogType, content, catalogID, policyID string, ctrlS ControlStore, threatS ThreatStore, riskS RiskStore) {
-	switch catalogType {
-	case "ControlCatalog":
-		if ctrlS == nil {
-			return
-		}
-		controls, reqs, threats, err := gemarapkg.ParseControlCatalog(ctx, content, catalogID, policyID)
-		if err != nil {
-			slog.Warn("control catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
-			return
-		}
-		if len(controls) > 0 {
-			if err := ctrlS.InsertControls(ctx, controls); err != nil {
-				slog.Warn("insert controls failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		if len(reqs) > 0 {
-			if err := ctrlS.InsertAssessmentRequirements(ctx, reqs); err != nil {
-				slog.Warn("insert assessment requirements failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		if len(threats) > 0 {
-			if err := ctrlS.InsertControlThreats(ctx, threats); err != nil {
-				slog.Warn("insert control threats failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		slog.Info("control catalog indexed", "catalog_id", catalogID, "controls", len(controls), "requirements", len(reqs), "control_threats", len(threats))
-
-	case "ThreatCatalog":
-		if threatS == nil {
-			return
-		}
-		rows, err := gemarapkg.ParseThreatCatalog(ctx, content, catalogID, policyID)
-		if err != nil {
-			slog.Warn("threat catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
-			return
-		}
-		if len(rows) > 0 {
-			if err := threatS.InsertThreats(ctx, rows); err != nil {
-				slog.Warn("insert threats failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		slog.Info("threat catalog indexed", "catalog_id", catalogID, "threats", len(rows))
-
-	case "RiskCatalog":
-		if riskS == nil {
-			return
-		}
-		riskRows, linkRows, err := gemarapkg.ParseRiskCatalog(ctx, content, catalogID, policyID)
-		if err != nil {
-			slog.Warn("risk catalog parse failed, structured rows skipped", "catalog_id", catalogID, "error", err)
-			return
-		}
-		if len(riskRows) > 0 {
-			if err := riskS.InsertRisks(ctx, riskRows); err != nil {
-				slog.Warn("insert risks failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		if len(linkRows) > 0 {
-			if err := riskS.InsertRiskThreats(ctx, linkRows); err != nil {
-				slog.Warn("insert risk threats failed", "catalog_id", catalogID, "error", err)
-			}
-		}
-		slog.Info("risk catalog indexed", "catalog_id", catalogID, "risks", len(riskRows), "risk_threats", len(linkRows))
-	}
-}
-
-func detectCatalogType(content string) (catalogType, title string) {
-	var meta struct {
-		Title    string `yaml:"title"`
-		Metadata struct {
-			Type string `yaml:"type"`
-		} `yaml:"metadata"`
-	}
-	if err := gemarapkg.UnmarshalYAML([]byte(content), &meta); err != nil {
-		return "", ""
-	}
-	switch meta.Metadata.Type {
-	case "ControlCatalog", "ThreatCatalog", "RiskCatalog", "GuidanceCatalog":
-		return meta.Metadata.Type, meta.Title
-	default:
-		return "", ""
-	}
-}
-
-func detectCatalogID(content string) string {
-	var meta struct {
-		Metadata struct {
-			ID string `yaml:"id"`
-		} `yaml:"metadata"`
-	}
-	if err := gemarapkg.UnmarshalYAML([]byte(content), &meta); err != nil {
-		return ""
-	}
-	return meta.Metadata.ID
 }
 
 func listRequirementMatrixHandler(s RequirementStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		policyID := c.QueryParam("policy_id")
 		if policyID == "" {
-			return c.String(http.StatusBadRequest, "policy_id required")
+			return jsonError(c, http.StatusBadRequest, "policy_id required")
 		}
 
 		f := RequirementFilter{PolicyID: policyID}
@@ -597,7 +371,7 @@ func listRequirementMatrixHandler(s RequirementStore) echo.HandlerFunc {
 				t, err = time.Parse("2006-01-02", v)
 			}
 			if err != nil {
-				return c.String(http.StatusBadRequest, "invalid audit_start format")
+				return jsonError(c, http.StatusBadRequest, "invalid audit_start format")
 			}
 			f.Start = t
 		}
@@ -607,12 +381,12 @@ func listRequirementMatrixHandler(s RequirementStore) echo.HandlerFunc {
 				t, err = time.Parse("2006-01-02", v)
 			}
 			if err != nil {
-				return c.String(http.StatusBadRequest, "invalid audit_end format")
+				return jsonError(c, http.StatusBadRequest, "invalid audit_end format")
 			}
 			f.End = t
 		}
 		if !f.Start.IsZero() && !f.End.IsZero() && f.End.Before(f.Start) {
-			return c.String(http.StatusBadRequest, "audit_end must be >= audit_start")
+			return jsonError(c, http.StatusBadRequest, "audit_end must be >= audit_start")
 		}
 
 		f.Classification = c.QueryParam("classification")
@@ -633,7 +407,7 @@ func listRequirementMatrixHandler(s RequirementStore) echo.HandlerFunc {
 		rows, err := s.ListRequirementMatrix(c.Request().Context(), f)
 		if err != nil {
 			slog.Error("list requirement matrix failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []RequirementRow{}
@@ -646,11 +420,11 @@ func listRequirementEvidenceHandler(s RequirementStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		reqID := c.Param("id")
 		if reqID == "" {
-			return c.String(http.StatusBadRequest, "missing requirement id")
+			return jsonError(c, http.StatusBadRequest, "missing requirement id")
 		}
 		policyID := c.QueryParam("policy_id")
 		if policyID == "" {
-			return c.String(http.StatusBadRequest, "policy_id required")
+			return jsonError(c, http.StatusBadRequest, "policy_id required")
 		}
 
 		f := RequirementFilter{PolicyID: policyID}
@@ -687,10 +461,10 @@ func listRequirementEvidenceHandler(s RequirementStore) echo.HandlerFunc {
 		rows, err := s.ListRequirementEvidence(c.Request().Context(), reqID, f)
 		if err != nil {
 			if errors.Is(err, ErrRequirementNotFound) {
-				return c.String(http.StatusNotFound, "not found")
+				return jsonError(c, http.StatusNotFound, "not found")
 			}
 			slog.Error("list requirement evidence failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []RequirementEvidenceRow{}
@@ -712,16 +486,16 @@ func createDraftAuditLogHandler(s DraftAuditLogStore, pub EventPublisher) echo.H
 	return func(c echo.Context) error {
 		var req createReq
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return jsonError(c, http.StatusBadRequest, "invalid json")
 		}
 		if req.PolicyID == "" || req.Content == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "policy_id and content required"})
+			return jsonError(c, http.StatusBadRequest, "policy_id and content required")
 		}
 
 		summary, parseErr := gemarapkg.ParseAuditLog(req.Content)
 		if parseErr != nil {
 			slog.Warn("draft audit log YAML parse failed", "policy_id", req.PolicyID, "error", parseErr)
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid audit log content: %v", parseErr)})
+			return jsonError(c, http.StatusBadRequest, fmt.Sprintf("invalid audit log content: %v", parseErr))
 		}
 
 		d := DraftAuditLog{
@@ -742,7 +516,7 @@ func createDraftAuditLogHandler(s DraftAuditLogStore, pub EventPublisher) echo.H
 
 		if err := s.InsertDraftAuditLog(c.Request().Context(), d); err != nil {
 			slog.Error("insert draft audit log failed", "error", err)
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "insert failed"})
+			return jsonError(c, http.StatusInternalServerError, "insert failed")
 		}
 		if pub != nil {
 			pub.PublishDraftAuditLog(d.DraftID, d.PolicyID, d.Summary)
@@ -763,7 +537,7 @@ func listDraftAuditLogsHandler(s DraftAuditLogStore) echo.HandlerFunc {
 		drafts, err := s.ListDraftAuditLogs(c.Request().Context(), status, limit)
 		if err != nil {
 			slog.Error("list draft audit logs failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if drafts == nil {
 			drafts = []DraftAuditLog{}
@@ -776,15 +550,15 @@ func getDraftAuditLogHandler(s DraftAuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		draftID := c.Param("id")
 		if draftID == "" {
-			return c.String(http.StatusBadRequest, "missing draft id")
+			return jsonError(c, http.StatusBadRequest, "missing draft id")
 		}
 		draft, err := s.GetDraftAuditLog(c.Request().Context(), draftID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return c.String(http.StatusNotFound, "draft not found")
+				return jsonError(c, http.StatusNotFound, "draft not found")
 			}
 			slog.Error("get draft audit log failed", "error", err, "id", draftID)
-			return c.String(http.StatusInternalServerError, "internal server error")
+			return jsonError(c, http.StatusInternalServerError, "internal server error")
 		}
 		return c.JSON(http.StatusOK, draft)
 	}
@@ -803,12 +577,12 @@ func updateDraftEditsHandler(s DraftAuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		draftID := c.Param("id")
 		if draftID == "" {
-			return c.String(http.StatusBadRequest, "missing draft id")
+			return jsonError(c, http.StatusBadRequest, "missing draft id")
 		}
 
 		var req patchReq
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return jsonError(c, http.StatusBadRequest, "invalid json")
 		}
 
 		for k, v := range req.ReviewerEdits {
@@ -820,18 +594,18 @@ func updateDraftEditsHandler(s DraftAuditLogStore) echo.HandlerFunc {
 
 		editsJSON, err := json.Marshal(req.ReviewerEdits)
 		if err != nil {
-			return c.String(http.StatusInternalServerError, "failed to serialize edits")
+			return jsonError(c, http.StatusInternalServerError, "failed to serialize edits")
 		}
 
 		if err := s.UpdateDraftEdits(c.Request().Context(), draftID, string(editsJSON)); err != nil {
 			if errors.Is(err, ErrDraftAlreadyPromoted) {
-				return c.JSON(http.StatusConflict, map[string]string{"error": "draft already promoted"})
+				return jsonError(c, http.StatusConflict, "draft already promoted")
 			}
 			if errors.Is(err, ErrDraftNotFound) {
-				return c.String(http.StatusNotFound, "draft not found")
+				return jsonError(c, http.StatusNotFound, "draft not found")
 			}
 			slog.Error("update draft edits failed", "error", err)
-			return c.String(http.StatusInternalServerError, "update failed")
+			return jsonError(c, http.StatusInternalServerError, "update failed")
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "saved"})
 	}
@@ -847,20 +621,20 @@ func promoteAuditLogHandler(s DraftAuditLogStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req promoteReq
 		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return jsonError(c, http.StatusBadRequest, "invalid json")
 		}
 		if req.DraftID == "" {
-			return c.String(http.StatusBadRequest, "draft_id required")
+			return jsonError(c, http.StatusBadRequest, "draft_id required")
 		}
 
 		reviewedBy := authSessionEmail(c.Request().Context())
 
 		if err := s.PromoteDraftAuditLog(c.Request().Context(), req.DraftID, reviewedBy); err != nil {
 			if errors.Is(err, ErrDraftAlreadyPromoted) {
-				return c.JSON(http.StatusConflict, map[string]string{"error": "draft already promoted"})
+				return jsonError(c, http.StatusConflict, "draft already promoted")
 			}
 			slog.Error("promote draft failed", "error", err)
-			return c.String(http.StatusInternalServerError, "promote failed")
+			return jsonError(c, http.StatusInternalServerError, "promote failed")
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "promoted", "draft_id": req.DraftID})
 	}
@@ -877,12 +651,12 @@ func listPostureHandler(s PostureStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		start, end, err := parseOptionalTimeRange(c)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return jsonError(c, http.StatusBadRequest, err.Error())
 		}
 		rows, err := s.ListPosture(c.Request().Context(), start, end)
 		if err != nil {
 			slog.Error("list posture failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []PostureRow{}
@@ -951,7 +725,7 @@ func listThreatsHandler(s ThreatStore) echo.HandlerFunc {
 		rows, err := s.QueryThreats(c.Request().Context(), catalogID, policyID, limit)
 		if err != nil {
 			slog.Error("query threats failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []gemarapkg.ThreatRow{}
@@ -968,7 +742,7 @@ func listControlThreatsHandler(s ThreatStore) echo.HandlerFunc {
 		rows, err := s.QueryControlThreats(c.Request().Context(), catalogID, controlID, limit)
 		if err != nil {
 			slog.Error("query control threats failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []gemarapkg.ControlThreatRow{}
@@ -985,7 +759,7 @@ func listRisksHandler(s RiskStore) echo.HandlerFunc {
 		rows, err := s.QueryRisks(c.Request().Context(), catalogID, policyID, limit)
 		if err != nil {
 			slog.Error("query risks failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []gemarapkg.RiskRow{}
@@ -1002,7 +776,7 @@ func listRiskThreatsHandler(s RiskStore) echo.HandlerFunc {
 		rows, err := s.QueryRiskThreats(c.Request().Context(), catalogID, riskID, limit)
 		if err != nil {
 			slog.Error("query risk threats failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []gemarapkg.RiskThreatRow{}
@@ -1015,12 +789,12 @@ func riskSeverityHandler(s RiskStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		policyID := c.QueryParam("policy_id")
 		if policyID == "" {
-			return c.String(http.StatusBadRequest, "policy_id required")
+			return jsonError(c, http.StatusBadRequest, "policy_id required")
 		}
 		rows, err := s.GetPolicyRiskSeverity(c.Request().Context(), policyID)
 		if err != nil {
 			slog.Error("risk severity query failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if rows == nil {
 			rows = []RiskSeverityRow{}
@@ -1040,7 +814,7 @@ func listNotificationsHandler(s NotificationStore) echo.HandlerFunc {
 		notifs, err := s.ListNotifications(c.Request().Context(), limit)
 		if err != nil {
 			slog.Error("list notifications failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		if notifs == nil {
 			notifs = []Notification{}
@@ -1054,7 +828,7 @@ func unreadCountHandler(s NotificationStore) echo.HandlerFunc {
 		count, err := s.UnreadCount(c.Request().Context())
 		if err != nil {
 			slog.Error("unread count failed", "error", err)
-			return c.String(http.StatusInternalServerError, "query failed")
+			return jsonError(c, http.StatusInternalServerError, "query failed")
 		}
 		return c.JSON(http.StatusOK, map[string]int{"count": count})
 	}
@@ -1064,14 +838,14 @@ func markReadHandler(s NotificationStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		id := c.Param("id")
 		if id == "" {
-			return c.String(http.StatusBadRequest, "missing notification id")
+			return jsonError(c, http.StatusBadRequest, "missing notification id")
 		}
 		if err := s.MarkRead(c.Request().Context(), id); err != nil {
 			if errors.Is(err, ErrNotFound) {
-				return c.JSON(http.StatusNotFound, map[string]string{"error": "notification not found"})
+				return jsonError(c, http.StatusNotFound, "notification not found")
 			}
 			slog.Error("mark read failed", "error", err, "id", id)
-			return c.String(http.StatusInternalServerError, "update failed")
+			return jsonError(c, http.StatusInternalServerError, "update failed")
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "read"})
 	}
@@ -1081,18 +855,15 @@ func createNotificationHandler(s NotificationStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var n Notification
 		if err := c.Bind(&n); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return jsonError(c, http.StatusBadRequest, "invalid json")
 		}
 		if n.NotificationID == "" || n.Type == "" || n.PolicyID == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "notification_id, type, and policy_id are required",
-			})
+			return jsonError(c, http.StatusBadRequest, "notification_id, type, and policy_id are required")
 		}
 		if err := s.InsertNotification(c.Request().Context(), n); err != nil {
 			slog.Error("create notification failed", "error", err)
-			return c.String(http.StatusInternalServerError, "insert failed")
+			return jsonError(c, http.StatusInternalServerError, "insert failed")
 		}
 		return c.JSON(http.StatusCreated, map[string]string{"status": "created"})
 	}
 }
-

@@ -103,10 +103,18 @@ func (h *Handler) Register(e *echo.Echo) {
 
 func handleLoggedOut(c echo.Context) error {
 	return c.HTML(http.StatusOK, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Signed Out</title>
-<style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0}
-.card{text-align:center}a{color:#6c9fff;text-decoration:none;font-weight:600}</style></head>
-<body><div class="card"><h2>You have been signed out.</h2><p><a href="/">Sign in again</a></p></div></body></html>`)
+<html><head><meta charset="utf-8"><title>Signed Out — ComplyTime Studio</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#f8f9fa;color:#1e293b}
+@media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b;border-color:#334155}a{color:#4db8d1}}
+.card{text-align:center;padding:48px 40px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 4px 24px rgba(0,0,0,0.06);max-width:380px}
+.card h2{font-size:1.25rem;font-weight:600;margin-bottom:8px}
+.card p{font-size:0.9rem;color:#64748b;margin-bottom:24px}
+a{color:#3b8ea5;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px;border:1px solid currentColor;display:inline-block;transition:background 0.15s,color 0.15s}
+a:hover{background:#3b8ea5;color:#fff}
+</style></head>
+<body><div class="card"><h2>Signed out</h2><p>Your session has ended.</p><a href="/">Sign in</a></div></body></html>`)
 }
 
 // RegisterChatHistory mounts GET/PUT /api/chat/history for server-side chat persistence.
@@ -172,41 +180,69 @@ func (h *Handler) Middleware() echo.MiddlewareFunc {
 }
 
 // serviceAccountAllowedPaths are the only write paths that STUDIO_API_TOKEN
-// can access. All other mutating /api/* routes require a real admin user.
-// This limits the blast radius of a leaked token to seed/ingest operations.
+// can access. All other mutating /api/* routes require a human session with
+// sufficient role. This limits the blast radius of a leaked token to
+// seed/ingest operations.
 var serviceAccountAllowedPaths = []string{
 	"/api/evidence/ingest",
-	"/api/policies/import",
-	"/api/catalogs",
+	"/api/import",
 }
 
-// RequireAdmin returns middleware that rejects non-admin requests with 403.
-// Fails closed: if the store lookup errors, the request is rejected.
-// Service accounts (API token) are restricted to serviceAccountAllowedPaths.
-func RequireAdmin(users UserStore) echo.MiddlewareFunc {
+var serviceAccountAllowedMethodPaths = []struct {
+	method string
+	prefix string
+}{
+	{"POST", "/api/programs"},
+	{"PUT", "/api/programs/"},
+}
+
+func writerAdminOnlyPath(path string) bool {
+	return strings.HasPrefix(path, "/api/users") ||
+		strings.HasPrefix(path, "/api/role-changes")
+}
+
+// RequireWrite returns middleware that rejects mutating requests without
+// sufficient role. Service accounts are restricted to serviceAccountAllowedPaths.
+func RequireWrite(users UserStore) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sess, ok := SessionFrom(c.Request().Context())
 			if !ok {
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
 			}
-			if sess.ServiceAccount {
-				path := c.Request().URL.Path
-				for _, allowed := range serviceAccountAllowedPaths {
-					if strings.HasPrefix(path, allowed) {
-						return next(c)
-					}
+		if sess.ServiceAccount {
+			path := c.Request().URL.Path
+			method := c.Request().Method
+			for _, allowed := range serviceAccountAllowedPaths {
+				if strings.HasPrefix(path, allowed) {
+					return next(c)
 				}
-				return c.JSON(http.StatusForbidden, map[string]string{"error": "api token not authorized for this endpoint"})
+			}
+			for _, mp := range serviceAccountAllowedMethodPaths {
+				if method == mp.method && strings.HasPrefix(path, mp.prefix) {
+					return next(c)
+				}
+			}
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "api token not authorized for this endpoint"})
 			}
 			if users == nil {
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
 			}
 			u, err := users.GetUser(c.Request().Context(), sess.Email)
-			if err != nil || u.Role != consts.RoleAdmin {
+			if err != nil {
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
 			}
-			return next(c)
+			switch u.Role {
+			case consts.RoleAdmin:
+				return next(c)
+			case consts.RoleWriter:
+				if writerAdminOnlyPath(c.Request().URL.Path) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+				}
+				return next(c)
+			default:
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+			}
 		}
 	}
 }
@@ -311,6 +347,34 @@ func splitGroups(raw string) []string {
 		}
 	}
 	return out
+}
+
+// RejectUnlessWriterOrAdmin sends 403 and returns true if the caller must not
+// access writer-scoped read APIs (e.g. policy recommendations).
+func RejectUnlessWriterOrAdmin(c echo.Context, users UserStore) bool {
+	sess, ok := SessionFrom(c.Request().Context())
+	if !ok {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	if sess.ServiceAccount {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	if users == nil {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	u, err := users.GetUser(c.Request().Context(), sess.Email)
+	if err != nil {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	if u.Role != consts.RoleAdmin && u.Role != consts.RoleWriter {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	return false
 }
 
 func (h *Handler) handleGetChatHistory(cs ChatStore) echo.HandlerFunc {

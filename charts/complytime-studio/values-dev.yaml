@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dev overrides for kind clusters. Layered automatically by the Makefile.
+# Usage: helm upgrade --install ... -f values.yaml -f values-dev.yaml
+
+auth:
+  oauth2Proxy:
+    callbackUrl: "http://localhost:8080/oauth2/callback"
+    cookieSecure: false
+  apiToken: "studio-dev-token"
+
+blobStorage:
+  useSSL: false
+
+postgres:
+  auth:
+    password: complytime-dev
+    sslmode: disable
+
+clickhouse:
+  auth:
+    password: complytime-dev
+    readerPassword: complytime-reader-dev
+
+registry:
+  enabled: true
+  service:
+    type: NodePort

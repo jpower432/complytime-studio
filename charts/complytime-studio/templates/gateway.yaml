@@ -158,6 +158,16 @@ spec:
               value: "nats://studio-nats:4222"
             - name: NETWORKPOLICY_ENFORCED
               value: "true"
+            {{- if .Values.registry.credentials.secretName }}
+            - name: REGISTRY_CREDENTIALS_FILE
+              value: "/etc/registry-credentials/credentials.json"
+            {{- end }}
+          {{- if .Values.registry.credentials.secretName }}
+          volumeMounts:
+            - name: registry-credentials
+              mountPath: /etc/registry-credentials
+              readOnly: true
+          {{- end }}
           resources:
             requests:
               memory: "64Mi"
@@ -226,14 +236,21 @@ spec:
               memory: "128Mi"
               cpu: "100m"
         {{- end }}
-      {{- if .Values.auth.oauth2Proxy.enabled }}
+      {{- if or .Values.auth.oauth2Proxy.enabled .Values.registry.credentials.secretName }}
       volumes:
+        {{- if .Values.auth.oauth2Proxy.enabled }}
         - name: oauth2-proxy-secret
           secret:
             secretName: {{ .Values.auth.oauth2Proxy.secretName }}
             items:
               - key: {{ .Values.auth.oauth2Proxy.secretKey }}
                 path: client-secret
+        {{- end }}
+        {{- if .Values.registry.credentials.secretName }}
+        - name: registry-credentials
+          secret:
+            secretName: {{ .Values.registry.credentials.secretName }}
+        {{- end }}
       {{- end }}
 ---
 apiVersion: v1
