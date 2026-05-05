@@ -1,0 +1,78 @@
+# DEMO CONTENT — synthetic data for local development and demos only.
+# Not derived from real assessments. Do not use in production.
+title: ISO/IEC 27001:2022 Annex stub (demo)
+metadata:
+  id: iso27001-2022
+  type: GuidanceCatalog
+  gemara-version: "1.0.0"
+  description: >-
+    Minimal Annex A references for demo mapping from supply-chain attestation.
+  version: "2022"
+  author:
+    id: demo
+    name: Demo
+    type: Software Assisted
+type: Standard
+front-matter: >-
+  Stub guidance catalog matching demo mapping targets (Annex A controls).
+groups:
+  - id: A8
+    title: Technological controls
+    description: Demo group for Annex A.8 references used in mapping-iso27001.json.
+
+guidelines:
+  - id: A.8.8
+    title: Management of technical vulnerabilities
+    objective: Demo objective for vulnerability management.
+    group: A8
+    state: Active
+    recommendations:
+      - Track and remediate technical vulnerabilities per policy.
+      - Integrate scanning into release gates for demo purposes.
+    applicability:
+      - demo
+      - technological
+  - id: A.8.9
+    title: Configuration management
+    objective: Demo objective for configuration management.
+    group: A8
+    state: Active
+    recommendations:
+      - Baseline configurations for critical systems.
+      - Detect and correct configuration drift.
+    applicability:
+      - demo
+      - technological
+  - id: A.8.24
+    title: Use of cryptography
+    objective: Demo objective for cryptography use.
+    group: A8
+    state: Active
+    recommendations:
+      - Use approved algorithms and key management.
+      - Protect data in transit and at rest.
+    applicability:
+      - demo
+      - technological
+  - id: A.8.25
+    title: Secure development life cycle
+    objective: Demo objective for secure SDLC.
+    group: A8
+    state: Active
+    recommendations:
+      - Define security checkpoints in SDLC.
+      - Automate security testing in CI.
+    applicability:
+      - demo
+      - technological
+  - id: A.8.28
+    title: Secure coding
+    objective: Demo objective for secure coding practices.
+    group: A8
+    state: Active
+    recommendations:
+      - Train developers on secure coding standards.
+      - Use static analysis before merge.
+    applicability:
+      - demo
+      - technological
