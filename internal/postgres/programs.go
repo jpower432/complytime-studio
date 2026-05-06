@@ -136,8 +136,8 @@ func (s *ProgramPG) CreateProgram(ctx context.Context, p Program) (*Program, err
 	if (p.GuidanceCatalogID == nil || *p.GuidanceCatalogID == "") && p.Framework != "" {
 		var resolved string
 		_ = s.pool.QueryRow(ctx, `
-			SELECT catalog_id FROM catalogs
-			WHERE title ILIKE '%' || $1 || '%' OR catalog_id ILIKE '%' || $1 || '%'
+			SELECT target_catalog_id FROM mapping_documents
+			WHERE framework = $1
 			LIMIT 1`, p.Framework).Scan(&resolved)
 		if resolved != "" {
 			p.GuidanceCatalogID = &resolved

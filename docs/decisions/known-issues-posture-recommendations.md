@@ -1,44 +1,39 @@
 # Known Issues: Posture Donut and Recommendation Engine
 
-**Status:** Known — tracking
+**Status:** Resolved
 **Date:** 2026-05-05
 
-## Issue 1: Posture Donut Always Shows 90%
+## Issue 1: Posture Donut Always Shows 0%
 
-**Symptom:** The program detail coverage donut displays 90% pass regardless of actual posture data.
+**Symptom:** Program posture donut displayed 0% (or 90% threshold) regardless of actual evidence.
 
-**Root cause:** `programs.green_pct` defaults to `90` in both the schema and the Go insert fallback:
+**Root cause:** `score_pct` was only updated reactively via NATS `EvidenceEvent`. If evidence existed before the subscriber started, or policies were attached after evidence ingestion, posture never recomputed.
 
-```sql
--- 005_programs.sql
-green_pct INT NOT NULL DEFAULT 90,
-red_pct   INT NOT NULL DEFAULT 50,
-```
+**Resolution:**
+- Added `PopulatePosture` startup backfill (async on gateway boot) — iterates programs with policies, computes real score from evidence
+- Added posture recompute trigger on `PUT /programs/:id` when policy_ids change
+- Migration `012_program_score_pct.sql` added `score_pct` column
+- Frontend reads `score_pct` for the donut instead of `green_pct` threshold
 
-```go
-// internal/postgres/programs.go
-if greenPct == 0 {
-    greenPct = 90
-}
-```
-
-The posture engine (`internal/posture/subscriber.go`) should recompute and store real percentages via `ComputeAndStore`, but this only fires when posture check events are processed. Until the engine runs against live evidence data, programs display the hardcoded defaults.
-
-**Fix path:** Either:
-- Default to `0` and show an "awaiting data" state in the donut when `green_pct == 0`
-- Trigger an initial posture computation on program creation or evidence ingestion
+**Files:** `internal/posture/posture.go`, `internal/store/handlers_programs.go`, `cmd/gateway/main.go`
 
 ## Issue 2: Recommendation Engine Not Working
 
-**Symptom:** The Recommendations tab in Program Detail shows no recommendations or fails to load.
+**Symptom:** Recommendations tab returned empty for all programs.
 
-**Endpoint:** `GET /api/programs/{id}/recommendations`
+**Root cause (actual):** The recommendation query joined `catalogs.policy_id` to find policies connected via mappings. But `catalogs.policy_id` is never populated during import — catalogs are stored standalone without policy linkage. The `controls` table (populated during policy import) correctly stores both `catalog_id` and `policy_id`.
 
-**Root cause:** Recommendations depend on:
-1. Mapping documents loaded and entries populated (`PopulateMappingEntries`)
-2. Mapping strength scores computed between program policies and available catalogs
-3. Evidence counts per policy
+Secondary issue: `guidance_catalog_id` auto-resolution used fuzzy `ILIKE` matching against catalog titles, which failed for "ISO 27001" (catalog_id is `iso27001-2022`).
 
-If any of these prerequisites are missing (common in fresh deployments or when `make seed` hasn't fully completed), the recommendation engine returns empty results or errors.
+**Resolution:**
+- Changed recommendation query to join `controls` table (has `policy_id` set) instead of `catalogs` (always empty)
+- Changed guidance resolution to exact-match `mapping_documents.framework`
+- Added `predicted_score_pct` and `score_delta` optional fields on recommendation responses
 
-**Fix path:** Ensure the recommendation handler gracefully degrades and surfaces which prerequisites are missing, rather than returning empty results silently.
+**Files:** `internal/recommend/recommend.go`, `internal/postgres/programs.go`
+
+## Residual Notes
+
+- `enrichWithPredictedPosture` runs up to 10 sequential queries (one per candidate). Acceptable at current scale; batch if N grows.
+- `PopulatePosture` runs async on boot. Partial failures are logged per-program at warn level.
+- Recommendations query live (no cache). New imports appear on next tab view.

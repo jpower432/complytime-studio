@@ -59,6 +59,8 @@ interface Recommendation {
   mapping_strength: number;
   evidence_count: number;
   score: number;
+  predicted_score_pct?: number;
+  score_delta?: number;
 }
 
 function CoverageDonut({ green, red, size = 120 }: { green: number; red: number; size?: number }) {
@@ -659,6 +661,14 @@ export function ProgramDetailView() {
                     <span>Mapping strength</span>
                     <span>{mapPct}%</span>
                   </div>
+                  {rec.predicted_score_pct != null && rec.score_delta != null && (
+                    <div class="recommendation-score predicted-posture">
+                      <span>Predicted posture</span>
+                      <span class={rec.score_delta > 0 ? "delta-positive" : rec.score_delta < 0 ? "delta-negative" : ""}>
+                        {rec.predicted_score_pct}% ({rec.score_delta > 0 ? "+" : ""}{rec.score_delta}%)
+                      </span>
+                    </div>
+                  )}
                   {canWrite && (
                     <div class="recommendation-actions">
                       <button

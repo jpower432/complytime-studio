@@ -3,9 +3,11 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -20,7 +22,7 @@ func registerRecommendationRoutes(g *echo.Group, s Stores) {
 	g.GET("/programs/:id/recommendations", listRecommendationsHandler(s.Recommender, s.Users))
 	g.POST("/programs/:id/recommendations/:policyId/dismiss", dismissRecommendationHandler(s.Recommender, s.Programs))
 	g.DELETE("/programs/:id/recommendations/:policyId/dismiss", undismissRecommendationHandler(s.Recommender, s.Programs))
-	g.POST("/programs/:id/recommendations/:policyId/attach", attachRecommendedPolicyHandler(s.Programs))
+	g.POST("/programs/:id/recommendations/:policyId/attach", attachRecommendedPolicyHandler(s.Programs, s.PostureComputer))
 }
 
 func listRecommendationsHandler(e Recommender, users identity.UserStore) echo.HandlerFunc {
@@ -92,7 +94,7 @@ func undismissRecommendationHandler(e Recommender, programs ProgramStore) echo.H
 	}
 }
 
-func attachRecommendedPolicyHandler(programs ProgramStore) echo.HandlerFunc {
+func attachRecommendedPolicyHandler(programs ProgramStore, pc PostureComputer) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		programID := c.Param("id")
 		policyID := c.Param("policyId")
@@ -119,6 +121,22 @@ func attachRecommendedPolicyHandler(programs ProgramStore) echo.HandlerFunc {
 			}
 			slog.Error("attach policy: update program", "error", err)
 			return jsonError(c, http.StatusInternalServerError, "update failed")
+		}
+		if pc != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				greenPct, redPct := p.GreenPct, p.RedPct
+				if greenPct == 0 {
+					greenPct = 90
+				}
+				if redPct == 0 {
+					redPct = 50
+				}
+				if err := pc.RecomputePosture(ctx, programID, p.PolicyIDs, greenPct, redPct); err != nil {
+					slog.Warn("posture recompute after attach failed", "program_id", programID, "error", err)
+				}
+			}()
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "attached"})
 	}

@@ -143,6 +143,7 @@ func main() {
 
 	var notifStore store.NotificationStore = st
 	programStores := pgstore.NewProgramPG(pgClient.Pool())
+	postureEngine := posture.New(pgClient.Pool())
 
 	stores := store.Stores{
 		Policies:            st,
@@ -168,6 +169,7 @@ func main() {
 		Inventory:           st,
 		Users:               pgClient,
 		Recommender:         recommend.New(pgClient.Pool()),
+		PostureComputer:     postureEngine,
 		Registry:            registryConfig,
 	}
 	slog.Info("store API registered", "routes", []string{
@@ -195,7 +197,11 @@ func main() {
 	defer func() { _ = sub.Unsubscribe() }()
 	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
 
-	postureEngine := posture.New(pgClient.Pool())
+	go func() {
+		if err := postureEngine.PopulatePosture(ctx); err != nil {
+			slog.Error("posture startup backfill failed", "error", err)
+		}
+	}()
 	postureNotifier := func(ctx context.Context, msg, severity string) error {
 		return adapter.InsertNotification(ctx, "posture_change", severity, msg)
 	}

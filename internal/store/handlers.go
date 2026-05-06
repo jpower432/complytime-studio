@@ -40,6 +40,11 @@ type HealthChecker interface {
 	Ping(ctx context.Context) error
 }
 
+// PostureComputer recomputes and persists posture for a program.
+type PostureComputer interface {
+	RecomputePosture(ctx context.Context, programID string, policyIDs []string, greenPct, redPct int) error
+}
+
 // Stores groups all domain store interfaces for handler registration.
 type Stores struct {
 	Policies            PolicyStore
@@ -65,6 +70,7 @@ type Stores struct {
 	Inventory           InventoryStore
 	Users               identity.UserStore
 	Recommender         Recommender
+	PostureComputer     PostureComputer
 	Registry            *RegistryConfig
 }
 

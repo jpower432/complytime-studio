@@ -3,9 +3,11 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -18,7 +20,7 @@ func registerProgramRoutes(g *echo.Group, s Stores) {
 		g.POST("/programs/:id/jobs", createJobHandler(s.Jobs))
 	}
 	g.GET("/programs/:id", getProgramHandler(s.Programs))
-	g.PUT("/programs/:id", updateProgramHandler(s.Programs))
+	g.PUT("/programs/:id", updateProgramHandler(s.Programs, s.PostureComputer))
 	g.DELETE("/programs/:id", deleteProgramHandler(s.Programs))
 }
 
@@ -72,7 +74,7 @@ func createProgramHandler(s ProgramStore) echo.HandlerFunc {
 	}
 }
 
-func updateProgramHandler(s ProgramStore) echo.HandlerFunc {
+func updateProgramHandler(s ProgramStore, pc PostureComputer) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		id := c.Param("id")
 		if id == "" {
@@ -89,6 +91,22 @@ func updateProgramHandler(s ProgramStore) echo.HandlerFunc {
 			}
 			slog.Error("update program failed", "error", err, "id", id)
 			return jsonError(c, http.StatusInternalServerError, "update failed")
+		}
+		if pc != nil && len(p.PolicyIDs) > 0 {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				greenPct, redPct := p.GreenPct, p.RedPct
+				if greenPct == 0 {
+					greenPct = 90
+				}
+				if redPct == 0 {
+					redPct = 50
+				}
+				if err := pc.RecomputePosture(ctx, id, p.PolicyIDs, greenPct, redPct); err != nil {
+					slog.Warn("posture recompute after update failed", "program_id", id, "error", err)
+				}
+			}()
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 	}

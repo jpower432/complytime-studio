@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -27,12 +29,14 @@ const (
 
 // Recommendation is a scored policy suggestion for a program.
 type Recommendation struct {
-	PolicyID        string  `json:"policy_id"`
-	PolicyTitle     string  `json:"policy_title"`
-	Reason          string  `json:"reason"`
-	MappingStrength float64 `json:"mapping_strength"`
-	EvidenceCount   int     `json:"evidence_count"`
-	Score           float64 `json:"score"`
+	PolicyID          string  `json:"policy_id"`
+	PolicyTitle       string  `json:"policy_title"`
+	Reason            string  `json:"reason"`
+	MappingStrength   float64 `json:"mapping_strength"`
+	EvidenceCount     int     `json:"evidence_count"`
+	Score             float64 `json:"score"`
+	PredictedScorePct *int    `json:"predicted_score_pct,omitempty"`
+	ScoreDelta        *int    `json:"score_delta,omitempty"`
 }
 
 // Engine scores candidate policies from catalog crosswalks and evidence.
@@ -45,16 +49,17 @@ func New(pool *pgxpool.Pool) *Engine {
 	return &Engine{pool: pool}
 }
 
-// ForProgram returns up to top N recommendations, newest-first by score.
+// ForProgram returns up to topRecommendN policy suggestions, sorted by composite score descending.
 func (e *Engine) ForProgram(ctx context.Context, programID string) ([]Recommendation, error) {
 	var guidance *string
 	var policyIDs []string
 	var applicability []string
+	var currentScorePct int
 	err := e.pool.QueryRow(ctx, `
-		SELECT guidance_catalog_id, policy_ids, applicability
+		SELECT guidance_catalog_id, policy_ids, applicability, score_pct
 		FROM programs
 		WHERE id = $1::uuid AND deleted_at IS NULL`, programID,
-	).Scan(&guidance, &policyIDs, &applicability)
+	).Scan(&guidance, &policyIDs, &applicability, &currentScorePct)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("for program %s: %w", programID, postgres.ErrProgramNotFound)
@@ -70,20 +75,20 @@ func (e *Engine) ForProgram(ctx context.Context, programID string) ([]Recommenda
 	gid := *guidance
 
 	rows, err := e.pool.Query(ctx, `
-		SELECT c.policy_id, MAX(me.strength)::double precision
+		SELECT ctrl.policy_id, MAX(me.strength)::double precision
 		FROM mapping_entries me
-		INNER JOIN catalogs c ON (
-			(me.source_catalog_id = $1 AND c.catalog_id = me.target_catalog_id)
-			OR (me.target_catalog_id = $1 AND c.catalog_id = me.source_catalog_id)
+		INNER JOIN controls ctrl ON (
+			(me.source_catalog_id = $1 AND ctrl.catalog_id = me.target_catalog_id)
+			OR (me.target_catalog_id = $1 AND ctrl.catalog_id = me.source_catalog_id)
 		)
-		INNER JOIN policies p ON p.policy_id = c.policy_id
-		WHERE c.policy_id <> ''
-		  AND NOT (c.policy_id = ANY($2::text[]))
+		INNER JOIN policies p ON p.policy_id = ctrl.policy_id
+		WHERE ctrl.policy_id <> ''
+		  AND NOT (ctrl.policy_id = ANY($2::text[]))
 		  AND NOT EXISTS (
 			SELECT 1 FROM recommendation_dismissals d
-			WHERE d.program_id = $3::uuid AND d.policy_id = c.policy_id
+			WHERE d.program_id = $3::uuid AND d.policy_id = ctrl.policy_id
 		  )
-		GROUP BY c.policy_id`, gid, policyIDs, programID)
+		GROUP BY ctrl.policy_id`, gid, policyIDs, programID)
 	if err != nil {
 		return nil, fmt.Errorf("for program candidates: %w", err)
 	}
@@ -152,7 +157,44 @@ func (e *Engine) ForProgram(ctx context.Context, programID string) ([]Recommenda
 	if len(out) > topRecommendN {
 		out = out[:topRecommendN]
 	}
+
+	e.enrichWithPredictedPosture(ctx, out, policyIDs, currentScorePct)
 	return out, nil
+}
+
+// enrichWithPredictedPosture simulates attaching each recommended policy and
+// computes what the posture score would become. Best-effort: failures are
+// silently skipped (predicted fields remain nil).
+func (e *Engine) enrichWithPredictedPosture(ctx context.Context, recs []Recommendation, currentPolicyIDs []string, currentScorePct int) {
+	for i := range recs {
+		hypothetical := append(slices.Clone(currentPolicyIDs), recs[i].PolicyID)
+		var passN, failN, errN int
+		err := e.pool.QueryRow(ctx, `
+			WITH latest AS (
+				SELECT DISTINCT ON (target_id, policy_id, evidence_id, control_id, requirement_id)
+					eval_result
+				FROM evidence
+				WHERE policy_id = ANY($1::text[])
+				ORDER BY target_id, policy_id, evidence_id, control_id, requirement_id, collected_at DESC
+			)
+			SELECT
+				COUNT(*) FILTER (WHERE eval_result = 'Passed'),
+				COUNT(*) FILTER (WHERE eval_result = 'Failed'),
+				COUNT(*) FILTER (WHERE eval_result = 'Needs Review')
+			FROM latest`, hypothetical).Scan(&passN, &failN, &errN)
+		if err != nil {
+			slog.Debug("predicted posture query failed", "policy_id", recs[i].PolicyID, "error", err)
+			continue
+		}
+		den := passN + failN + errN
+		if den == 0 {
+			continue
+		}
+		predicted := int(math.Round(float64(passN) / float64(den) * 100))
+		delta := predicted - currentScorePct
+		recs[i].PredictedScorePct = &predicted
+		recs[i].ScoreDelta = &delta
+	}
 }
 
 func (e *Engine) evidenceAgg(ctx context.Context, policyIDs []string) (counts map[string]int, tags map[string]map[string]struct{}, err error) {

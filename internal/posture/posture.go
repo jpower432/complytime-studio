@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -164,6 +165,13 @@ func (e *Engine) ComputeAndStore(
 	return summary, nil
 }
 
+// RecomputePosture delegates to ComputeAndStore, discarding the summary.
+// Callers may invoke asynchronously; async lifecycle is a caller concern.
+func (e *Engine) RecomputePosture(ctx context.Context, programID string, policyIDs []string, greenPct, redPct int) error {
+	_, err := e.ComputeAndStore(ctx, programID, policyIDs, greenPct, redPct)
+	return err
+}
+
 func countPolicies(policyIDs []string) int {
 	n := 0
 	for _, id := range policyIDs {
@@ -197,4 +205,64 @@ func classifyHealth(scorePct, greenPct, redPct int) string {
 		return "red"
 	}
 	return "yellow"
+}
+
+// PopulatePosture recomputes posture for all programs that have policies
+// attached. Safe to call on every startup — uses direct UPDATE (no
+// optimistic lock) to avoid version conflicts during boot.
+func (e *Engine) PopulatePosture(ctx context.Context) error {
+	if e == nil || e.pool == nil {
+		return nil
+	}
+	rows, err := e.pool.Query(ctx, `
+		SELECT id, policy_ids, green_pct, red_pct
+		FROM programs
+		WHERE deleted_at IS NULL AND array_length(policy_ids, 1) > 0`)
+	if err != nil {
+		return fmt.Errorf("populate posture list: %w", err)
+	}
+	defer rows.Close()
+
+	type prog struct {
+		id        string
+		policyIDs []string
+		greenPct  int
+		redPct    int
+	}
+	var programs []prog
+	for rows.Next() {
+		var p prog
+		if err := rows.Scan(&p.id, &p.policyIDs, &p.greenPct, &p.redPct); err != nil {
+			return fmt.Errorf("populate posture scan: %w", err)
+		}
+		programs = append(programs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("populate posture rows: %w", err)
+	}
+
+	var updated, failed int
+	for _, p := range programs {
+		summary, err := e.Compute(ctx, p.id, p.policyIDs, p.greenPct, p.redPct)
+		if err != nil {
+			slog.Warn("posture backfill compute failed", "program_id", p.id, "error", err)
+			failed++
+			continue
+		}
+		_, err = e.pool.Exec(ctx, `
+			UPDATE programs
+			SET health = $1, score_pct = $2, updated_at = now()
+			WHERE id = $3 AND deleted_at IS NULL`,
+			summary.Health, summary.ScorePct, p.id)
+		if err != nil {
+			slog.Warn("posture backfill update failed", "program_id", p.id, "error", err)
+			failed++
+			continue
+		}
+		updated++
+	}
+	if updated > 0 || failed > 0 {
+		slog.Info("posture backfill complete", "updated", updated, "failed", failed, "total", len(programs))
+	}
+	return nil
 }

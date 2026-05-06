@@ -21,7 +21,7 @@
 | 0015 | [Evidence Filter Bar](evidence-filter-bar.md) | Accepted | 2026-04-26 |
 | 0016 | [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
 | 0021 | [Audit Workspace Inline Context](audit-workspace-inline-context.md) | Accepted | 2026-05-05 |
-| 0022 | [Known Issues: Posture Donut and Recommendation Engine](known-issues-posture-recommendations.md) | Known — tracking | 2026-05-05 |
+| 0022 | [Known Issues: Posture Donut and Recommendation Engine](known-issues-posture-recommendations.md) | Resolved | 2026-05-05 |
 
 ## Active Workarounds
 
