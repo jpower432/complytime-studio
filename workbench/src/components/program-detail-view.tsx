@@ -47,6 +47,7 @@ interface ProgramDetail {
   version: number;
   green_pct: number;
   red_pct: number;
+  score_pct: number;
   created_at: string;
   updated_at: string;
 }
@@ -458,7 +459,7 @@ export function ProgramDetailView() {
 
           <div class="program-overview-grid">
             <div class="program-donut-area">
-              <CoverageDonut green={program.green_pct ?? 0} red={program.red_pct ?? 0} size={140} />
+              <CoverageDonut green={program.score_pct ?? 0} red={Math.max(0, 100 - (program.score_pct ?? 0))} size={140} />
             </div>
 
             <div class="program-metrics">

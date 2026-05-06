@@ -36,6 +36,7 @@ type Program struct {
 	Version           int             `json:"version"`
 	GreenPct          int             `json:"green_pct"`
 	RedPct            int             `json:"red_pct"`
+	ScorePct          int             `json:"score_pct"`
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
@@ -62,7 +63,7 @@ func (s *ProgramPG) ListPrograms(ctx context.Context) ([]Program, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, guidance_catalog_id, framework, applicability, status,
 			health, owner, description, metadata, policy_ids, environments,
-			version, green_pct, red_pct, created_at, updated_at
+			version, green_pct, red_pct, score_pct, created_at, updated_at
 		FROM programs
 		WHERE deleted_at IS NULL
 		ORDER BY created_at DESC`)
@@ -77,7 +78,7 @@ func (s *ProgramPG) ListPrograms(ctx context.Context) ([]Program, error) {
 		if err := rows.Scan(
 			&p.ID, &p.Name, &p.GuidanceCatalogID, &p.Framework, &p.Applicability, &p.Status,
 			&p.Health, &p.Owner, &p.Description, &p.Metadata, &p.PolicyIDs, &p.Environments,
-			&p.Version, &p.GreenPct, &p.RedPct, &p.CreatedAt, &p.UpdatedAt,
+			&p.Version, &p.GreenPct, &p.RedPct, &p.ScorePct, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("list programs scan: %w", err)
 		}
@@ -90,14 +91,14 @@ func (s *ProgramPG) GetProgram(ctx context.Context, id string) (*Program, error)
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, guidance_catalog_id, framework, applicability, status,
 			health, owner, description, metadata, policy_ids, environments,
-			version, green_pct, red_pct, created_at, updated_at
+			version, green_pct, red_pct, score_pct, created_at, updated_at
 		FROM programs
 		WHERE id = $1 AND deleted_at IS NULL`, id)
 	var p Program
 	if err := row.Scan(
 		&p.ID, &p.Name, &p.GuidanceCatalogID, &p.Framework, &p.Applicability, &p.Status,
 		&p.Health, &p.Owner, &p.Description, &p.Metadata, &p.PolicyIDs, &p.Environments,
-		&p.Version, &p.GreenPct, &p.RedPct, &p.CreatedAt, &p.UpdatedAt,
+		&p.Version, &p.GreenPct, &p.RedPct, &p.ScorePct, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("get program %s: %w", id, ErrProgramNotFound)
@@ -132,6 +133,17 @@ func (s *ProgramPG) CreateProgram(ctx context.Context, p Program) (*Program, err
 	if ver == 0 {
 		ver = 1
 	}
+	if (p.GuidanceCatalogID == nil || *p.GuidanceCatalogID == "") && p.Framework != "" {
+		var resolved string
+		_ = s.pool.QueryRow(ctx, `
+			SELECT catalog_id FROM catalogs
+			WHERE title ILIKE '%' || $1 || '%' OR catalog_id ILIKE '%' || $1 || '%'
+			LIMIT 1`, p.Framework).Scan(&resolved)
+		if resolved != "" {
+			p.GuidanceCatalogID = &resolved
+		}
+	}
+
 	greenPct := p.GreenPct
 	if greenPct == 0 {
 		greenPct = 90
@@ -151,7 +163,7 @@ func (s *ProgramPG) CreateProgram(ctx context.Context, p Program) (*Program, err
 		)
 		RETURNING id, name, guidance_catalog_id, framework, applicability, status,
 			health, owner, description, metadata, policy_ids, environments,
-			version, green_pct, red_pct, created_at, updated_at`,
+			version, green_pct, red_pct, score_pct, created_at, updated_at`,
 		p.Name, p.GuidanceCatalogID, p.Framework, app, status,
 		p.Health, p.Owner, p.Description, md, pol, env,
 		ver, greenPct, redPct,
@@ -161,7 +173,7 @@ func (s *ProgramPG) CreateProgram(ctx context.Context, p Program) (*Program, err
 	if err := row.Scan(
 		&out.ID, &out.Name, &out.GuidanceCatalogID, &out.Framework, &out.Applicability, &out.Status,
 		&out.Health, &out.Owner, &out.Description, &out.Metadata, &out.PolicyIDs, &out.Environments,
-		&out.Version, &out.GreenPct, &out.RedPct, &out.CreatedAt, &out.UpdatedAt,
+		&out.Version, &out.GreenPct, &out.RedPct, &out.ScorePct, &out.CreatedAt, &out.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("create program: %w", err)
 	}

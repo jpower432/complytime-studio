@@ -44,7 +44,7 @@ export const selectedPolicyDetail = signal<string | null>(null);
 export const selectedAuditId = signal<string | null>(null);
 export const selectedProgramId = signal<string | null>(null);
 export const selectedProgramFilter = signal<string | null>(null);
-export const activeTab = signal<"requirements" | "history">("requirements");
+export const activeTab = signal<"requirements" | "mappings" | "history">("requirements");
 export const selectedEvidenceTargetId = signal<string | null>(null);
 
 // Monotonic counter; mounted views watch this to refetch. Same browser tab/session only —
@@ -224,7 +224,7 @@ export function navigateToProgram(id: string) {
 
 export function navigateToPolicy(
   policyId: string,
-  tab: "requirements" | "history" = "requirements",
+  tab: "requirements" | "mappings" | "history" = "requirements",
 ) {
   selectedEvidenceTargetId.value = null;
   selectedPolicyDetail.value = null;
@@ -260,7 +260,7 @@ function syncFromHash() {
     selectedAuditId.value = null;
   }
 
-  const VALID_TABS = ["requirements", "history"] as const;
+  const VALID_TABS = ["requirements", "mappings", "history"] as const;
   if (params.tab && VALID_TABS.includes(params.tab as (typeof VALID_TABS)[number])) {
     activeTab.value = params.tab as (typeof VALID_TABS)[number];
   }

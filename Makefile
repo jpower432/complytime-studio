@@ -98,6 +98,7 @@ endif
 studio-up: sync-prompts
 	helm upgrade --install complytime-studio ./charts/complytime-studio \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime-studio/values-dev.yaml \
 		--reset-values \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
@@ -116,6 +117,7 @@ studio-down:
 studio-template: sync-prompts
 	helm template complytime-studio ./charts/complytime-studio \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime-studio/values-dev.yaml \
 		$(HELM_FEATURE_FLAGS)
 
 # Create the Kubernetes secret for OIDC credentials.

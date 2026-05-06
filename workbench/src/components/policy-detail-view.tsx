@@ -11,6 +11,7 @@ import {
 import { apiFetch } from "../api/fetch";
 import { RequirementMatrixView } from "./requirement-matrix-view";
 import { AuditHistoryView } from "./audit-history-view";
+import { fmtDate } from "../lib/format";
 
 interface PolicyInfo {
   policy_id: string;
@@ -18,24 +19,40 @@ interface PolicyInfo {
   version?: string;
 }
 
-type TabId = "requirements" | "history";
+interface MappingDocument {
+  mapping_id: string;
+  source_catalog_id: string;
+  target_catalog_id: string;
+  framework: string;
+  imported_at: string;
+}
+
+type TabId = "requirements" | "mappings" | "history";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "requirements", label: "Requirements" },
-  { id: "history", label: "Audit History" },
+  { id: "mappings", label: "Mappings" },
+  { id: "history", label: "History" },
 ];
 
 export function PolicyDetailView() {
   const policyId = selectedPolicyId.value;
-  const tab = activeTab.value as TabId;
+  const tab = (activeTab.value as TabId) || "requirements";
   const [policy, setPolicy] = useState<PolicyInfo | null>(null);
+  const [mappings, setMappings] = useState<MappingDocument[]>([]);
 
   useEffect(() => {
     if (!policyId) return;
     apiFetch(`/api/policies/${encodeURIComponent(policyId)}`)
       .then((r) => r.json())
-      .then((d: { policy: PolicyInfo }) => setPolicy(d.policy))
-      .catch(() => setPolicy({ policy_id: policyId, title: policyId }));
+      .then((d: { policy: PolicyInfo; mappings?: MappingDocument[] }) => {
+        setPolicy(d.policy);
+        setMappings(d.mappings || []);
+      })
+      .catch(() => {
+        setPolicy({ policy_id: policyId, title: policyId });
+        setMappings([]);
+      });
   }, [policyId]);
 
   if (!policyId) {
@@ -94,9 +111,43 @@ export function PolicyDetailView() {
       </div>
 
       <div class="tab-content" role="tabpanel">
-        {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} />}
+        {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} mode="adherence" />}
+        {tab === "mappings" && <MappingsPanel mappings={mappings} />}
         {tab === "history" && <AuditHistoryView policyIdOverride={policyId} />}
       </div>
     </section>
+  );
+}
+
+function MappingsPanel({ mappings }: { mappings: MappingDocument[] }) {
+  if (mappings.length === 0) {
+    return (
+      <div class="empty-state">
+        <p>No mapping documents loaded for this policy.</p>
+      </div>
+    );
+  }
+
+  return (
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Framework</th>
+          <th>Source Catalog</th>
+          <th>Target Catalog</th>
+          <th>Imported</th>
+        </tr>
+      </thead>
+      <tbody>
+        {mappings.map((m) => (
+          <tr key={m.mapping_id}>
+            <td>{m.framework || "—"}</td>
+            <td class="mono">{m.source_catalog_id}</td>
+            <td class="mono">{m.target_catalog_id}</td>
+            <td>{fmtDate(m.imported_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

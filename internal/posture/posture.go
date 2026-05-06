@@ -151,9 +151,9 @@ func (e *Engine) ComputeAndStore(
 	}
 	tag, err := e.pool.Exec(ctx, `
 		UPDATE programs
-		SET health = $1, version = version + 1, updated_at = now()
+		SET health = $1, score_pct = $4, version = version + 1, updated_at = now()
 		WHERE id = $2 AND version = $3 AND deleted_at IS NULL`,
-		summary.Health, programID, version,
+		summary.Health, programID, version, summary.ScorePct,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update program health: %w", err)

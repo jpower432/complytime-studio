@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Default values for complytime-studio — targeting kind development clusters.
-# Override with values-openshift.yaml (or equivalent) for production.
+# Default values for complytime-studio — production-safe baseline.
+# Dev convenience overrides live in values-dev.yaml (layered by the Makefile).
+# Override with values-openshift.yaml for OpenShift-specific settings.
 
 # -- Gateway configuration. User-facing entry point serving workbench SPA,
 # REST APIs, MCP proxy, and OAuth authentication. A2A proxy is separate.

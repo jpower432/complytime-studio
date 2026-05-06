@@ -6,6 +6,7 @@ import { apiFetch } from "../api/fetch";
 import {
   viewInvalidation,
   selectedPolicyId,
+  selectedControlId,
   selectedEvidenceTargetId,
   selectedProgramFilter,
   updateHash,
@@ -20,6 +21,7 @@ import {
 import { createFilterChips } from "./filter-chip";
 import { AddFilterMenu } from "./add-filter-menu";
 import { fmtDateTime } from "../lib/format";
+import { fetchRequirementMatrix, type RequirementRow } from "../api/requirements";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -73,8 +75,8 @@ interface ProgramDetailResponse {
   policy_ids: string[];
 }
 
-function evidenceRowKey(r: EvidenceRecord): string {
-  return `${r.evidence_id}\t${r.collected_at}`;
+function evidenceRowKey(r: EvidenceRecord, idx: number): string {
+  return `${r.evidence_id}\t${r.collected_at}\t${idx}`;
 }
 
 function SourceRegistryDetail({ value }: { value: string }) {
@@ -228,6 +230,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   const [programPolicyIds, setProgramPolicyIds] = useState<Set<string> | null>(
     null,
   );
+  const [reqTextMap, setReqTextMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (initialTargetFilter) {
@@ -255,12 +258,34 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   }, [embedded, selectedEvidenceTargetId.value]);
 
   useEffect(() => {
+    if (embedded) return;
+    const cid = selectedControlId.value;
+    if (!cid) return;
+    chipState.remove("Control");
+    chipState.remove("Target");
+    chipState.add("Control", cid);
+    selectedControlId.value = null;
+  }, [embedded, selectedControlId.value]);
+
+  useEffect(() => {
     if (!policyIdOverride) return;
     apiFetch(`/api/policies/${encodeURIComponent(policyIdOverride)}`)
       .then((r) => r.json())
       .then((d: { policy: { content?: string } }) => setPolicyContent(d.policy.content || ""))
       .catch(() => setPolicyContent(""));
   }, [policyIdOverride]);
+
+  useEffect(() => {
+    const pid = policyId || policyIdOverride;
+    if (!pid) { setReqTextMap(new Map()); return; }
+    fetchRequirementMatrix({ policy_id: pid })
+      .then((rows: RequirementRow[]) => {
+        const m = new Map<string, string>();
+        for (const r of rows) m.set(r.control_id, r.requirement_text);
+        setReqTextMap(m);
+      })
+      .catch(() => setReqTextMap(new Map()));
+  }, [policyId, policyIdOverride]);
 
   useEffect(() => {
     apiFetch("/api/policies")
@@ -542,8 +567,8 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((r) => {
-                const rowKey = evidenceRowKey(r);
+              {filteredRecords.map((r, idx) => {
+                const rowKey = evidenceRowKey(r, idx);
                 const open = expandedKey === rowKey;
                 const certTooltip = r.certified === true
                   ? "Certified — click for details"
@@ -576,7 +601,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                       <td title={r.target_id}>
                         {r.target_name || r.target_id}
                       </td>
-                      <td>{r.control_id}</td>
+                      <td title={reqTextMap.get(r.control_id) || undefined}>{r.control_id}</td>
                       <td>
                         <span class={
                           `eval-badge eval-${r.eval_result
