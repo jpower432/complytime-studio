@@ -4,7 +4,7 @@
 
 before_agent_callback: input validation — policy reference + audit timeline detection
 after_agent_callback: reserved for future post-processing
-before_tool_callback: SQL sanitization — DDL/DML deny-list for run_select_query
+before_tool_callback: input guard for query_database — SQL injection prevention
 """
 
 import logging
@@ -13,8 +13,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-FORBIDDEN_SQL = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b",
+_SQL_WRITE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC)\b",
     re.IGNORECASE,
 )
 
@@ -57,19 +57,14 @@ async def after_agent(callback_context) -> Optional[Any]:
 async def before_tool(
     tool: Any, args: dict[str, Any], tool_context: Any
 ) -> Optional[dict]:
-    """SQL injection guard for ClickHouse run_select_query."""
+    """Input guard for query_database — reject write statements in SQL."""
     tool_name = getattr(tool, "name", str(tool))
-    if tool_name != "run_select_query":
+    if tool_name != "query_database":
         return None
 
-    query = args.get("query", "")
-    if FORBIDDEN_SQL.search(query):
-        logger.warning("Blocked forbidden SQL: %s", query[:200])
-        return {
-            "error": "Query rejected: only SELECT statements are allowed. "
-            "DDL and DML operations are forbidden."
-        }
+    sql = args.get("query", "")
+    if _SQL_WRITE.search(sql):
+        logger.warning("Blocked write SQL in query_database: %s", sql[:200])
+        return {"error": "Only SELECT queries are allowed."}
 
     return None
-
-

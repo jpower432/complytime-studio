@@ -23,7 +23,7 @@ spec:
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
           imagePullPolicy: IfNotPresent
           ports:
-            - name: public
+            - name: http
               containerPort: 8080
               protocol: TCP
             - name: internal
@@ -35,17 +35,22 @@ spec:
             runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
-          livenessProbe:
+          startupProbe:
             httpGet:
               path: /healthz
               port: 8080
             initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 2
             periodSeconds: 10
           env:
             - name: PORT
@@ -91,29 +96,27 @@ spec:
             - name: REGISTRY_INSECURE
               value: "studio-registry:{{ .Values.registry.service.port }}"
             {{- end }}
-            {{- if .Values.auth.google.clientId }}
-            - name: GOOGLE_CLIENT_ID
-              value: {{ .Values.auth.google.clientId | quote }}
-            - name: GOOGLE_CLIENT_SECRET
+            {{- if .Values.auth.apiTokenSecretName }}
+            - name: STUDIO_API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.google.secretName }}
-                  key: {{ .Values.auth.google.secretKey }}
-            - name: GOOGLE_CALLBACK_URL
-              value: {{ .Values.auth.google.callbackURL | quote }}
-            {{- end }}
-            - name: COOKIE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.auth.cookieSecretName | default "studio-cookie-secret" }}
-                  key: cookie-secret
-            {{- if .Values.auth.admins }}
-            - name: ADMIN_EMAILS
-              value: {{ join "," .Values.auth.admins | quote }}
-            {{- end }}
-            {{- if .Values.auth.apiToken }}
+                  name: {{ .Values.auth.apiTokenSecretName }}
+                  key: {{ .Values.auth.apiTokenSecretKey | default "api-token" }}
+            {{- else if .Values.auth.apiToken }}
             - name: STUDIO_API_TOKEN
               value: {{ .Values.auth.apiToken | quote }}
+            {{- end }}
+            {{- /*
+              PROXY_SECRET activates StripUntrustedProxyHeaders — requires the
+              proxy to send X-Proxy-Secret on every request. OAuth2 Proxy cannot
+              inject custom upstream headers, so this is disabled for the sidecar
+              pattern. Trust is network-enforced: port 8080 is pod-internal only.
+              Enable manually for reverse-proxy deployments (Envoy/nginx) that
+              can add the header.
+            */ -}}
+            {{- if .Values.auth.proxySecret }}
+            - name: PROXY_SECRET
+              value: {{ .Values.auth.proxySecret | quote }}
             {{- end }}
             - name: MODEL_PROVIDER
               value: {{ .Values.model.provider | quote }}
@@ -137,29 +140,94 @@ spec:
                   name: {{ .Values.blobStorage.secretName }}
                   key: secret-key
             {{- end }}
-            {{- if .Values.clickhouse.enabled }}
-            - name: CLICKHOUSE_ADDR
-              value: "studio-clickhouse:9000"
-            - name: CLICKHOUSE_USER
-              value: {{ .Values.clickhouse.auth.user | quote }}
-            - name: CLICKHOUSE_PASSWORD
-              {{- if .Values.clickhouse.auth.existingSecret }}
+            {{- if .Values.postgres.auth.existingSecret }}
+            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.clickhouse.auth.existingSecret }}
+                  name: {{ .Values.postgres.auth.existingSecret }}
                   key: password
-              {{- else }}
-              value: {{ .Values.clickhouse.auth.password | quote }}
-              {{- end }}
+            - name: POSTGRES_URL
+              value: "postgres://{{ .Values.postgres.auth.user }}:$(POSTGRES_PASSWORD)@studio-postgres:5432/{{ .Values.postgres.auth.database }}?sslmode={{ .Values.postgres.auth.sslmode | default "disable" }}"
+            {{- else }}
+            - name: POSTGRES_URL
+              value: "postgres://{{ .Values.postgres.auth.user }}:{{ .Values.postgres.auth.password }}@studio-postgres:5432/{{ .Values.postgres.auth.database }}?sslmode={{ .Values.postgres.auth.sslmode | default "disable" }}"
             {{- end }}
             - name: AUTO_PERSIST_ARTIFACTS
               value: {{ .Values.gateway.autoPersistArtifacts | default true | quote }}
-            {{- if .Values.nats.enabled }}
             - name: NATS_URL
               value: "nats://studio-nats:4222"
             - name: NETWORKPOLICY_ENFORCED
               value: "true"
+            {{- if .Values.registry.credentials.secretName }}
+            - name: REGISTRY_CREDENTIALS_FILE
+              value: "/etc/registry-credentials/credentials.json"
             {{- end }}
+          {{- if .Values.registry.credentials.secretName }}
+          volumeMounts:
+            - name: registry-credentials
+              mountPath: /etc/registry-credentials
+              readOnly: true
+          {{- end }}
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+        {{- if .Values.auth.oauth2Proxy.enabled }}
+        - name: oauth2-proxy
+          image: "{{ .Values.auth.oauth2Proxy.image.repository }}:{{ .Values.auth.oauth2Proxy.image.tag }}"
+          args:
+            - --provider={{ .Values.auth.oauth2Proxy.provider }}
+            - --oidc-issuer-url={{ .Values.auth.oauth2Proxy.issuerUrl }}
+            - --client-id={{ .Values.auth.oauth2Proxy.clientId }}
+            - --client-secret-file=/etc/oauth2-proxy/client-secret
+            - --redirect-url={{ .Values.auth.oauth2Proxy.callbackUrl }}
+            - --upstream=http://localhost:8080
+            - --http-address=0.0.0.0:4180
+            - --cookie-secure={{ .Values.auth.oauth2Proxy.cookieSecure }}
+            - --set-xauthrequest=true
+            - --pass-access-token=true
+            - --code-challenge-method=S256
+            - --skip-provider-button=true
+            - --email-domain={{ join "," .Values.auth.oauth2Proxy.emailDomains }}
+            - --scope={{ .Values.auth.oauth2Proxy.scopes }}
+            - --skip-auth-route=GET=/healthz
+            - --skip-auth-route=GET=/auth/logged-out
+            {{- range .Values.auth.oauth2Proxy.allowedGroups }}
+            - --allowed-group={{ . }}
+            {{- end }}
+          env:
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.cookieSecretName | default "studio-cookie-secret" }}
+                  key: cookie-secret
+          ports:
+            - name: proxy
+              containerPort: 4180
+              protocol: TCP
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            periodSeconds: 10
+          volumeMounts:
+            - name: oauth2-proxy-secret
+              mountPath: /etc/oauth2-proxy
+              readOnly: true
           resources:
             requests:
               memory: "32Mi"
@@ -167,6 +235,23 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "100m"
+        {{- end }}
+      {{- if or .Values.auth.oauth2Proxy.enabled .Values.registry.credentials.secretName }}
+      volumes:
+        {{- if .Values.auth.oauth2Proxy.enabled }}
+        - name: oauth2-proxy-secret
+          secret:
+            secretName: {{ .Values.auth.oauth2Proxy.secretName }}
+            items:
+              - key: {{ .Values.auth.oauth2Proxy.secretKey }}
+                path: client-secret
+        {{- end }}
+        {{- if .Values.registry.credentials.secretName }}
+        - name: registry-credentials
+          secret:
+            secretName: {{ .Values.registry.credentials.secretName }}
+        {{- end }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -181,9 +266,13 @@ spec:
   selector:
     {{- include "studio.selectorLabels" (dict "component" "gateway" "root" .) | nindent 4 }}
   ports:
-    - name: public
+    - name: http
       port: 8080
+      {{- if .Values.auth.oauth2Proxy.enabled }}
+      targetPort: 4180
+      {{- else }}
       targetPort: 8080
+      {{- end }}
       protocol: TCP
 ---
 # Internal Service — agent-only traffic. Not exposed via Ingress.

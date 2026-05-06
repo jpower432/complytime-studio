@@ -16,5 +16,5 @@ export async function fetchMe(): Promise<UserInfo | null> {
 }
 
 export function redirectToLogin(): void {
-  window.location.href = "/auth/login";
+  window.location.href = "/oauth2/sign_in";
 }

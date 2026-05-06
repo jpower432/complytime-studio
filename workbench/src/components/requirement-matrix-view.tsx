@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect } from "preact/hooks";
-import { selectedPolicyId, selectedTimeRange, selectedControlId, selectedRequirementId, viewInvalidation, updateHash } from "../app";
+import { selectedPolicyId, selectedTimeRange, selectedControlId, selectedRequirementId, viewInvalidation, updateHash, navigate } from "../app";
 import { apiFetch } from "../api/fetch";
 import { fmtDate, fmtDateTime } from "../lib/format";
 import {
@@ -16,15 +16,15 @@ interface PolicyOption {
   title: string;
 }
 
-const CLASSIFICATIONS = ["", "Healthy", "Failing", "Wrong Source", "Wrong Method", "Unfit Evidence", "Stale", "No Evidence"];
+const CLASSIFICATIONS = ["", "Healthy", "Failing", "Wrong Source", "Wrong Method", "Unfit Evidence", "Stale"];
 
 function ClassificationBadge({ value }: { value: string | null | undefined }) {
-  const label = value || "No Evidence";
-  const cls = label.toLowerCase().replace(/\s+/g, "-");
-  return <span class={`classification-badge ${cls}`} data-classification={label}>{label}</span>;
+  if (!value) return <span class="classification-badge none">&mdash;</span>;
+  const cls = value.toLowerCase().replace(/\s+/g, "-");
+  return <span class={`classification-badge ${cls}`} data-classification={value}>{value}</span>;
 }
 
-export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?: string } = {}) {
+export function RequirementMatrixView({ policyIdOverride, mode = "audit" }: { policyIdOverride?: string; mode?: "adherence" | "audit" } = {}) {
   const embedded = !!policyIdOverride;
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
   const [policyId, setPolicyId] = useState(policyIdOverride || selectedPolicyId.value || "");
@@ -91,7 +91,14 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
   useEffect(fetchMatrix, [policyId]);
   useEffect(() => { if (policyId) fetchMatrix(); }, [viewInvalidation.value]);
 
-  const toggleExpand = (reqId: string) => {
+  const handleRowClick = (row: RequirementRow) => {
+    if (mode === "adherence") {
+      selectedPolicyId.value = policyId;
+      selectedControlId.value = row.control_id;
+      navigate("evidence");
+      return;
+    }
+    const reqId = row.requirement_id;
     if (expandedId === reqId) {
       setExpandedId(null);
       selectedRequirementId.value = null;
@@ -116,24 +123,6 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
 
   const families = [...new Set(rows.map((r) => r.control_id.split("-")[0]).filter(Boolean))];
 
-  const triggerExport = async (format: string, pid: string, start: string, end: string) => {
-    const qs = new URLSearchParams({ policy_id: pid });
-    if (start) qs.set("audit_start", start);
-    if (end) qs.set("audit_end", end);
-    try {
-      const res = await apiFetch(`/api/export/${format}?${qs}`);
-      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = res.headers.get("content-disposition")?.match(/filename="(.+)"/)?.[1] || `export.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert(`Export error: ${e}`);
-    }
-  };
 
   return (
     <section class="requirement-matrix-view">
@@ -165,14 +154,6 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
         <button class="btn btn-primary" onClick={fetchMatrix}>Search</button>
       </div>
 
-      {policyId && rows.length > 0 && (
-        <div class="export-toolbar">
-          <button class="btn btn-xs" onClick={() => triggerExport("csv", policyId, startFilter, endFilter)}>Export CSV</button>
-          <button class="btn btn-xs" disabled title="Coming soon">Export Excel</button>
-          <button class="btn btn-xs" disabled title="Coming soon">Export PDF</button>
-        </div>
-      )}
-
       {loading ? (
         <div class="view-loading">Loading requirement matrix...</div>
       ) : !policyId ? (
@@ -186,9 +167,9 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
               <th>Control</th>
               <th>Requirement</th>
               <th>Text</th>
-              <th>Evidence</th>
-              <th>Latest</th>
-              <th>Classification</th>
+              {mode === "audit" && <th>Evidence</th>}
+              {mode === "audit" && <th>Latest</th>}
+              <th>Adherence</th>
               <th>Risk</th>
             </tr>
           </thead>
@@ -197,11 +178,12 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
               <>
                 <tr
                   key={row.requirement_id}
-                  class={`matrix-row ${expandedId === row.requirement_id ? "expanded" : ""}`}
+                  class={`matrix-row clickable-row ${mode === "audit" && expandedId === row.requirement_id ? "expanded" : ""}`}
                   data-requirement-id={row.requirement_id}
-                  data-expanded={expandedId === row.requirement_id ? "true" : "false"}
-                  aria-expanded={expandedId === row.requirement_id}
-                  onClick={() => toggleExpand(row.requirement_id)}
+                  data-expanded={mode === "audit" && expandedId === row.requirement_id ? "true" : "false"}
+                  aria-expanded={mode === "audit" ? expandedId === row.requirement_id : undefined}
+                  onClick={() => handleRowClick(row)}
+                  title={mode === "adherence" ? `View evidence for ${row.control_id}` : undefined}
                 >
                   <td>
                     <span class="control-id">{row.control_id}</span>
@@ -209,21 +191,21 @@ export function RequirementMatrixView({ policyIdOverride }: { policyIdOverride?:
                   </td>
                   <td class="req-id">{row.requirement_id}</td>
                   <td class="req-text">{row.requirement_text}</td>
-                  <td class="num">{row.evidence_count}</td>
-                  <td class="date">{row.latest_evidence ? fmtDate(row.latest_evidence) : "—"}</td>
+                  {mode === "audit" && <td class="num">{row.evidence_count}</td>}
+                  {mode === "audit" && <td class="date">{row.latest_evidence ? fmtDate(row.latest_evidence) : "—"}</td>}
                   <td><ClassificationBadge value={row.classification} /></td>
                   <td>{riskMap[row.control_id] ? (
                     <span class={`risk-badge risk-${riskMap[row.control_id].toLowerCase()}`}>{riskMap[row.control_id]}</span>
                   ) : "—"}</td>
                 </tr>
-                {expandedId === row.requirement_id && (
+                {mode === "audit" && expandedId === row.requirement_id && (
                   <tr class="evidence-expand-row">
                     <td colSpan={7}>
                       <EvidencePanel
                         rows={evidenceRows}
                         loading={evidenceLoading}
                         error={evidenceError}
-                        onRetry={() => toggleExpand(row.requirement_id)}
+                        onRetry={() => handleRowClick(row)}
                       />
                     </td>
                   </tr>

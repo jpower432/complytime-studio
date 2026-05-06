@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
-import { selectedAuditId, navigate, navigateToPolicy } from "../app";
+import { selectedAuditId, selectedPolicyId, selectedEvidenceTargetId, navigate, navigateToPolicy } from "../app";
 import { apiFetch } from "../api/fetch";
 import { downloadYaml, auditLogFilename } from "../lib/download";
 import { fmtDate, fmtDateTime, displayName } from "../lib/format";
+import { fetchRequirementMatrix, fetchRequirementEvidence, type RequirementRow, type RequirementEvidenceRow } from "../api/requirements";
 
 interface AuditArtifact {
   id: string;
@@ -104,6 +105,10 @@ export function AuditWorkspaceView() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [promoting, setPromoting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [reqTextMap, setReqTextMap] = useState<Map<string, string>>(new Map());
+  const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
+  const [evidenceRows, setEvidenceRows] = useState<RequirementEvidenceRow[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -133,6 +138,31 @@ export function AuditWorkspaceView() {
       })
       .finally(() => setLoading(false));
   }, [auditId]);
+
+  useEffect(() => {
+    if (!artifact?.policy_id) return;
+    fetchRequirementMatrix({ policy_id: artifact.policy_id })
+      .then((rows: RequirementRow[]) => {
+        const m = new Map<string, string>();
+        for (const r of rows) m.set(r.control_id, r.requirement_text);
+        setReqTextMap(m);
+      })
+      .catch(() => setReqTextMap(new Map()));
+  }, [artifact?.policy_id]);
+
+  const toggleEvidence = (resultId: string) => {
+    if (expandedEvidence === resultId) {
+      setExpandedEvidence(null);
+      return;
+    }
+    setExpandedEvidence(resultId);
+    if (!artifact) return;
+    setEvidenceLoading(true);
+    fetchRequirementEvidence(resultId, { policy_id: artifact.policy_id })
+      .then(setEvidenceRows)
+      .catch(() => setEvidenceRows([]))
+      .finally(() => setEvidenceLoading(false));
+  };
 
   const saveEditsToServer = useCallback((draftId: string, editsMap: EditsMap) => {
     setSaveState("saving");
@@ -205,7 +235,7 @@ export function AuditWorkspaceView() {
   })();
 
   if (!auditId) {
-    navigate("inbox");
+    navigate("reviews");
     return null;
   }
 
@@ -219,7 +249,7 @@ export function AuditWorkspaceView() {
   return (
     <section class="audit-workspace">
       <nav class="breadcrumb" aria-label="Breadcrumb">
-        <button class="breadcrumb-link" onClick={() => navigate("posture")}>Posture</button>
+        <button class="breadcrumb-link" onClick={() => navigate("reviews")}>Reviews</button>
         <span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
         <button class="breadcrumb-link" onClick={() => navigateToPolicy(artifact.policy_id)}>{artifact.policy_id}</button>
         <span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
@@ -273,9 +303,44 @@ export function AuditWorkspaceView() {
                       )}
                     </div>
                     <h4>{result.title}</h4>
+                    {reqTextMap.get(result.id) && (
+                      <p class="result-requirement-text"><strong>Requirement:</strong> {reqTextMap.get(result.id)}</p>
+                    )}
                     <p class="result-description">{result.description}</p>
                     {(reasoningMap[result.id] || result["agent-reasoning"]) && (
                       <div class="agent-reasoning"><strong>Agent Reasoning:</strong><p>{reasoningMap[result.id] || result["agent-reasoning"]}</p></div>
+                    )}
+                    <button
+                      type="button"
+                      class="btn btn-xs btn-secondary"
+                      onClick={(e) => { e.stopPropagation(); toggleEvidence(result.id); }}
+                    >
+                      {expandedEvidence === result.id ? "Hide Evidence" : "Show Evidence"}
+                    </button>
+                    {expandedEvidence === result.id && (
+                      <div class="result-evidence-panel">
+                        {evidenceLoading ? (
+                          <p class="evidence-detail-muted">Loading evidence...</p>
+                        ) : evidenceRows.length === 0 ? (
+                          <p class="evidence-detail-muted">No evidence found for this requirement.</p>
+                        ) : (
+                          <table class="data-table evidence-sub-table">
+                            <thead>
+                              <tr><th>Target</th><th>Rule</th><th>Result</th><th>Collected</th></tr>
+                            </thead>
+                            <tbody>
+                              {evidenceRows.map((ev) => (
+                                <tr key={ev.evidence_id}>
+                                  <td>{ev.target_name || ev.target_id}</td>
+                                  <td class="mono">{ev.rule_id}</td>
+                                  <td><span class={`eval-result eval-${ev.eval_result.toLowerCase().replace(/\s+/g, "-")}`}>{ev.eval_result}</span></td>
+                                  <td class="date">{fmtDateTime(ev.collected_at)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
                     )}
                     {editable && (
                       <div class="result-controls">
@@ -329,7 +394,11 @@ export function AuditWorkspaceView() {
             <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "requirements")}>
               Requirements Matrix
             </button>
-            <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "evidence")}>
+            <button class="btn btn-sm btn-secondary" onClick={() => {
+              selectedPolicyId.value = artifact.policy_id;
+              selectedEvidenceTargetId.value = null;
+              navigate("evidence");
+            }}>
               Evidence Library
             </button>
             <button class="btn btn-sm btn-secondary" onClick={() => navigateToPolicy(artifact.policy_id, "history")}>

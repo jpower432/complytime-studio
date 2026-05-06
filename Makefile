@@ -8,12 +8,18 @@ GATEWAY_TAG ?= local
 ASSISTANT_IMAGE ?= studio-assistant
 ASSISTANT_TAG ?= local
 
-CLICKHOUSE ?= true
-NATS ?= false
+CLICKHOUSE ?= false
+NATS ?= true
 
 HELM_AUTH_FLAGS :=
-ifdef GOOGLE_CLIENT_ID
-HELM_AUTH_FLAGS += --set auth.google.clientId=$(GOOGLE_CLIENT_ID)
+ifdef OIDC_CLIENT_ID
+HELM_AUTH_FLAGS += --set auth.oauth2Proxy.clientId=$(OIDC_CLIENT_ID)
+ifdef OIDC_ISSUER_URL
+HELM_AUTH_FLAGS += --set auth.oauth2Proxy.issuerUrl=$(OIDC_ISSUER_URL)
+endif
+ifdef OIDC_CALLBACK_URL
+HELM_AUTH_FLAGS += --set auth.oauth2Proxy.callbackUrl=$(OIDC_CALLBACK_URL)
+endif
 endif
 ifdef VERTEX_PROJECT_ID
 HELM_AUTH_FLAGS += --set model.vertexAI.projectID=$(VERTEX_PROJECT_ID)
@@ -35,10 +41,15 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
-	deploy oauth-secret
+	deploy oauth-secret \
+	demo demo-change demo-all
 
 test:
 	go test -v -race -cover ./...
+
+test-integration:
+	@test -n "$(POSTGRES_TEST_URL)" || (echo "POSTGRES_TEST_URL required — e.g. postgres://user:pass@localhost:5432/test?sslmode=disable" && exit 1)
+	POSTGRES_TEST_URL=$(POSTGRES_TEST_URL) go test -v -race -cover ./internal/store/ ./internal/postgres/
 
 lint:
 	golangci-lint run ./...
@@ -87,6 +98,8 @@ endif
 studio-up: sync-prompts
 	helm upgrade --install complytime-studio ./charts/complytime-studio \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime-studio/values-dev.yaml \
+		--reset-values \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
 		--set "assistant.image.repository=$(ASSISTANT_IMAGE)" \
@@ -104,23 +117,24 @@ studio-down:
 studio-template: sync-prompts
 	helm template complytime-studio ./charts/complytime-studio \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime-studio/values-dev.yaml \
 		$(HELM_FEATURE_FLAGS)
 
-# Create the Kubernetes secret for Google OAuth credentials.
-# Usage: GOOGLE_CLIENT_SECRET=<secret> make oauth-secret
-oauth-secret:
-	@if [ -z "$$GOOGLE_CLIENT_SECRET" ]; then \
-		echo "error: GOOGLE_CLIENT_SECRET is required"; exit 1; \
+# Create the Kubernetes secret for OIDC credentials.
+# Usage: OIDC_CLIENT_SECRET=<secret> make oidc-secret
+oidc-secret:
+	@if [ -z "$$OIDC_CLIENT_SECRET" ]; then \
+		echo "error: OIDC_CLIENT_SECRET is required"; exit 1; \
 	fi
 	kubectl create secret generic studio-oauth-credentials \
 		--namespace $(NAMESPACE) \
-		--from-literal=client-secret="$$GOOGLE_CLIENT_SECRET" \
+		--from-literal=client-secret="$$OIDC_CLIENT_SECRET" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "Secret studio-oauth-credentials written to namespace $(NAMESPACE)"
 
 # Full build → load → deploy → port-forward cycle for kind clusters.
 # Usage: make deploy
-# With OAuth: GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> make deploy
+# With OIDC: OIDC_CLIENT_ID=<id> OIDC_CLIENT_SECRET=<secret> OIDC_ISSUER_URL=<url> make deploy
 deploy: gateway-image assistant-image
 	kind load docker-image $(GATEWAY_IMAGE):$(GATEWAY_TAG) --name $(KIND_CLUSTER)
 	@docker exec $(KIND_CLUSTER)-control-plane \
@@ -132,18 +146,42 @@ deploy: gateway-image assistant-image
 		ctr --namespace=k8s.io images tag --force \
 		localhost/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) \
 		docker.io/library/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) 2>/dev/null || true
-	@if [ -n "$$GOOGLE_CLIENT_SECRET" ]; then \
-		$(MAKE) oauth-secret; \
+	@if [ -n "$$OIDC_CLIENT_SECRET" ]; then \
+		$(MAKE) oidc-secret; \
 	fi
 	$(MAKE) studio-up
 	kubectl rollout restart deployment/studio-gateway -n $(NAMESPACE)
 	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=240s
-	kubectl rollout restart deployment/studio-assistant -n $(NAMESPACE)
-	kubectl rollout status deployment/studio-assistant -n $(NAMESPACE) --timeout=120s
+	kubectl delete pods -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --ignore-not-found
+	kubectl wait --for=condition=ready pod -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --timeout=120s 2>/dev/null || true
 	@echo "Deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
 
 # Seed demo data into a running Studio instance.
-# Requires: kubectl port-forward -n kagent svc/studio-gateway 8080:8080
+# Port-forwards directly to the gateway container (bypassing OAuth2 Proxy).
+SEED_PORT ?= 9090
+STUDIO_API_TOKEN ?= studio-dev-token
 seed:
-	GATEWAY_URL=http://localhost:$(PORT) ./demo/seed.sh
+	@echo "Port-forwarding to gateway pod (bypassing OAuth2 Proxy)..."
+	@kubectl port-forward -n $(NAMESPACE) deployment/studio-gateway $(SEED_PORT):8080 &
+	@sleep 2
+	@GATEWAY_URL=http://localhost:$(SEED_PORT) STUDIO_API_TOKEN=$(STUDIO_API_TOKEN) ./demo/seed.sh; \
+		EXIT_CODE=$$?; \
+		kill %1 2>/dev/null; \
+		exit $$EXIT_CODE
+
+# Record the baseline SOC 2 gap analysis demo video.
+# Output: demo/cypress/videos/soc2-gap-analysis.cy.js.mp4
+demo:
+	cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/soc2-gap-analysis.cy.js'
+
+# Record demo video for a specific change.
+# Usage: CHANGE=generic-oidc-auth make demo-change
+demo-change:
+	@if [ -z "$$CHANGE" ]; then echo "error: CHANGE is required (e.g. CHANGE=generic-oidc-auth make demo-change)"; exit 1; fi
+	cd demo && npx cypress run --no-runner-ui --spec "cypress/e2e/$$CHANGE-demo.cy.js"
+
+# Record all demo videos (baseline + all change demos).
+# Output: demo/cypress/videos/*.mp4
+demo-all:
+	cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/*.cy.js'
 

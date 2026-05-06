@@ -1,0 +1,124 @@
+title: AMPEL Branch Protection Policy
+metadata:
+  type: Policy
+  id: ampel-branch-protection
+  version: 1.0.0
+  gemara-version: 1.0.0
+  description: >-
+    Automated evaluation policy for branch protection controls.
+    Assesses GitHub repositories for compliance with branch protection
+    best practices using AMPEL.
+  author:
+    id: complytime
+    name: ComplyTime
+    type: Software Assisted
+  mapping-references:
+    - id: repo-branch-protection
+      title: Branch Protection Controls
+      version: 1.0.0
+      description: Control catalog for branch protection rules
+
+contacts:
+  responsible:
+    - name: Repository Administrator
+  accountable:
+    - name: Security Team
+
+scope:
+  in:
+    technologies:
+      - GitHub
+    users:
+      - Repository maintainers
+
+criteria:
+  - id: BP-1
+    title: Require Pull Request Reviews
+    description: Ensure changes to protected branches go through a pull request process.
+    catalog-ref: repo-branch-protection/BP-1
+    assessment-requirements:
+      - id: BP-1.01
+        description: Direct pushes to protected branches MUST be blocked.
+        frequency: on-demand
+
+  - id: BP-2
+    title: Require Minimum Approvals
+    description: Pull requests to protected branches must have a minimum number of approvals.
+    catalog-ref: repo-branch-protection/BP-2
+    assessment-requirements:
+      - id: BP-2.01
+        description: Pull requests must require a minimum number of approvals.
+        frequency: on-demand
+
+  - id: BP-3
+    title: Restrict Force Pushes
+    description: Force pushes to protected branches must be blocked.
+    catalog-ref: repo-branch-protection/BP-3
+    assessment-requirements:
+      - id: BP-3.01
+        description: Force pushes to protected branches must be blocked.
+        frequency: on-demand
+
+  - id: BP-4
+    title: Prevent Admin Bypass
+    description: Admin bypass of branch protection rules must be prevented.
+    catalog-ref: repo-branch-protection/BP-4
+    assessment-requirements:
+      - id: BP-4.01
+        description: Admin bypass prevention must be enabled on protected branches.
+        frequency: on-demand
+
+  - id: BP-5
+    title: Require Code Owner Review
+    description: Code owner review must be required when CODEOWNERS file exists.
+    catalog-ref: repo-branch-protection/BP-5
+    assessment-requirements:
+      - id: BP-5.01
+        description: Code owner review requirements must be enabled.
+        frequency: on-demand
+
+adherence:
+  evaluation-methods:
+    - type: automated
+      description: AMPEL automated branch protection evaluation
+      executor:
+        id: ampel
+        name: AMPEL
+        type: Software
+  assessment-plans:
+    - id: BP-1.01
+      requirement-id: BP-1.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: ampel
+    - id: BP-2.01
+      requirement-id: BP-2.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: ampel
+    - id: BP-3.01
+      requirement-id: BP-3.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: ampel
+    - id: BP-4.01
+      requirement-id: BP-4.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: ampel
+    - id: BP-5.01
+      requirement-id: BP-5.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: ampel
+

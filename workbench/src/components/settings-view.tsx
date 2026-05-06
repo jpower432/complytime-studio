@@ -32,7 +32,7 @@ export function SettingsView() {
   const me = currentUser.value;
 
   if (me?.role !== "admin") {
-    navigate("posture");
+    navigate("dashboard");
     return null;
   }
 

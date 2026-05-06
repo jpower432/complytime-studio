@@ -90,7 +90,34 @@ You specialize in <Layer N (Name)>: <what you do>.
 
 ### 4. Register in Helm
 
-Add the agent to `charts/complytime-studio/templates/agent-specialists.yaml`. The Helm template reads `agent.yaml` and renders a kagent Declarative Agent CRD.
+Create a kagent `Agent` CRD template with `type: BYO` in `charts/complytime-studio/templates/`. The agent container must serve A2A at `/.well-known/agent-card.json`. kagent manages the Deployment + Service lifecycle and exposes the agent in the dashboard.
+
+```yaml
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: studio-<agent-name>
+  namespace: {{ .Release.Namespace }}
+spec:
+  description: One-line description
+  type: BYO
+  byo:
+    deployment:
+      image: "{{ .Values.<agent>.image.repository }}:{{ .Values.<agent>.image.tag }}"
+      env:
+        - name: GEMARA_MCP_URL
+          value: "http://studio-gemara-mcp:3000/mcp"
+        - name: POSTGRES_MCP_URL
+          value: "http://studio-postgres-mcp:3000/mcp"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+```
+
+Add an entry to `agentDirectory` in `values.yaml` so the gateway allowlists the agent and serves it in `GET /api/agents`.
+
+**Framework-agnostic:** The container can use any agent framework (Google ADK, LangGraph, CrewAI, custom) as long as it speaks A2A. kagent does not inspect the agent internals.
 
 ### 5. Sync prompts
 
@@ -175,7 +202,7 @@ The final system prompt is assembled by kagent at runtime:
 | Server | Transport | Auth Model |
 |:--|:--|:--|
 | studio-gemara-mcp | stdio | Static (no user auth) |
-| studio-clickhouse-mcp | stdio | Static credentials via Secret |
+| studio-postgres-mcp | stdio | PostgreSQL query access (pgEdge — query_database, get_schema_info) |
 | studio-oras-mcp | stdio | Gateway proxy handles auth |
 
 Servers using `http` transport accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
@@ -196,17 +223,19 @@ The gateway extracts the user's access token from the session cookie and injects
 
 ## Existing Agents
 
-| Agent | Layer | Type | A2A skill `id` (agent card) |
-|:--|:--|:--|:--|
-| studio-assistant | L7 (Audit) | BYO ADK | `compliance-assistant` |
+| Agent | Layer | Type | Framework | A2A skill `id` (agent card) |
+|:--|:--|:--|:--|:--|
+| studio-assistant | L7 (Audit) | BYO (`kagent.dev/v1alpha2 Agent`) | Google ADK (Python) | `compliance-assistant` |
 
 Canonical spec: `agents/assistant/agent.yaml` (Helm `agentDirectory` must keep `a2a.skills` in sync).
+
+All agents are deployed as kagent `Agent` CRDs with `type: BYO`. A2A traffic routes through the kagent controller (`kagent-controller:8083`). The gateway proxies requests via `KAGENT_A2A_URL`.
 
 **studio-assistant internal skills** (`skills/*/SKILL.md`, also vendored under `agents/assistant/skills/` for the image):
 
 | Skill | Purpose |
 |:--|:--|
-| `studio-audit` | Classification criteria, coverage mapping, ClickHouse DDL reference |
+| `studio-audit` | Classification criteria, coverage mapping, PostgreSQL schema reference |
 | `posture-check` | Pre-audit readiness — cadence, provenance, method, evidence fitness |
 
 External git-mounted skills (see `agent.yaml`): `research.md`, `gemara.md` from `rhaml-23/prompt`.
@@ -219,11 +248,11 @@ External git-mounted skills (see `agent.yaml`): `research.md`, `gemara.md` from 
 
 All commits created by agents MUST:
 
-1. Use `-s` to add a `Signed-off-by` trailer.
+1. Use `-S -s` to GPG-sign and add a `Signed-off-by` trailer.
 2. Include an `Assisted-by: Cursor (<model used>)` trailer.
 
 ```bash
-git commit -s -m "$(cat <<'EOF'
+git commit -S -s -m "$(cat <<'EOF'
 feat: description of the change
 
 Assisted-by: Cursor (claude-sonnet-4-20250514)
@@ -238,9 +267,11 @@ EOF
 - [ ] `agents/<name>/agent.yaml` with name, description, skills, mcp, a2a
 - [ ] `agents/<name>/prompt.md` with workflow steps only
 - [ ] Skills extracted to `skills/<name>/SKILL.md` if reusable
-- [ ] Agent added to `agent-specialists.yaml` Helm template
+- [ ] Agent CRD template (`type: BYO`) added to `charts/complytime-studio/templates/`
+- [ ] Agent entry added to `agentDirectory` in `values.yaml`
 - [ ] `make sync-prompts` copies prompt to chart
-- [ ] `allowedHeaders: [Authorization]` on MCP tool refs requiring OBO (if any)
+- [ ] Container serves A2A at `/.well-known/agent-card.json`
+- [ ] MCP server URLs passed via `env` in the BYO CRD deployment spec
 
 ---
 
@@ -274,7 +305,7 @@ Test boundary conditions and error handling.
 | MCP server unavailable | Start job when a required MCP server is down | Agent reports the specific unavailability (not a hang or generic failure) |
 | Multi-turn interruption | Close browser mid-conversation, reopen | Job resumes from last status; SSE reconnects or reports disconnected |
 | Validation failure | Manually edit artifact YAML to be invalid, click Validate | Validation returns specific errors referencing the CUE definition |
-| Empty evidence (assistant) | Query a policy_id/timeline with no ClickHouse data | Agent classifies all criteria as Gap, does not fabricate evidence |
+| Empty evidence (assistant) | Query a policy_id/timeline with no evidence data | Agent classifies all criteria as Gap, does not fabricate evidence |
 | Cadence gap (assistant) | Evidence exists but with missing assessment cycles | Agent produces Findings (not Observations) for each missing cycle with specific dates |
 | No MappingDocuments (assistant) | Start audit without MappingDocuments | Agent offers internal-only analysis, skips cross-framework phase |
 | Partial mapping strength (assistant) | MappingDocument has targets with low strength scores | Coverage matrix shows Partially/Weakly Covered with correct strength values |
@@ -290,3 +321,17 @@ After any agent change, verify the Kubernetes deployment renders correctly.
 | Prompt content | Inspect rendered `systemMessage` field | Full prompt.md content embedded, no truncation |
 | Values match | Compare `values.yaml` agent directory entry | Description and skills match `agent.yaml` |
 | No stale refs | Search chart templates for old descriptions | Zero matches |
+
+## Convention Packs
+
+This repository uses convention packs scaffolded by
+unbound-force. Agents MUST read the applicable pack(s)
+before writing or reviewing code.
+
+- `.opencode/uf/packs/default.md`
+- `.opencode/uf/packs/default-custom.md`
+- `.opencode/uf/packs/severity.md`
+- `.opencode/uf/packs/content.md`
+- `.opencode/uf/packs/content-custom.md`
+- `.opencode/uf/packs/go.md`
+- `.opencode/uf/packs/go-custom.md`

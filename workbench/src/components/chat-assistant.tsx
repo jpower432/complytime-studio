@@ -109,8 +109,7 @@ function StickyNotesPanel({
   );
 }
 
-export function ChatAssistant() {
-  const [open, setOpen] = useState(false);
+export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
@@ -127,15 +126,17 @@ export function ChatAssistant() {
   const autoPersistRef = useRef(false);
 
   useEffect(() => {
-    fetchChatHistory().then((data) => {
-      if (data.messages.length > 0) {
-        setMessages(data.messages as ChatMessage[]);
-      }
-      if (data.taskId) {
-        taskIdRef.current = data.taskId;
-      }
-      setLoading(false);
-    });
+    fetchChatHistory()
+      .then((data) => {
+        if (data.messages.length > 0) {
+          setMessages(data.messages as ChatMessage[]);
+        }
+        if (data.taskId) {
+          taskIdRef.current = data.taskId;
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -164,7 +165,12 @@ export function ChatAssistant() {
     const ctx: Record<string, string> = { view: currentView.value };
     const policyId = selectedPolicyDetail.value || selectedPolicyId.value;
     if (policyId) ctx.policy_id = policyId;
-    if (selectedPolicyDetail.value) ctx.active_tab = activeTab.value;
+    if (
+      policyId &&
+      (selectedPolicyDetail.value || currentView.value === "policies")
+    ) {
+      ctx.active_tab = activeTab.value;
+    }
     if (selectedTimeRange.value) {
       ctx.start = selectedTimeRange.value.start;
       ctx.end = selectedTimeRange.value.end;
@@ -312,13 +318,10 @@ export function ChatAssistant() {
     }
   };
 
+  if (!open) return null;
+
   return (
     <>
-      <button class="chat-fab" onClick={() => setOpen(!open)} title="Chat with Studio Assistant" aria-expanded={open}>
-        {open ? "\u2715" : "\u{1F4AC}"}
-      </button>
-
-      {open && (
         <div class="chat-overlay">
           <div class="chat-overlay-header">
             <div>
@@ -336,6 +339,11 @@ export function ChatAssistant() {
                 onClick={handleNewSession}
                 disabled={streaming}
               >New Session</button>
+              {onClose && (
+                <button class="btn btn-sm btn-secondary" onClick={onClose} title="Close" aria-label="Close chat">
+                  &times;
+                </button>
+              )}
             </div>
           </div>
 
@@ -422,7 +430,6 @@ export function ChatAssistant() {
             </button>
           </div>
         </div>
-      )}
     </>
   );
 }

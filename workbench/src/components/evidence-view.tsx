@@ -3,7 +3,14 @@
 import { Fragment } from "preact";
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { apiFetch } from "../api/fetch";
-import { viewInvalidation, selectedPolicyId, updateHash } from "../app";
+import {
+  viewInvalidation,
+  selectedPolicyId,
+  selectedControlId,
+  selectedEvidenceTargetId,
+  selectedProgramFilter,
+  updateHash,
+} from "../app";
 import {
   type FreshnessBucket,
   freshnessFromFrequency,
@@ -11,9 +18,10 @@ import {
   freshnessRowClass,
   parsePolicyFrequencies,
 } from "../lib/freshness";
-import { createFilterChips, FilterChips } from "./filter-chip";
+import { createFilterChips } from "./filter-chip";
 import { AddFilterMenu } from "./add-filter-menu";
 import { fmtDateTime } from "../lib/format";
+import { fetchRequirementMatrix, type RequirementRow } from "../api/requirements";
 
 interface EvidenceRecord {
   evidence_id: string;
@@ -56,8 +64,19 @@ interface PolicyOption {
   title: string;
 }
 
-function evidenceRowKey(r: EvidenceRecord): string {
-  return `${r.evidence_id}\t${r.collected_at}`;
+interface ProgramListItem {
+  id: string;
+  name: string;
+}
+
+interface ProgramDetailResponse {
+  id: string;
+  name: string;
+  policy_ids: string[];
+}
+
+function evidenceRowKey(r: EvidenceRecord, idx: number): string {
+  return `${r.evidence_id}\t${r.collected_at}\t${idx}`;
 }
 
 function SourceRegistryDetail({ value }: { value: string }) {
@@ -97,7 +116,7 @@ function CertBadge({ certified }: { certified?: boolean }) {
   }
   if (certified === false) {
     return (
-      <span class="cert-badge cert-warn" title="Uncertified">&#x26A0;</span>
+      <span class="cert-badge cert-fail" title="Failed certification">&#x2717;</span>
     );
   }
   return <span class="cert-badge cert-pending" title="Pending">&#x2014;</span>;
@@ -202,12 +221,16 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   const [policies, setPolicies] = useState<PolicyOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [policyId, setPolicyId] = useState(policyIdOverride || "");
-  const [controlId, setControlId] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [chipState] = useState(() => createFilterChips());
   const [policyContent, setPolicyContent] = useState("");
+  const [programRows, setProgramRows] = useState<ProgramListItem[]>([]);
+  const [programPolicyIds, setProgramPolicyIds] = useState<Set<string> | null>(
+    null,
+  );
+  const [reqTextMap, setReqTextMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (initialTargetFilter) {
@@ -226,12 +249,43 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   }, [initialControlFilter]);
 
   useEffect(() => {
+    if (embedded) return;
+    const tid = selectedEvidenceTargetId.value;
+    if (!tid) return;
+    chipState.remove("Target");
+    chipState.remove("Control");
+    chipState.add("Target", tid);
+  }, [embedded, selectedEvidenceTargetId.value]);
+
+  useEffect(() => {
+    if (embedded) return;
+    const cid = selectedControlId.value;
+    if (!cid) return;
+    chipState.remove("Control");
+    chipState.remove("Target");
+    chipState.add("Control", cid);
+    selectedControlId.value = null;
+  }, [embedded, selectedControlId.value]);
+
+  useEffect(() => {
     if (!policyIdOverride) return;
     apiFetch(`/api/policies/${encodeURIComponent(policyIdOverride)}`)
       .then((r) => r.json())
       .then((d: { policy: { content?: string } }) => setPolicyContent(d.policy.content || ""))
       .catch(() => setPolicyContent(""));
   }, [policyIdOverride]);
+
+  useEffect(() => {
+    const pid = policyId || policyIdOverride;
+    if (!pid) { setReqTextMap(new Map()); return; }
+    fetchRequirementMatrix({ policy_id: pid })
+      .then((rows: RequirementRow[]) => {
+        const m = new Map<string, string>();
+        for (const r of rows) m.set(r.control_id, r.requirement_text);
+        setReqTextMap(m);
+      })
+      .catch(() => setReqTextMap(new Map()));
+  }, [policyId, policyIdOverride]);
 
   useEffect(() => {
     apiFetch("/api/policies")
@@ -241,16 +295,46 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   }, []);
 
   useEffect(() => {
+    apiFetch("/api/programs")
+      .then((r) => r.json())
+      .then((data: ProgramListItem[]) =>
+        setProgramRows(Array.isArray(data) ? data : []),
+      )
+      .catch(() => setProgramRows([]));
+  }, [viewInvalidation.value]);
+
+  useEffect(() => {
+    const pid = selectedProgramFilter.value;
+    if (!pid) {
+      setProgramPolicyIds(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`/api/programs/${encodeURIComponent(pid)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ProgramDetailResponse | null) => {
+        if (cancelled || !d?.policy_ids) return;
+        setProgramPolicyIds(new Set(d.policy_ids));
+      })
+      .catch(() => {
+        if (!cancelled) setProgramPolicyIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProgramFilter.value, viewInvalidation.value]);
+
+  useEffect(() => {
     if (selectedPolicyId.value && !policyId) setPolicyId(selectedPolicyId.value);
   }, []);
 
   const search = () => {
-    if (policyId) selectedPolicyId.value = policyId;
+    const effectivePolicyId = policyId || selectedPolicyId.value || "";
+    if (effectivePolicyId) selectedPolicyId.value = effectivePolicyId;
     updateHash();
     setLoading(true);
     const params = new URLSearchParams();
-    if (policyId) params.set("policy_id", policyId);
-    if (controlId) params.set("control_id", controlId);
+    if (effectivePolicyId) params.set("policy_id", effectivePolicyId);
     if (start) params.set("start", start);
     if (end) params.set("end", end);
     params.set("limit", "200");
@@ -288,12 +372,19 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   const filteredRecords = useMemo(() => {
     const chips = chipState.filters.value;
     return recordsWithBuckets.filter((r) => {
+      if (programPolicyIds && !programPolicyIds.has(r.policy_id)) return false;
       for (const [key, value] of chips) {
         if (key === "Freshness") {
           const expected = FRESHNESS_LABELS[value];
           if (expected && r._bucket !== expected) return false;
         } else if (key === "Control") {
           if (r.control_id.toLowerCase() !== value.toLowerCase()) return false;
+        } else if (key === "Target") {
+          const v = value.toLowerCase();
+          if (
+            r.target_id?.toLowerCase() !== v &&
+            (r.target_name || r.target_id)?.toLowerCase() !== v
+          ) return false;
         } else {
           const fieldName = CHIP_FIELD_MAP[key];
           if (fieldName) {
@@ -304,7 +395,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
       }
       return true;
     });
-  }, [recordsWithBuckets, chipState.filters.value]);
+  }, [recordsWithBuckets, chipState.filters.value, programPolicyIds]);
 
   const freshnessCounts = useMemo(() => {
     const counts: Record<FreshnessBucket, number> = {
@@ -317,7 +408,48 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
   const distinctValues = (field: keyof EvidenceRecord) => () =>
     [...new Set(records.map((r) => r[field]).filter(Boolean) as string[])].sort();
 
+  const programFilterFields = selectedProgramFilter.value
+    ? []
+    : [
+        {
+          key: "Program",
+          label: "Program",
+          options: () =>
+            [...programRows]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((p) => ({
+                value: p.id,
+                label: p.name || p.id,
+              })),
+          pick: (id: string) => {
+            selectedProgramFilter.value = id;
+            updateHash();
+          },
+        },
+      ];
+
+  const policyFilterField = embedded || policyId
+    ? []
+    : [
+        {
+          key: "Policy",
+          label: "Policy",
+          options: () =>
+            [...policies]
+              .sort((a, b) => a.title.localeCompare(b.title))
+              .map((p) => ({ value: p.policy_id, label: p.title || p.policy_id })),
+          pick: (id: string) => {
+            setPolicyId(id);
+            selectedPolicyId.value = id;
+            updateHash();
+          },
+        },
+      ];
+
   const filterFields = [
+    ...policyFilterField,
+    ...programFilterFields,
+    { key: "Control", label: "Control ID", options: distinctValues("control_id") },
     { key: "Target", label: "Target", options: distinctValues("target_name") },
     { key: "Result", label: "Result", options: ["Passed", "Failed", "Unknown"] },
     {
@@ -349,22 +481,70 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
       </div>
 
       <div class="evidence-filters">
-        {!embedded && (
-          <select value={policyId} data-policy-id={policyId || ""} onChange={(e) => setPolicyId((e.target as HTMLSelectElement).value)}>
-            <option value="">All Policies</option>
-            {policies.map((p) => (
-              <option key={p.policy_id} value={p.policy_id}>{p.title}</option>
-            ))}
-          </select>
-        )}
-        <input placeholder="Control ID" value={controlId} onInput={(e) => setControlId((e.target as HTMLInputElement).value)} />
         <input type="date" value={start} onInput={(e) => setStart((e.target as HTMLInputElement).value)} />
         <input type="date" value={end} onInput={(e) => setEnd((e.target as HTMLInputElement).value)} />
         <AddFilterMenu fields={filterFields} chipState={chipState} />
         <button class="btn btn-primary" onClick={search}>Search</button>
       </div>
 
-      <FilterChips state={chipState} />
+      {(chipState.filters.value.size > 0 || selectedProgramFilter.value || (policyId && !embedded)) && (
+        <div class="filter-chips">
+          {policyId && !embedded && (
+            <span class="filter-chip" key="policy-filter">
+              <span class="filter-chip-label">
+                Policy:{" "}
+                {policies.find((p) => p.policy_id === policyId)?.title || policyId}
+              </span>
+              <button
+                type="button"
+                class="filter-chip-dismiss"
+                aria-label="Remove Policy filter"
+                onClick={() => {
+                  setPolicyId("");
+                  selectedPolicyId.value = null;
+                  setPolicyContent("");
+                  updateHash();
+                }}
+              >
+                &times;
+              </button>
+            </span>
+          )}
+          {selectedProgramFilter.value && (
+            <span class="filter-chip" key="program-filter">
+              <span class="filter-chip-label">
+                Program:{" "}
+                {programRows.find((p) => p.id === selectedProgramFilter.value)
+                  ?.name || selectedProgramFilter.value}
+              </span>
+              <button
+                type="button"
+                class="filter-chip-dismiss"
+                aria-label="Remove Program filter"
+                onClick={() => {
+                  selectedProgramFilter.value = null;
+                  updateHash();
+                }}
+              >
+                &times;
+              </button>
+            </span>
+          )}
+          {[...chipState.filters.value.entries()].map(([key, value]) => (
+            <span key={key} class="filter-chip">
+              <span class="filter-chip-label">{key}: {value}</span>
+              <button
+                type="button"
+                class="filter-chip-dismiss"
+                aria-label={`Remove ${key} filter`}
+                onClick={() => chipState.remove(key)}
+              >
+                &times;
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div class="view-loading">Querying evidence...</div>
@@ -387,13 +567,13 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((r) => {
-                const rowKey = evidenceRowKey(r);
+              {filteredRecords.map((r, idx) => {
+                const rowKey = evidenceRowKey(r, idx);
                 const open = expandedKey === rowKey;
                 const certTooltip = r.certified === true
                   ? "Certified — click for details"
                   : r.certified === false
-                    ? "Uncertified — click for details"
+                    ? "Failed certification — click for details"
                     : "Pending certification — click for details";
                 return (
                   <Fragment key={rowKey}>
@@ -421,7 +601,7 @@ export function EvidenceView({ policyIdOverride, initialTargetFilter, initialCon
                       <td title={r.target_id}>
                         {r.target_name || r.target_id}
                       </td>
-                      <td>{r.control_id}</td>
+                      <td title={reqTextMap.get(r.control_id) || undefined}>{r.control_id}</td>
                       <td>
                         <span class={
                           `eval-badge eval-${r.eval_result

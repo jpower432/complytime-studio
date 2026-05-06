@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # NetworkPolicies for Helm-managed studio pods.
-# Scope: gateway, registry, clickhouse (pods with part-of: complytime-studio).
+# Scope: gateway, registry, clickhouse, postgres (pods with part-of: complytime-studio).
 # Out of scope: agents and MCP servers — managed by kagent/kmcp with their own
 # label scheme (part-of: kagent / managed-by: kmcp). Configure those at the
 # kagent level if needed.
@@ -66,14 +66,16 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: studio-assistant
-              app.kubernetes.io/component: assistant
               app.kubernetes.io/part-of: complytime-studio
+        - podSelector:
+            matchLabels:
+              kagent: studio-assistant
       ports:
         - port: 8081
           protocol: TCP
 
 ---
-# Assistant: accept ingress from namespace peers (gateway A2A proxy) on port 8080.
+# Assistant: accept ingress from gateway only (A2A proxy) on port 8080.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -88,7 +90,10 @@ spec:
       app.kubernetes.io/part-of: complytime-studio
   ingress:
     - from:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
       ports:
         - port: 8080
           protocol: TCP
@@ -138,6 +143,35 @@ spec:
         - port: 8123
           protocol: TCP
         - port: 9000
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.postgres.enabled }}
+---
+# PostgreSQL: accept ingress from gateway and postgres-mcp pods on port 5432.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: studio-postgres-mcp
+      ports:
+        - port: 5432
           protocol: TCP
 {{- end }}
 

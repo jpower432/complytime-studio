@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect } from "preact/hooks";
-import { selectedPolicyDetail, activeTab, navigate, updateHash } from "../app";
+import {
+  selectedPolicyId,
+  activeTab,
+  navigate,
+  updateHash,
+  selectedEvidenceTargetId,
+} from "../app";
 import { apiFetch } from "../api/fetch";
 import { RequirementMatrixView } from "./requirement-matrix-view";
-import { InventoryView } from "./inventory-view";
-import { EvidenceView } from "./evidence-view";
 import { AuditHistoryView } from "./audit-history-view";
+import { fmtDate } from "../lib/format";
 
 interface PolicyInfo {
   policy_id: string;
@@ -14,44 +19,44 @@ interface PolicyInfo {
   version?: string;
 }
 
-type TabId = "requirements" | "inventory" | "evidence" | "history";
+interface MappingDocument {
+  mapping_id: string;
+  source_catalog_id: string;
+  target_catalog_id: string;
+  framework: string;
+  imported_at: string;
+}
+
+type TabId = "requirements" | "mappings" | "history";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "requirements", label: "Requirements" },
-  { id: "inventory", label: "Inventory" },
-  { id: "evidence", label: "Evidence" },
+  { id: "mappings", label: "Mappings" },
   { id: "history", label: "History" },
 ];
 
 export function PolicyDetailView() {
-  const policyId = selectedPolicyDetail.value;
-  const tab = activeTab.value;
+  const policyId = selectedPolicyId.value;
+  const tab = (activeTab.value as TabId) || "requirements";
   const [policy, setPolicy] = useState<PolicyInfo | null>(null);
-  const [evidenceTargetFilter, setEvidenceTargetFilter] = useState<string | undefined>();
-  const [evidenceControlFilter, setEvidenceControlFilter] = useState<string | undefined>();
-
-  const handleTargetClick = (targetId: string, targetName: string) => {
-    setEvidenceTargetFilter(targetName || targetId);
-    setEvidenceControlFilter(undefined);
-    switchTab("evidence");
-  };
-
-  const handleControlClick = (controlId: string) => {
-    setEvidenceControlFilter(controlId);
-    setEvidenceTargetFilter(undefined);
-    switchTab("evidence");
-  };
+  const [mappings, setMappings] = useState<MappingDocument[]>([]);
 
   useEffect(() => {
     if (!policyId) return;
     apiFetch(`/api/policies/${encodeURIComponent(policyId)}`)
       .then((r) => r.json())
-      .then((d: { policy: PolicyInfo }) => setPolicy(d.policy))
-      .catch(() => setPolicy({ policy_id: policyId, title: policyId }));
+      .then((d: { policy: PolicyInfo; mappings?: MappingDocument[] }) => {
+        setPolicy(d.policy);
+        setMappings(d.mappings || []);
+      })
+      .catch(() => {
+        setPolicy({ policy_id: policyId, title: policyId });
+        setMappings([]);
+      });
   }, [policyId]);
 
   if (!policyId) {
-    navigate("posture");
+    navigate("policies");
     return null;
   }
 
@@ -60,10 +65,26 @@ export function PolicyDetailView() {
     updateHash();
   };
 
+  const goBack = () => {
+    activeTab.value = "requirements";
+    navigate("policies");
+  };
+
+  const goToInventory = () => {
+    selectedPolicyId.value = policyId;
+    navigate("inventory");
+  };
+
+  const goToEvidence = () => {
+    selectedPolicyId.value = policyId;
+    selectedEvidenceTargetId.value = null;
+    navigate("evidence");
+  };
+
   return (
     <section class="policy-detail-view" data-policy-id={policyId}>
       <nav class="breadcrumb" aria-label="Breadcrumb">
-        <button class="breadcrumb-link" onClick={() => navigate("posture")}>Posture</button>
+        <button class="breadcrumb-link" onClick={goBack}>Policies</button>
         <span class="breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
         <span class="breadcrumb-current">{policy?.title || policyId}</span>
       </nav>
@@ -80,26 +101,53 @@ export function PolicyDetailView() {
             {t.label}
           </button>
         ))}
+        <span class="tab-bar-spacer" />
+        <button class="btn btn-sm btn-secondary" onClick={goToInventory}>
+          Inventory &rsaquo;
+        </button>
+        <button class="btn btn-sm btn-secondary" onClick={goToEvidence}>
+          Evidence &rsaquo;
+        </button>
       </div>
 
       <div class="tab-content" role="tabpanel">
-        {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} />}
-        {tab === "inventory" && (
-          <InventoryView
-            policyIdOverride={policyId}
-            onTargetClick={handleTargetClick}
-            onControlClick={handleControlClick}
-          />
-        )}
-        {tab === "evidence" && (
-          <EvidenceView
-            policyIdOverride={policyId}
-            initialTargetFilter={evidenceTargetFilter}
-            initialControlFilter={evidenceControlFilter}
-          />
-        )}
+        {tab === "requirements" && <RequirementMatrixView policyIdOverride={policyId} mode="adherence" />}
+        {tab === "mappings" && <MappingsPanel mappings={mappings} />}
         {tab === "history" && <AuditHistoryView policyIdOverride={policyId} />}
       </div>
     </section>
+  );
+}
+
+function MappingsPanel({ mappings }: { mappings: MappingDocument[] }) {
+  if (mappings.length === 0) {
+    return (
+      <div class="empty-state">
+        <p>No mapping documents loaded for this policy.</p>
+      </div>
+    );
+  }
+
+  return (
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Framework</th>
+          <th>Source Catalog</th>
+          <th>Target Catalog</th>
+          <th>Imported</th>
+        </tr>
+      </thead>
+      <tbody>
+        {mappings.map((m) => (
+          <tr key={m.mapping_id}>
+            <td>{m.framework || "—"}</td>
+            <td class="mono">{m.source_catalog_id}</td>
+            <td class="mono">{m.target_catalog_id}</td>
+            <td>{fmtDate(m.imported_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

@@ -1,0 +1,108 @@
+title: Supply Chain Attestation Policy
+metadata:
+  type: Policy
+  id: supply-chain-attestation
+  version: 1.0.0
+  gemara-version: 1.0.0
+  description: >-
+    Supply chain security policy requiring SBOM generation, build provenance,
+    dependency scanning, and artifact signing for all release artifacts.
+  author:
+    id: complytime
+    name: ComplyTime
+    type: Software Assisted
+  mapping-references:
+    - id: supply-chain-controls
+      title: Supply Chain Security Controls
+      version: 1.0.0
+      description: Control catalog for supply chain attestation
+
+contacts:
+  responsible:
+    - name: Release Engineering
+  accountable:
+    - name: Security Team
+
+scope:
+  in:
+    technologies:
+      - Container Registries
+      - CI/CD Pipelines
+    users:
+      - Release engineers
+
+criteria:
+  - id: SCA-1
+    title: Generate SBOM for All Releases
+    description: Every release artifact must have an accompanying SBOM in SPDX or CycloneDX format.
+    catalog-ref: supply-chain-controls/SCA-1
+    assessment-requirements:
+      - id: SCA-1.01
+        description: SBOM MUST be generated and published alongside every container image release.
+        frequency: on-demand
+
+  - id: SCA-2
+    title: Produce Build Provenance
+    description: Build provenance attestations must be generated using SLSA-compliant builders.
+    catalog-ref: supply-chain-controls/SCA-2
+    assessment-requirements:
+      - id: SCA-2.01
+        description: SLSA provenance attestation MUST be attached to every release artifact.
+        frequency: on-demand
+
+  - id: SCA-3
+    title: Scan Dependencies for Vulnerabilities
+    description: All direct and transitive dependencies must be scanned for known vulnerabilities.
+    catalog-ref: supply-chain-controls/SCA-3
+    assessment-requirements:
+      - id: SCA-3.01
+        description: Dependency scan MUST run in CI and block releases with critical/high CVEs.
+        frequency: daily
+
+  - id: SCA-4
+    title: Sign Release Artifacts
+    description: All release artifacts must be cryptographically signed using Sigstore cosign.
+    catalog-ref: supply-chain-controls/SCA-4
+    assessment-requirements:
+      - id: SCA-4.01
+        description: Container images MUST be signed with cosign before promotion to production registry.
+        frequency: on-demand
+
+adherence:
+  evaluation-methods:
+    - type: automated
+      description: Cosign verification, Trivy scanning, and SLSA provenance checks
+      executor:
+        id: cosign-verifier
+        name: Cosign Verifier
+        type: Software
+  assessment-plans:
+    - id: SCA-1.01
+      requirement-id: SCA-1.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: cosign-verifier
+    - id: SCA-2.01
+      requirement-id: SCA-2.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: cosign-verifier
+    - id: SCA-3.01
+      requirement-id: SCA-3.01
+      frequency: daily
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: trivy
+    - id: SCA-4.01
+      requirement-id: SCA-4.01
+      frequency: on-demand
+      evaluation-methods:
+        - type: automated
+          executor:
+            id: cosign-verifier
+

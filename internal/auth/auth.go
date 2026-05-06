@@ -4,66 +4,25 @@ package auth
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
-	"time"
 
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/labstack/echo/v4"
 )
 
-const (
-	sessionCookieName = "studio_session"
-	stateCookieName   = "studio_oauth_state"
-	sessionMaxAge     = 8 * time.Hour
-
-	googleAuthURL  = "https://accounts.google.com/o/oauth2/v2/auth"
-	googleTokenURL = "https://oauth2.googleapis.com/token"
-	googleUserURL  = "https://openidconnect.googleapis.com/v1/userinfo"
-)
-
-var (
-	httpClient = &http.Client{Timeout: 15 * time.Second}
-
-	// ErrSessionNotFound indicates no session exists for the given ID.
-	ErrSessionNotFound = errors.New("session not found")
-	// ErrSessionExpired indicates the session has passed its expiration time.
-	ErrSessionExpired = errors.New("session expired")
-)
-
-// Config holds Google OAuth application credentials.
-type Config struct {
-	ClientID     string
-	ClientSecret string
-	CallbackURL  string
-}
-
-// Session represents the authenticated user session injected into request
-// context. It does not contain the access token — that stays server-side.
+// Session represents the authenticated user identity injected into request
+// context. Populated from X-Forwarded-* headers set by OAuth2 Proxy.
 type Session struct {
 	Login          string   `json:"l"`
 	Name           string   `json:"n"`
 	AvatarURL      string   `json:"a"`
 	Email          string   `json:"e"`
 	Groups         []string `json:"g,omitempty"`
-	ExpiresAt      int64    `json:"x"`
 	ServiceAccount bool     `json:"-"`
-}
-
-// cookiePayload is the encrypted cookie content — only a session ID.
-type cookiePayload struct {
-	SessionID string `json:"sid"`
 }
 
 // UserInfo is the public-facing user info returned by /auth/me.
@@ -73,34 +32,6 @@ type UserInfo struct {
 	AvatarURL string `json:"avatar_url"`
 	Email     string `json:"email"`
 	Role      string `json:"role"`
-}
-
-// RequireAdmin returns middleware that rejects non-admin requests with 403.
-// Fails closed: if the store lookup errors, the request is rejected.
-func RequireAdmin(users UserStore) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sess, ok := SessionFrom(r.Context())
-			if !ok {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
-				return
-			}
-			if sess.ServiceAccount {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if users == nil {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
-				return
-			}
-			u, err := users.GetUser(r.Context(), sess.Email)
-			if err != nil || u.Role != consts.RoleAdmin {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 type contextKey string
@@ -113,29 +44,48 @@ func SessionFrom(ctx context.Context) (*Session, bool) {
 	return s, ok
 }
 
-// Handler manages OAuth login, callback, and session endpoints.
+// Handler provides auth middleware and user management endpoints. Identity
+// is established by OAuth2 Proxy via X-Forwarded-* headers. The handler
+// trusts these headers, upserts users on first-seen, and enforces RBAC.
 type Handler struct {
-	cfg       Config
-	secretKey []byte
-	gcm       cipher.AEAD
-	apiToken  string
-	store     SessionStore
-	users     UserStore
+	apiToken string
+	users    UserStore
 }
 
-// NewHandler creates auth handlers. The secretKey must be exactly 32 bytes
-// (AES-256). Session cookies are encrypted with AES-GCM. The cookie now
-// carries only a session ID; tokens are stored in the SessionStore.
-func NewHandler(cfg Config, secretKey []byte, store SessionStore) (*Handler, error) {
-	block, err := aes.NewCipher(secretKey)
-	if err != nil {
-		return nil, fmt.Errorf("auth: invalid secret key: %w", err)
+// NewHandler creates an auth handler. OAuth2 Proxy handles OIDC externally;
+// the handler only reads proxy-injected headers and manages the user store.
+func NewHandler(apiToken string) *Handler {
+	return &Handler{apiToken: apiToken}
+}
+
+// StripUntrustedProxyHeaders returns middleware that removes X-Forwarded-*
+// identity headers from requests not originating from the trusted OAuth2
+// Proxy sidecar. This prevents header spoofing when the gateway is
+// accidentally exposed without the proxy in front.
+//
+// When proxySecret is non-empty, requests must carry a matching
+// X-Proxy-Secret header or have their identity headers stripped.
+// When proxySecret is empty, this middleware is a no-op (dev mode).
+func StripUntrustedProxyHeaders(proxySecret string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if proxySecret == "" {
+				return next(c)
+			}
+			r := c.Request()
+			if r.Header.Get("X-Proxy-Secret") != proxySecret {
+				r.Header.Del("X-Forwarded-Email")
+				r.Header.Del("X-Forwarded-User")
+				r.Header.Del("X-Forwarded-Preferred-Username")
+				r.Header.Del("X-Forwarded-Groups")
+				r.Header.Del("X-Forwarded-Access-Token")
+				r.Header.Del("X-Proxy-Secret")
+			} else {
+				r.Header.Del("X-Proxy-Secret")
+			}
+			return next(c)
+		}
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("auth: GCM init: %w", err)
-	}
-	return &Handler{cfg: cfg, secretKey: secretKey, gcm: gcm, store: store}, nil
 }
 
 // SetUserStore configures the persistent user/role store.
@@ -143,474 +93,321 @@ func (h *Handler) SetUserStore(us UserStore) {
 	h.users = us
 }
 
-// SetAPIToken configures a static bearer token that bypasses session auth.
-// Intended for dev/CI seeding scripts. No-op if token is empty.
-func (h *Handler) SetAPIToken(token string) {
-	h.apiToken = token
+// Register mounts auth endpoints. Login, callback, and logout are handled by
+// OAuth2 Proxy at /oauth2/*. The /auth/logged-out page is excluded from proxy
+// auth (via --skip-auth-route) so it renders after session cookie is cleared.
+func (h *Handler) Register(e *echo.Echo) {
+	e.GET("/auth/me", h.handleMeEcho)
+	e.GET("/auth/logged-out", handleLoggedOut)
 }
 
-// Register mounts auth endpoints on the mux.
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/auth/login", h.handleLogin)
-	mux.HandleFunc("/auth/callback", h.handleCallback)
-	mux.HandleFunc("/auth/me", h.handleMe)
-	mux.HandleFunc("/auth/logout", h.handleLogout)
+func handleLoggedOut(c echo.Context) error {
+	return c.HTML(http.StatusOK, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Signed Out — ComplyTime Studio</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#f8f9fa;color:#1e293b}
+@media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b;border-color:#334155}a{color:#4db8d1}}
+.card{text-align:center;padding:48px 40px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 4px 24px rgba(0,0,0,0.06);max-width:380px}
+.card h2{font-size:1.25rem;font-weight:600;margin-bottom:8px}
+.card p{font-size:0.9rem;color:#64748b;margin-bottom:24px}
+a{color:#3b8ea5;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px;border:1px solid currentColor;display:inline-block;transition:background 0.15s,color 0.15s}
+a:hover{background:#3b8ea5;color:#fff}
+</style></head>
+<body><div class="card"><h2>Signed out</h2><p>Your session has ended.</p><a href="/">Sign in</a></div></body></html>`)
 }
 
 // RegisterChatHistory mounts GET/PUT /api/chat/history for server-side chat persistence.
-func (h *Handler) RegisterChatHistory(mux *http.ServeMux, chatStore ChatStore) {
-	mux.HandleFunc("GET /api/chat/history", h.handleGetChatHistory(chatStore))
-	mux.HandleFunc("PUT /api/chat/history", h.handlePutChatHistory(chatStore))
+func (h *Handler) RegisterChatHistory(g *echo.Group, chatStore ChatStore) {
+	g.GET("/chat/history", h.handleGetChatHistory(chatStore))
+	g.PUT("/chat/history", h.handlePutChatHistory(chatStore))
 }
 
-func (h *Handler) handleGetChatHistory(cs ChatStore) http.HandlerFunc {
-	type chatResp struct {
-		Messages json.RawMessage `json:"messages"`
-		TaskID   *string         `json:"taskId"`
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := SessionFrom(r.Context())
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
+// Middleware reads X-Forwarded-* headers from OAuth2 Proxy and injects a
+// Session into the request context. Falls through to anonymous for non-API
+// paths. Supports STUDIO_API_TOKEN bypass for CI/scripts.
+func (h *Handler) Middleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			r := c.Request()
+			if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
+				return next(c)
+			}
+
+			if h.apiToken != "" {
+				if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
+					sess := &Session{
+						Email:          "api-token@internal",
+						Name:           "API Token",
+						ServiceAccount: true,
+					}
+					ctx := context.WithValue(r.Context(), sessionKey, sess)
+					ctx = httputil.WithIdentity(ctx, "api-token@internal")
+					c.SetRequest(r.WithContext(ctx))
+					authRequestTotal.Add("api_token", 1)
+					return next(c)
+				}
+			}
+
+			email := r.Header.Get("X-Forwarded-Email")
+			if email == "" {
+				authRequestTotal.Add("anonymous", 1)
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			}
+
+			name := r.Header.Get("X-Forwarded-Preferred-Username")
+			if name == "" {
+				name = emailLocalPart(email)
+			}
+			sess := &Session{
+				Email:  email,
+				Name:   name,
+				Login:  r.Header.Get("X-Forwarded-User"),
+				Groups: splitGroups(r.Header.Get("X-Forwarded-Groups")),
+			}
+
+			if h.users != nil {
+				h.ensureUser(r.Context(), sess)
+			}
+
+			ctx := context.WithValue(r.Context(), sessionKey, sess)
+			ctx = httputil.WithIdentity(ctx, email)
+			c.SetRequest(r.WithContext(ctx))
+			authRequestTotal.Add("authenticated", 1)
+			return next(c)
 		}
-		chat, err := cs.GetChat(r.Context(), sess.Email)
-		if err != nil {
-			writeJSON(w, http.StatusOK, chatResp{Messages: json.RawMessage("[]"), TaskID: nil})
-			return
-		}
-		tid := &chat.TaskID
-		if chat.TaskID == "" {
-			tid = nil
-		}
-		writeJSON(w, http.StatusOK, chatResp{Messages: chat.Messages, TaskID: tid})
 	}
 }
 
-func (h *Handler) handlePutChatHistory(cs ChatStore) http.HandlerFunc {
-	type chatReq struct {
-		Messages json.RawMessage `json:"messages"`
-		TaskID   string          `json:"taskId"`
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := SessionFrom(r.Context())
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
+// serviceAccountAllowedPaths are the only write paths that STUDIO_API_TOKEN
+// can access. All other mutating /api/* routes require a human session with
+// sufficient role. This limits the blast radius of a leaked token to
+// seed/ingest operations.
+var serviceAccountAllowedPaths = []string{
+	"/api/evidence/ingest",
+	"/api/import",
+}
+
+var serviceAccountAllowedMethodPaths = []struct {
+	method string
+	prefix string
+}{
+	{"POST", "/api/programs"},
+	{"PUT", "/api/programs/"},
+}
+
+func writerAdminOnlyPath(path string) bool {
+	return strings.HasPrefix(path, "/api/users") ||
+		strings.HasPrefix(path, "/api/role-changes")
+}
+
+// RequireWrite returns middleware that rejects mutating requests without
+// sufficient role. Service accounts are restricted to serviceAccountAllowedPaths.
+func RequireWrite(users UserStore) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			sess, ok := SessionFrom(c.Request().Context())
+			if !ok {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+			}
+		if sess.ServiceAccount {
+			path := c.Request().URL.Path
+			method := c.Request().Method
+			for _, allowed := range serviceAccountAllowedPaths {
+				if strings.HasPrefix(path, allowed) {
+					return next(c)
+				}
+			}
+			for _, mp := range serviceAccountAllowedMethodPaths {
+				if method == mp.method && strings.HasPrefix(path, mp.prefix) {
+					return next(c)
+				}
+			}
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "api token not authorized for this endpoint"})
+			}
+			if users == nil {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+			}
+			u, err := users.GetUser(c.Request().Context(), sess.Email)
+			if err != nil {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+			}
+			switch u.Role {
+			case consts.RoleAdmin:
+				return next(c)
+			case consts.RoleWriter:
+				if writerAdminOnlyPath(c.Request().URL.Path) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+				}
+				return next(c)
+			default:
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
+			}
 		}
-		var req chatReq
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-		if err := cs.PutChat(r.Context(), sess.Email, ChatSession{Messages: req.Messages, TaskID: req.TaskID}); err != nil {
-			http.Error(w, "store failed", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-// TokenFromRequest looks up the server-side session and returns the access
-// token. Satisfies the httputil.TokenProvider interface.
+// TokenFromRequest reads the access token from the X-Forwarded-Access-Token
+// header injected by OAuth2 Proxy. Used by A2A proxy and publish modules.
 func (h *Handler) TokenFromRequest(r *http.Request) (string, bool) {
-	sid, err := h.sessionIDFromCookie(r)
-	if err != nil {
+	token := r.Header.Get("X-Forwarded-Access-Token")
+	if token == "" {
 		return "", false
 	}
-	sess, err := h.store.Get(r.Context(), sid)
-	if err != nil {
-		return "", false
-	}
-	if sess.AccessToken == "" {
-		return "", false
-	}
-	return sess.AccessToken, true
+	return token, true
 }
 
-// Middleware returns an http.Handler that requires a valid session cookie
-// on all /api/* paths. It injects the Session into request context.
-// When an API token is configured, requests with a matching
-// Authorization: Bearer header bypass the session cookie check.
-func (h *Handler) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
-			next.ServeHTTP(w, r)
-			return
+func (h *Handler) handleMeEcho(c echo.Context) error {
+	r := c.Request()
+	email := r.Header.Get("X-Forwarded-Email")
+	if email == "" {
+		sess, ok := SessionFrom(r.Context())
+		if ok {
+			email = sess.Email
 		}
-
-		if h.apiToken != "" {
-			if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
-				sess := &Session{
-					Email: "api-token@internal",
-					Name:  "API Token",
-				}
-				if h.apiToken == consts.DefaultDevAPIToken {
-					sess.ServiceAccount = true
-				}
-				ctx := context.WithValue(r.Context(), sessionKey, sess)
-				ctx = httputil.WithIdentity(ctx, "api-token@internal")
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
-		}
-
-		sid, err := h.sessionIDFromCookie(r)
-		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
-		}
-		serverSess, err := h.store.Get(r.Context(), sid)
-		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
-		}
-
-		sess := &Session{
-			Login:     serverSess.Login,
-			Name:      serverSess.Name,
-			AvatarURL: serverSess.AvatarURL,
-			Email:     serverSess.Email,
-			Groups:    serverSess.Groups,
-			ExpiresAt: serverSess.ExpiresAt,
-		}
-		ctx := context.WithValue(r.Context(), sessionKey, sess)
-		if id := sess.Email; id != "" {
-			ctx = httputil.WithIdentity(ctx, id)
-		} else if id := sess.Login; id != "" {
-			ctx = httputil.WithIdentity(ctx, id)
-		}
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	state := generateState()
-	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookieName,
-		Value:    state,
-		Path:     "/auth",
-		MaxAge:   600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   isSecureRequest(r),
-	})
-
-	params := url.Values{
-		"client_id":     {h.cfg.ClientID},
-		"redirect_uri":  {h.cfg.CallbackURL},
-		"response_type": {"code"},
-		"scope":         {"openid email profile"},
-		"state":         {state},
-		"access_type":   {"online"},
 	}
-	http.Redirect(w, r, googleAuthURL+"?"+params.Encode(), http.StatusFound)
-}
-
-func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie(stateCookieName)
-	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
-		http.Error(w, "invalid state parameter", http.StatusForbidden)
-		return
+	if email == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
 	}
-	clearCookie(w, stateCookieName, "/auth", isSecureRequest(r))
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		http.Error(w, "missing code", http.StatusBadRequest)
-		return
+	name := r.Header.Get("X-Forwarded-Preferred-Username")
+	if name == "" {
+		name = emailLocalPart(email)
 	}
-
-	tokenResp, err := exchangeCode(r.Context(), h.cfg, code)
-	if err != nil {
-		slog.Error("oauth token exchange failed", "error", err)
-		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
-		return
+	info := UserInfo{
+		Login: r.Header.Get("X-Forwarded-User"),
+		Name:  name,
+		Email: email,
+		Role:  consts.RoleReviewer,
 	}
-
-	user, err := fetchGoogleUser(r.Context(), tokenResp.AccessToken)
-	if err != nil {
-		slog.Error("oauth user fetch failed", "error", err)
-		http.Error(w, "authentication failed — please try again", http.StatusBadGateway)
-		return
-	}
-
-	groups := groupsFromIDToken(tokenResp.IDToken)
-
 	if h.users != nil {
-		adminCount, adminErr := h.users.CountAdmins(r.Context())
-		if adminErr != nil {
-			slog.Error("admin count check failed (login continues)", "error", adminErr)
-		}
-		if err := h.users.UpsertUser(r.Context(), user.Email, user.Name, user.Picture); err != nil {
-			slog.Error("user upsert failed (login continues)", "error", err)
-		}
-		if adminErr == nil && adminCount == 0 {
-			if _, err := h.users.SetRole(r.Context(), user.Email, consts.RoleAdmin); err != nil {
-				slog.Error("first-admin promotion failed", "error", err)
-			} else {
-				slog.Info("first admin promoted", "email", user.Email)
-				_ = h.users.InsertRoleChange(r.Context(), RoleChange{
-					ChangedBy:   "system",
-					TargetEmail: user.Email,
-					OldRole:     consts.RoleReviewer,
-					NewRole:     consts.RoleAdmin,
-				})
-			}
+		if u, err := h.users.GetUser(r.Context(), email); err == nil {
+			info.Role = u.Role
+			info.Name = u.Name
+			info.AvatarURL = u.AvatarURL
 		}
 	}
-
-	sid := generateSessionID()
-	serverSess := ServerSession{
-		AccessToken: tokenResp.AccessToken,
-		Login:       user.Email,
-		Name:        user.Name,
-		AvatarURL:   user.Picture,
-		Email:       user.Email,
-		Groups:      groups,
-		ExpiresAt:   time.Now().Add(sessionMaxAge).Unix(),
-	}
-	if err := h.store.Put(r.Context(), sid, serverSess); err != nil {
-		slog.Error("session store put failed", "error", err)
-		http.Error(w, "session error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.setSessionCookie(w, r, sid); err != nil {
-		http.Error(w, "session error", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/", http.StatusFound)
+	return c.JSON(http.StatusOK, info)
 }
 
-func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
-	sid, err := h.sessionIDFromCookie(r)
+// ensureUser upserts the user on first-seen and seeds the admin role if the
+// user's groups contain "admin" and no admin exists yet.
+func (h *Handler) ensureUser(ctx context.Context, sess *Session) {
+	sub := sess.Login
+	if sub == "" {
+		sub = sess.Email
+	}
+	err := h.users.UpsertUser(ctx, sub, "oauth2-proxy", sess.Email, sess.Name, sess.AvatarURL)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		slog.Warn("user upsert failed", "email", sess.Email, "error", err)
 		return
 	}
-	serverSess, err := h.store.Get(r.Context(), sid)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+
+	if !containsAdmin(sess.Groups) {
 		return
 	}
-	role := consts.RoleReviewer
-	if h.users != nil {
-		if u, err := h.users.GetUser(r.Context(), serverSess.Email); err == nil {
-			role = u.Role
-		}
+	oldRole, err := h.users.BootstrapAdmin(ctx, sess.Email)
+	if err != nil {
+		return
 	}
-	writeJSON(w, http.StatusOK, UserInfo{
-		Login:     serverSess.Login,
-		Name:      serverSess.Name,
-		AvatarURL: serverSess.AvatarURL,
-		Email:     serverSess.Email,
-		Role:      role,
+	_ = h.users.InsertRoleChange(ctx, RoleChange{
+		ChangedBy:   "oauth2-proxy-group-seed",
+		TargetEmail: sess.Email,
+		OldRole:     oldRole,
+		NewRole:     consts.RoleAdmin,
 	})
+	slog.Info("admin role seeded from proxy groups", "email", sess.Email)
+	authUserUpsertTotal.Add(1)
 }
 
-func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if sid, err := h.sessionIDFromCookie(r); err == nil {
-		_ = h.store.Delete(r.Context(), sid)
+func containsAdmin(groups []string) bool {
+	for _, g := range groups {
+		if g == "admin" || g == "admins" || g == consts.RoleAdmin {
+			return true
+		}
 	}
-	clearCookie(w, sessionCookieName, "/", isSecureRequest(r))
-	http.Redirect(w, r, "/", http.StatusFound)
+	return false
 }
 
-func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, sid string) error {
-	plaintext, err := json.Marshal(cookiePayload{SessionID: sid})
-	if err != nil {
-		return err
+func emailLocalPart(email string) string {
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		return email[:i]
 	}
-
-	nonce := make([]byte, h.gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("generate nonce: %w", err)
-	}
-	ciphertext := h.gcm.Seal(nonce, nonce, plaintext, nil)
-	value := base64.RawURLEncoding.EncodeToString(ciphertext)
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    value,
-		Path:     "/",
-		MaxAge:   int(sessionMaxAge.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   isSecureRequest(r),
-	})
-	return nil
+	return email
 }
 
-// sessionIDFromCookie decrypts the cookie and returns the session ID.
-func (h *Handler) sessionIDFromCookie(r *http.Request) (string, error) {
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return "", err
-	}
-
-	ciphertext, err := base64.RawURLEncoding.DecodeString(cookie.Value)
-	if err != nil {
-		return "", fmt.Errorf("decode cookie: %w", err)
-	}
-
-	nonceSize := h.gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return "", fmt.Errorf("malformed session cookie")
-	}
-	nonce, sealed := ciphertext[:nonceSize], ciphertext[nonceSize:]
-
-	plaintext, err := h.gcm.Open(nil, nonce, sealed, nil)
-	if err != nil {
-		return "", fmt.Errorf("decrypt session: %w", err)
-	}
-
-	var payload cookiePayload
-	if err := json.Unmarshal(plaintext, &payload); err != nil {
-		return "", err
-	}
-	if payload.SessionID == "" {
-		return "", fmt.Errorf("empty session ID in cookie")
-	}
-	return payload.SessionID, nil
-}
-
-func generateSessionID() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// tokenResponse holds the result of a Google OAuth token exchange.
-type tokenResponse struct {
-	AccessToken string
-	IDToken     string
-}
-
-func exchangeCode(ctx context.Context, cfg Config, code string) (*tokenResponse, error) {
-	data := url.Values{
-		"client_id":     {cfg.ClientID},
-		"client_secret": {cfg.ClientSecret},
-		"code":          {code},
-		"grant_type":    {"authorization_code"},
-		"redirect_uri":  {cfg.CallbackURL},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("google token endpoint %d: %s", resp.StatusCode, string(b))
-	}
-
-	var result struct {
-		AccessToken string `json:"access_token"`
-		IDToken     string `json:"id_token"`
-		Error       string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	if result.Error != "" {
-		return nil, fmt.Errorf("google: %s", result.Error)
-	}
-	return &tokenResponse{AccessToken: result.AccessToken, IDToken: result.IDToken}, nil
-}
-
-type googleUser struct {
-	Sub     string `json:"sub"`
-	Email   string `json:"email"`
-	Name    string `json:"name"`
-	Picture string `json:"picture"`
-}
-
-func fetchGoogleUser(ctx context.Context, token string) (*googleUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleUserURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("google userinfo %d: %s", resp.StatusCode, string(b))
-	}
-
-	var user googleUser
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-// groupsFromIDToken extracts the "groups" claim from a Google OIDC ID token.
-// The ID token is a JWT; we decode the payload without signature verification
-// because the token was just received from Google's token endpoint over TLS.
-// Returns nil if the claim is absent or unparseable.
-func groupsFromIDToken(idToken string) []string {
-	if idToken == "" {
+func splitGroups(raw string) []string {
+	if raw == "" {
 		return nil
 	}
-	parts := strings.SplitN(idToken, ".", 3)
-	if len(parts) < 2 {
-		return nil
+	var out []string
+	for _, g := range strings.Split(raw, ",") {
+		g = strings.TrimSpace(g)
+		if g != "" {
+			out = append(out, g)
+		}
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil
-	}
-	var claims struct {
-		Groups []string `json:"groups"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil
-	}
-	return claims.Groups
+	return out
 }
 
-func generateState() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func clearCookie(w http.ResponseWriter, name, path string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     path,
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	httputil.WriteJSON(w, status, v)
-}
-
-// isSecureRequest returns true when the original client connection used TLS,
-// honoring X-Forwarded-Proto set by reverse proxies that terminate TLS.
-func isSecureRequest(r *http.Request) bool {
-	if r.TLS != nil {
+// RejectUnlessWriterOrAdmin sends 403 and returns true if the caller must not
+// access writer-scoped read APIs (e.g. policy recommendations).
+func RejectUnlessWriterOrAdmin(c echo.Context, users UserStore) bool {
+	sess, ok := SessionFrom(c.Request().Context())
+	if !ok {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if sess.ServiceAccount {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	if users == nil {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	u, err := users.GetUser(c.Request().Context(), sess.Email)
+	if err != nil {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	if u.Role != consts.RoleAdmin && u.Role != consts.RoleWriter {
+		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
+		return true
+	}
+	return false
+}
+
+func (h *Handler) handleGetChatHistory(cs ChatStore) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		sess, ok := SessionFrom(c.Request().Context())
+		if !ok || sess.Email == "" {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		}
+		chat, err := cs.GetChat(c.Request().Context(), sess.Email)
+		if err != nil {
+			if errors.Is(err, ErrChatNotFound) || errors.Is(err, ErrChatExpired) {
+				return c.JSON(http.StatusOK, map[string]any{"messages": nil, "taskId": ""})
+			}
+			slog.Error("chat history load failed", "email", sess.Email, "error", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "chat history unavailable"})
+		}
+		return c.JSON(http.StatusOK, chat)
+	}
+}
+
+func (h *Handler) handlePutChatHistory(cs ChatStore) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		sess, ok := SessionFrom(c.Request().Context())
+		if !ok || sess.Email == "" {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		}
+		var chat ChatSession
+		if err := c.Bind(&chat); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+		if err := cs.PutChat(c.Request().Context(), sess.Email, chat); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "save failed"})
+		}
+		return c.NoContent(http.StatusNoContent)
+	}
 }

@@ -14,9 +14,24 @@ services:
       PORT: "8080"
       GEMARA_MCP_URL: http://gemara-mcp:3000
       ORAS_MCP_URL: http://oras-mcp:3000
+      POSTGRES_URL: postgres://studio:complytime-dev@postgres:5432/studio?sslmode=disable
+      NATS_URL: nats://nats:4222
     depends_on:
       - gemara-mcp
       - oras-mcp
+      - postgres
+      - nats
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: complytime-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
 
   gemara-mcp:
     build:
@@ -31,3 +46,11 @@ services:
     command: ["/bin/oras-mcp", "serve", "--transport", "sse", "--port", "3000"]
     expose:
       - "3000"
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+
+volumes:
+  pgdata:

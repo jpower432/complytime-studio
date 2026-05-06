@@ -53,14 +53,15 @@ fix_coredns_for_podman() {
 
     info "Applying CoreDNS fix for podman (explicit upstream nameservers)..."
 
-    # Get the host's real nameservers (outside the container)
+    # Get the host's real nameservers (outside the container).
+    # The || true guards against pipefail when all entries are localhost stubs.
     local nameservers
     nameservers=$(grep -oP '(?<=nameserver\s)\S+' /etc/resolv.conf \
         | grep -v '127.0.0' \
         | head -2 \
-        | tr '\n' ' ')
+        | tr '\n' ' ' || true)
 
-    if [[ -z "$nameservers" ]]; then
+    if [[ -z "${nameservers// /}" ]]; then
         nameservers="8.8.8.8 8.8.4.4"
         warn "Could not detect host nameservers, falling back to Google DNS"
     fi
@@ -118,6 +119,51 @@ fix_coredns_for_podman() {
     kubectl delete pod studio-dns-test --force --grace-period=0 2>/dev/null || true
 }
 
+fix_node_dns_for_podman() {
+    if [[ "${CONTAINER_RUNTIME}" != "podman" ]]; then
+        return
+    fi
+
+    info "Patching Kind node DNS for containerd image pulls..."
+
+    # Podman injects its own DNS gateway into the Kind node's /etc/resolv.conf.
+    # That gateway can't resolve external registries, so containerd image pulls
+    # fail with i/o timeout. Patch with real upstream nameservers from the host.
+    local nameservers
+    nameservers=$(resolvectl status 2>/dev/null \
+        | grep -oP '(?<=DNS Servers:\s)\S+' \
+        | grep -v ':' \
+        | head -2 \
+        | tr '\n' ' ' || true)
+
+    if [[ -z "${nameservers// /}" ]]; then
+        nameservers="8.8.8.8 8.8.4.4"
+        warn "Could not detect host nameservers, falling back to Google DNS"
+    fi
+
+    local resolv_content=""
+    for ns in $nameservers; do
+        resolv_content="${resolv_content}nameserver ${ns}\n"
+    done
+    resolv_content="${resolv_content}nameserver 8.8.8.8"
+
+    docker exec "${CLUSTER_NAME}-control-plane" \
+        sh -c "printf '${resolv_content}\n' > /etc/resolv.conf"
+    docker exec "${CLUSTER_NAME}-control-plane" \
+        sh -c 'systemctl restart containerd'
+
+    sleep 3
+    info "Node DNS patched and containerd restarted"
+
+    info "Verifying image pull capability..."
+    if docker exec "${CLUSTER_NAME}-control-plane" \
+        crictl pull docker.io/library/busybox:1.36 2>/dev/null; then
+        info "Image pull verified"
+    else
+        warn "Image pull test failed — pods may hit ImagePullBackOff"
+    fi
+}
+
 validate_env() {
     if [[ -z "$VERTEX_PROJECT_ID" ]]; then
         fatal "VERTEX_PROJECT_ID is required. Export it before running this script."
@@ -137,6 +183,15 @@ create_secrets() {
         --from-file=application_default_credentials.json="${GCP_ADC_PATH}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    if [[ -n "${OIDC_CLIENT_SECRET:-}" ]]; then
+        kubectl create secret generic studio-oauth-credentials \
+            --namespace "${NAMESPACE}" \
+            --from-literal=client-secret="${OIDC_CLIENT_SECRET}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        info "OIDC client secret written to studio-oauth-credentials"
+    else
+        warn "OIDC_CLIENT_SECRET not set — skipping studio-oauth-credentials. Set it before deploying if OIDC is configured."
+    fi
 }
 
 wait_for_ready() {
@@ -182,6 +237,7 @@ main() {
     detect_container_runtime
     create_cluster
     fix_coredns_for_podman
+    fix_node_dns_for_podman
     install_kagent
     create_secrets
     wait_for_ready

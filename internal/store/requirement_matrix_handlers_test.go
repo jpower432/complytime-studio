@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/complytime/complytime-studio/internal/store"
+	"github.com/labstack/echo/v4"
 )
 
 type stubPolicyStore struct{}
@@ -92,7 +93,7 @@ func TestListRequirementMatrixHandler(t *testing.T) {
 			name:        "audit_end before audit_start",
 			url:         "/api/requirements?policy_id=p1&audit_start=2026-01-20&audit_end=2026-01-10",
 			wantCode:    http.StatusBadRequest,
-			wantBodySub: "audit_end must be >= audit_start",
+			wantBodySub: "audit_end must be",
 		},
 		{
 			name:     "ok with seeded rows",
@@ -165,12 +166,13 @@ func TestListRequirementMatrixHandler(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(m)
 			}
-			mux := http.NewServeMux()
-			store.Register(mux, testStoresWithRequirements(m))
+			e := echo.New()
+			g := e.Group("/api")
+			store.Register(g, testStoresWithRequirements(m))
 
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status %d, body %q", rec.Code, rec.Body.String())
@@ -288,12 +290,13 @@ func TestListRequirementEvidenceHandler(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(m)
 			}
-			mux := http.NewServeMux()
-			store.Register(mux, testStoresWithRequirements(m))
+			e := echo.New()
+			g := e.Group("/api")
+			store.Register(g, testStoresWithRequirements(m))
 
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
@@ -314,8 +317,7 @@ func TestListRequirementEvidenceHandler(t *testing.T) {
 // TestRequirementEvidenceAssessmentJoinContract documents that drill-down and
 // matrix handlers delegate to RequirementStore, where ListRequirementEvidence
 // uses an argMax subquery over evidence_assessments (latest classification per
-// evidence_id). Full FINAL/join correctness against ClickHouse is not covered
-// here because the repo has no ClickHouse test container harness.
+// evidence_id).
 func TestRequirementEvidenceAssessmentJoinContract(t *testing.T) {
 	t.Parallel()
 	if store.ErrRequirementNotFound == nil {

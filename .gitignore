@@ -43,6 +43,13 @@ __pycache__/
 .idea/
 .vscode/
 
+# Cypress demo artifacts (videos and screenshots are generated, not committed)
+demo/cypress/videos/*
+!demo/cypress/videos/.gitkeep
+demo/cypress/screenshots/*
+!demo/cypress/screenshots/.gitkeep
+demo/node_modules/
+
 # Unbound Force — managed by uf init
 # Runtime data under .uf/ (databases, caches, locks, logs)
 .uf/workflows/
