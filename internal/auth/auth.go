@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -73,7 +74,7 @@ func StripUntrustedProxyHeaders(proxySecret string) echo.MiddlewareFunc {
 				return next(c)
 			}
 			r := c.Request()
-			if r.Header.Get("X-Proxy-Secret") != proxySecret {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Proxy-Secret")), []byte(proxySecret)) != 1 {
 				r.Header.Del("X-Forwarded-Email")
 				r.Header.Del("X-Forwarded-User")
 				r.Header.Del("X-Forwarded-Preferred-Username")

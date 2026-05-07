@@ -39,10 +39,9 @@ The gateway used Go stdlib `net/http` with hand-rolled middleware for OIDC valid
 
 | Package | Status |
 |:--|:--|
-| `internal/store` | Native Echo — `Register(g *echo.Group, ...)` |
-| `internal/postgres` | Native Echo — `RegisterProgramAPI(g *echo.Group, ...)` |
-| `internal/posture` | Native Echo — `ServePosture`/`ServeBatchPosture` as `echo.HandlerFunc` |
-| `internal/auth` | Native Echo — `Register(e)`, `Middleware()`, `RegisterUserAPI(g)` |
+| `internal/store` | Native Echo — `Register(g *echo.Group, ...)`, includes posture + evidence handlers |
+| `internal/postgres` | Data layer — no HTTP handlers (provides `Client` used by store) |
+| `internal/auth` | Native Echo — `Middleware()`, `RegisterUserAPI(g)`, `RegisterChatHistory(g, cs)` |
 | `cmd/gateway` | Native Echo — healthz, system-info, gemara proxy |
 | `internal/registry` | Wrapped via `echo.WrapHandler(mux)` — stdlib handlers |
 | `internal/publish` | Wrapped via `echo.WrapHandler(mux)` — stdlib handlers |

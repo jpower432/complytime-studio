@@ -50,9 +50,20 @@ const (
 	// HTTP listener. Override via INTERNAL_PORT env var.
 	DefaultInternalPort = "8081"
 
-	// DefaultDevAPIToken is the well-known dev seed token shipped in
-	// values.yaml. The gateway warns at startup if this value is still in use.
-	DefaultDevAPIToken = "dev-seed-token"
+	// DefaultDevAPIToken is the well-known dev seed token used by docker-compose
+	// for local development. In Kubernetes, the token is auto-generated into a Secret.
+	DefaultDevAPIToken = "studio-dev-token"
+
+	// DegradedCacheTTL is how long health-check results are cached by the
+	// degraded middleware before re-pinging subsystems.
+	DegradedCacheTTL = 5 * time.Second
+
+	// EventDebounceDuration is the default debounce window for event handlers
+	// (posture checks, certification) to coalesce rapid evidence arrivals.
+	EventDebounceDuration = 30 * time.Second
+
+	// CORSMaxAgeSecs is the preflight cache duration (seconds) for CORS.
+	CORSMaxAgeSecs = 86400
 
 	// RoleAdmin is the admin role value stored in the users table.
 	RoleAdmin = "admin"

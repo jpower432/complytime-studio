@@ -124,7 +124,7 @@ auth:
     clientId: ""
     secretName: studio-oauth-credentials
     secretKey: client-secret
-    callbackUrl: "http://localhost:4180/oauth2/callback"
+    callbackUrl: "http://localhost:8080/oauth2/callback"
     scopes: "openid email profile groups"
     cookieSecure: false
     emailDomains: ["*"]

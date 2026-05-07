@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -130,7 +131,8 @@ func (c *Client) InsertRoleChange(ctx context.Context, change identity.RoleChang
 // BootstrapAdmin atomically promotes email to admin if and only if no admin
 // exists. Uses a CTE with a conditional UPDATE in a single statement,
 // eliminating the TOCTOU race in the two-step check-then-promote pattern.
-// Returns ErrAdminExists if an admin already exists (no rows updated).
+// Returns ErrAdminExists if an admin already exists, or ErrUserNotFound if
+// the target email has no user record.
 func (c *Client) BootstrapAdmin(ctx context.Context, email string) (string, error) {
 	var oldRole string
 	err := c.pool.QueryRow(ctx, `
@@ -144,10 +146,17 @@ func (c *Client) BootstrapAdmin(ctx context.Context, email string) (string, erro
 		WHERE guard.cnt = 0 AND users.email = $1
 		RETURNING (SELECT role FROM snap)`, email).Scan(&oldRole)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("bootstrap admin: %w", err)
+		}
+		n, countErr := c.CountAdmins(ctx)
+		if countErr != nil {
+			return "", fmt.Errorf("bootstrap admin: %w", countErr)
+		}
+		if n > 0 {
 			return "", identity.ErrAdminExists
 		}
-		return "", fmt.Errorf("bootstrap admin: %w", err)
+		return "", fmt.Errorf("bootstrap admin for %s: %w", email, identity.ErrUserNotFound)
 	}
 	return oldRole, nil
 }

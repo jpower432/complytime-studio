@@ -127,6 +127,26 @@ make sync-prompts
 
 ---
 
+## Platform Constraints — Auth & Data
+
+Authentication and data persistence changed significantly in 2026-05.
+
+| Concern | Previous | Current |
+|:--|:--|:--|
+| Auth | In-process OIDC (gateway managed sessions) | OAuth2 Proxy sidecar — gateway trusts `X-Forwarded-*` headers |
+| Persistence | ClickHouse primary | PostgreSQL primary (ClickHouse optional via FDW) |
+| Token bypass | Static `STUDIO_API_TOKEN` in values | Auto-generated secret (`studio-cookie-secret`) |
+
+**Key references:**
+- Auth design: `openspec/changes/generic-oidc-auth/design.md`
+- Helm auth values: `charts/complytime-studio/values.yaml` → `auth.oauth2Proxy.*`
+- Architecture: `docs/design/architecture.md`
+- ADR: `docs/decisions/postgres-with-extensions.md`
+
+**Agent implications:** Agents communicate with the gateway via the internal port (8081). They do not pass through OAuth2 Proxy. Agent-to-gateway auth is network-enforced via NetworkPolicy, not token-based.
+
+---
+
 ## Creating Skills
 
 Skills are reusable knowledge packs. Any agent can reference them.

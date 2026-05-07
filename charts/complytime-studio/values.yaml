@@ -48,16 +48,18 @@ auth:
     secretKey: client-secret
     callbackUrl: "http://localhost:8080/oauth2/callback"
     scopes: "openid email profile"
-    # Set true for production (requires HTTPS).
-    cookieSecure: false
+    # Requires HTTPS. Set false for local Kind/Compose (Makefile handles this).
+    cookieSecure: true
     # Restrict login by email domain. ["*"] allows all.
     emailDomains: ["*"]
     # Restrict login by OIDC group claim. [] allows all.
     allowedGroups: []
-  # Static bearer token for dev/CI seeding (STUDIO_API_TOKEN).
-  # Used by `make seed` to bypass OAuth2 Proxy for data loading.
-  # Override with a strong secret in production. Leave empty to disable.
-  apiToken: "studio-dev-token"
+  # STUDIO_API_TOKEN for dev/CI seeding (bypasses OAuth2 Proxy).
+  # Auto-generated into studio-cookie-secret by default.
+  # To bring your own: set apiTokenSecretName (and optionally apiTokenSecretKey).
+  # Set apiTokenDisabled: true to disable the token entirely.
+  apiTokenSecretName: ""
+  apiTokenSecretKey: "api-token"
 
 # -- GitHub organization/user and repository name. Single source of truth
 # for platformRepo URL, Chart.yaml home/sources, and workbench links.
@@ -191,7 +193,7 @@ clickhouse:
   mcp:
     image:
       repository: docker.io/mcp/clickhouse
-      tag: latest
+      tag: "2025-10-31"
 
 # -- PostgreSQL. Required. Single application database for all data:
 # programs, users, evidence, policies, audit logs, certifications, mappings.
@@ -220,14 +222,13 @@ postgres:
   mcp:
     image:
       repository: ghcr.io/pgedge/postgres-mcp
-      tag: latest
+      tag: "latest"
 
 # -- Built-in OCI registry (dev only). Disable for production clusters
 # where an external registry (Quay, GHCR, etc.) is available.
 registry:
   enabled: true
-  # Pin to a release tag in production to ensure reproducible deployments.
-  image: ghcr.io/project-zot/zot-linux-amd64:latest
+  image: ghcr.io/project-zot/zot-linux-amd64:v2.1.16
   service:
     port: 5000
     type: NodePort

@@ -1,33 +1,38 @@
 # Tasks: Helm Chart — Platform Expansion
 
+> Updated 2026-05 to reflect shipped state. Auth approach pivoted to
+> OAuth2 Proxy sidecar (see `generic-oidc-auth`).
+
 ## New templates
-- [ ] Create `templates/postgres.yaml` (StatefulSet + Service + Secret, gated on `postgres.enabled`)
-- [ ] Add startup + readiness probes for PostgreSQL
-- [ ] Create `templates/langgraph-agents.yaml` (single ranged template over `langgraphAgents`)
-- [ ] Create `templates/command-specs-configmap.yaml` (glob `commands/*.md`)
-- [ ] Create `templates/knowledge-base-mcp.yaml` (optional, gated on `rag.enabled`)
-- [ ] Verify ConfigMap total size stays under etcd 1 MiB limit
+- [x] Create `templates/postgres.yaml` (StatefulSet + Service + Secret, gated on `postgres.enabled`)
+- [x] Add startup + readiness probes for PostgreSQL
+- [ ] ~~Create `templates/langgraph-agents.yaml`~~ (deferred — blocked on LangGraph runtime design)
+- [ ] ~~Create `templates/command-specs-configmap.yaml`~~ (deferred)
+- [ ] ~~Create `templates/knowledge-base-mcp.yaml`~~ (deferred)
+- [x] Create `templates/network-policies.yaml` (default-deny + per-component ingress)
+- [x] Create `templates/cookie-secret.yaml` (auto-generated OAuth2 session secret)
 
 ## Modified templates
-- [ ] Update `templates/gateway.yaml` with OIDC, POSTGRES_URL env vars
-- [ ] Add initContainer for PostgreSQL readiness wait
-- [ ] Mount command-specs ConfigMap at `/etc/studio/commands/`
-- [ ] Update `templates/platform-prompts-configmap.yaml` with sub-agent directory block
+- [x] Update `templates/gateway.yaml` with OAuth2 Proxy sidecar + POSTGRES_URL env vars
+- [x] Add initContainer for PostgreSQL readiness wait
+- [ ] ~~Mount command-specs ConfigMap~~ (deferred — no ConfigMap created)
+- [ ] ~~Update `templates/platform-prompts-configmap.yaml`~~ (deferred)
 
 ## Values
-- [ ] Add `auth.oidc.*` section, deprecate `auth.google.*`
-- [ ] Add `postgres.*` section with `existingSecret` for production
-- [ ] Add `langgraphAgents.*` section (separate from existing `agents.assistant`)
-- [ ] Add `rag.*` section (optional, no default image)
-- [ ] Expand `agentDirectory` with `id`, `role`, `framework`, `delegatable` fields
-- [ ] Create preset files: `values-minimal.yaml`, `values-standard.yaml`, `values-full.yaml`
+- [x] Add `auth.oauth2Proxy.*` section (replaces planned `auth.oidc.*`)
+- [x] Add `postgres.*` section with `existingSecret` for production
+- [ ] ~~Add `langgraphAgents.*` section~~ (deferred)
+- [ ] ~~Add `rag.*` section~~ (deferred)
+- [x] Expand `agentDirectory` with `id`, `a2a.skills` fields
+- [ ] ~~Create preset files~~ (deferred)
 
 ## Docker Compose
-- [ ] Add PostgreSQL service to `docker-compose.yaml`
-- [ ] Add `POSTGRES_URL` to gateway environment
-- [ ] Document Compose as local dev subset in README
+- [x] Add PostgreSQL service to `docker-compose.yaml`
+- [x] Add `POSTGRES_URL` to gateway environment
+- [x] Add NATS and ORAS MCP services
+- [x] Document Compose as local dev subset in README
 
 ## Validation
-- [ ] `helm template` renders correctly for minimal, standard, full profiles
-- [ ] No stale references to old values paths
-- [ ] Secret references use `existingSecret` pattern consistently
+- [x] `helm template` renders correctly (default + ClickHouse enabled)
+- [x] No stale references to old values paths
+- [x] Secret references use `existingSecret` pattern consistently

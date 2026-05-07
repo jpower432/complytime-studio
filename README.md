@@ -46,7 +46,7 @@ Open [http://localhost:8080](http://localhost:8080).
 ### Seed demo data
 
 ```bash
-GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=dev-seed-token ./demo/seed.sh
+make seed
 ```
 
 ### Tear down

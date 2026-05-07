@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -38,9 +39,35 @@ type Client struct {
 	pool *pgxpool.Pool
 }
 
+// Pool tuning defaults. Override via env: PG_MAX_CONNS, PG_MAX_CONN_LIFETIME,
+// PG_MAX_CONN_IDLE_TIME, PG_STATEMENT_TIMEOUT.
+var (
+	defaultMaxConns         int32         = 10
+	defaultMaxConnLifetime  time.Duration = 30 * time.Minute
+	defaultMaxConnIdleTime  time.Duration = 5 * time.Minute
+	defaultStatementTimeout               = "30s"
+)
+
 // New creates a connection pool and verifies connectivity.
+// Pool limits are configurable via environment variables.
 func New(ctx context.Context, cfg Config) (*Client, error) {
-	pool, err := pgxpool.New(ctx, cfg.URL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("postgres parse config: %w", err)
+	}
+
+	poolCfg.MaxConns = envInt32("PG_MAX_CONNS", defaultMaxConns)
+	poolCfg.MaxConnLifetime = envDuration("PG_MAX_CONN_LIFETIME", defaultMaxConnLifetime)
+	poolCfg.MaxConnIdleTime = envDuration("PG_MAX_CONN_IDLE_TIME", defaultMaxConnIdleTime)
+
+	if timeout := envString("PG_STATEMENT_TIMEOUT", defaultStatementTimeout); timeout != "" {
+		if poolCfg.ConnConfig.RuntimeParams == nil {
+			poolCfg.ConnConfig.RuntimeParams = make(map[string]string)
+		}
+		poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = timeout
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect: %w", err)
 	}
@@ -48,7 +75,44 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		pool.Close()
 		return nil, fmt.Errorf("postgres ping: %w", err)
 	}
+
+	slog.Info("postgres pool configured",
+		"max_conns", poolCfg.MaxConns,
+		"max_lifetime", poolCfg.MaxConnLifetime,
+		"max_idle_time", poolCfg.MaxConnIdleTime,
+	)
 	return &Client{pool: pool}, nil
+}
+
+func envInt32(key string, fallback int32) int32 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return int32(n)
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+func envString(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // Pool returns the underlying connection pool for direct use by store implementations.

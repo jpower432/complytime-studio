@@ -147,12 +147,12 @@ func main() {
 	adapter := &notificationAdapter{store: notifStore}
 	rateCache := events.NewRateCache()
 	postureHandler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
-	postureDebouncer := events.NewDebouncer(30*time.Second, postureHandler)
+	postureDebouncer := events.NewDebouncer(consts.EventDebounceDuration, postureHandler)
 
 	pipeline := buildCertifierPipeline()
 	certAdapter := &certificationAdapter{store: st}
 	certHandler := events.CertificationHandler(ctx, pipeline, certAdapter, certAdapter)
-	certDebouncer := events.NewDebouncer(30*time.Second, certHandler)
+	certDebouncer := events.NewDebouncer(consts.EventDebounceDuration, certHandler)
 
 	sub, subErr := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
 		postureDebouncer.Push(evt)
@@ -185,9 +185,6 @@ func main() {
 	chatStore := auth.NewMemoryChatStore()
 
 	if apiToken != "" {
-		if apiToken == consts.DefaultDevAPIToken {
-			slog.Warn("STUDIO_API_TOKEN is the default dev value — rotate before production use")
-		}
 		slog.Info("api token auth enabled for seed/CI scripts")
 	}
 	slog.Info("auth: OAuth2 Proxy handles OIDC externally, gateway trusts X-Forwarded-* headers")
@@ -262,7 +259,7 @@ func main() {
 			AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 			AllowHeaders:     []string{"Content-Type", "Authorization"},
 			AllowCredentials: true,
-			MaxAge:           86400,
+			MaxAge:           consts.CORSMaxAgeSecs,
 		}))
 		slog.Info("CORS enabled", "origins", origins)
 	}
@@ -334,7 +331,8 @@ func main() {
 	// The SPA fallback is handled in the same catch-all for non-API paths.
 	web.RegisterEchoWithMux(e, workbench.Assets, mux)
 
-	addr := net.JoinHostPort("0.0.0.0", port)
+	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
+	addr := net.JoinHostPort(listenHost, port)
 	internalAddr := net.JoinHostPort("0.0.0.0", internalPort)
 
 	internalE := echo.New()
@@ -354,6 +352,12 @@ func main() {
 		}
 	}
 	internalE.Use(middleware.BodyLimit(fmt.Sprintf("%dM", consts.MaxInternalRequestBody>>20)))
+	internalE.GET("/healthz", func(c echo.Context) error {
+		if err := pgClient.Ping(c.Request().Context()); err != nil {
+			return c.String(http.StatusServiceUnavailable, "postgres unreachable")
+		}
+		return c.String(http.StatusOK, "ok")
+	})
 	store.RegisterInternal(internalE.Group(""), stores)
 
 	internalSrv := &http.Server{

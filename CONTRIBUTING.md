@@ -17,7 +17,7 @@ Seed demo data after deploy:
 make seed
 ```
 
-When auth is enabled, seeding requires the API token: `STUDIO_API_TOKEN=dev-seed-token make seed`. See `README.md` for details.
+When running in Kubernetes, `make seed` auto-extracts the API token from the cluster secret. For Docker Compose, the token is `studio-dev-token`.
 
 ## Code Contributions
 

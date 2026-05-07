@@ -7,6 +7,7 @@ GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
 ASSISTANT_IMAGE ?= studio-assistant
 ASSISTANT_TAG ?= local
+CONTAINER_RUNTIME ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
 CLICKHOUSE ?= false
 NATS ?= true
@@ -33,7 +34,7 @@ ifdef ASSISTANT_MODEL_NAME
 HELM_AGENT_FLAGS += --set agents.assistant.model.name=$(ASSISTANT_MODEL_NAME)
 endif
 
-HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=$(NATS)
+HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=$(NATS) --set auth.oauth2Proxy.cookieSecure=false
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
@@ -135,12 +136,12 @@ oidc-secret:
 # With OIDC: OIDC_CLIENT_ID=<id> OIDC_CLIENT_SECRET=<secret> OIDC_ISSUER_URL=<url> make deploy
 deploy: gateway-image assistant-image
 	kind load docker-image $(GATEWAY_IMAGE):$(GATEWAY_TAG) --name $(KIND_CLUSTER)
-	@docker exec $(KIND_CLUSTER)-control-plane \
+	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
 		ctr --namespace=k8s.io images tag --force \
 		localhost/$(GATEWAY_IMAGE):$(GATEWAY_TAG) \
 		docker.io/library/$(GATEWAY_IMAGE):$(GATEWAY_TAG) 2>/dev/null || true
 	kind load docker-image $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) --name $(KIND_CLUSTER)
-	@docker exec $(KIND_CLUSTER)-control-plane \
+	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
 		ctr --namespace=k8s.io images tag --force \
 		localhost/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) \
 		docker.io/library/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) 2>/dev/null || true
@@ -156,8 +157,9 @@ deploy: gateway-image assistant-image
 
 # Seed demo data into a running Studio instance.
 # Port-forwards directly to the gateway container (bypassing OAuth2 Proxy).
+# Token is auto-extracted from the generated secret unless STUDIO_API_TOKEN is set.
 SEED_PORT ?= 9090
-STUDIO_API_TOKEN ?= studio-dev-token
+STUDIO_API_TOKEN ?= $(shell kubectl get secret studio-cookie-secret -n $(NAMESPACE) -o jsonpath='{.data.api-token}' 2>/dev/null | base64 -d)
 seed:
 	@echo "Port-forwarding to gateway pod (bypassing OAuth2 Proxy)..."
 	@kubectl port-forward -n $(NAMESPACE) deployment/studio-gateway $(SEED_PORT):8080 &

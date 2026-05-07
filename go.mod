@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
-	github.com/gemaraproj/go-gemara v0.3.0
+	github.com/gemaraproj/go-gemara v0.4.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -55,5 +55,3 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )
-
-replace github.com/gemaraproj/go-gemara => github.com/jpower432/go-gemara v0.0.0-20260418000148-0d0e23202fa1

@@ -42,7 +42,7 @@ services:
       - "3000"
 
   oras-mcp:
-    image: ghcr.io/oras-project/oras-mcp:main
+    image: ghcr.io/oras-project/oras-mcp:v0.2.1
     command: ["/bin/oras-mcp", "serve", "--transport", "sse", "--port", "3000"]
     expose:
       - "3000"

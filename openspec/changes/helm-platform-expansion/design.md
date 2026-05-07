@@ -190,7 +190,7 @@ auth:
     callbackURL: "http://localhost:8080/auth/callback"
   cookieSecretName: ""
   admins: []
-  apiToken: "dev-seed-token"
+  apiToken: "studio-dev-token"
 
 # --- PostgreSQL (new) ---
 postgres:

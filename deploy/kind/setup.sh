@@ -147,16 +147,16 @@ fix_node_dns_for_podman() {
     done
     resolv_content="${resolv_content}nameserver 8.8.8.8"
 
-    docker exec "${CLUSTER_NAME}-control-plane" \
+    "${CONTAINER_RUNTIME}" exec "${CLUSTER_NAME}-control-plane" \
         sh -c "printf '${resolv_content}\n' > /etc/resolv.conf"
-    docker exec "${CLUSTER_NAME}-control-plane" \
+    "${CONTAINER_RUNTIME}" exec "${CLUSTER_NAME}-control-plane" \
         sh -c 'systemctl restart containerd'
 
     sleep 3
     info "Node DNS patched and containerd restarted"
 
     info "Verifying image pull capability..."
-    if docker exec "${CLUSTER_NAME}-control-plane" \
+    if "${CONTAINER_RUNTIME}" exec "${CLUSTER_NAME}-control-plane" \
         crictl pull docker.io/library/busybox:1.36 2>/dev/null; then
         info "Image pull verified"
     else

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/complytime/complytime-studio/internal/consts"
 )
 
 const degradedHeader = "X-Studio-Degraded"
@@ -23,10 +25,10 @@ type pingResult struct {
 }
 
 // DegradedMiddleware checks subsystem health and sets the X-Studio-Degraded
-// header when a backing store is unavailable. Results are cached for 5 seconds
-// to avoid pinging on every HTTP request.
+// header when a backing store is unavailable. Results are cached to avoid
+// pinging on every HTTP request.
 func DegradedMiddleware(subsystems map[string]Pinger) func(http.Handler) http.Handler {
-	const cacheTTL = 5 * time.Second
+	cacheTTL := consts.DegradedCacheTTL
 
 	var (
 		mu     sync.RWMutex

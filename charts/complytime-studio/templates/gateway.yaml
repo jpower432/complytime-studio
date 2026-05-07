@@ -38,19 +38,19 @@ spec:
           startupProbe:
             httpGet:
               path: /healthz
-              port: 8080
+              port: {{ if .Values.auth.oauth2Proxy.enabled }}8081{{ else }}8080{{ end }}
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8080
+              port: {{ if .Values.auth.oauth2Proxy.enabled }}8081{{ else }}8080{{ end }}
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /healthz
-              port: 8080
+              port: {{ if .Values.auth.oauth2Proxy.enabled }}8081{{ else }}8080{{ end }}
             periodSeconds: 10
           env:
             - name: PORT
@@ -102,15 +102,28 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.apiTokenSecretName }}
                   key: {{ .Values.auth.apiTokenSecretKey | default "api-token" }}
-            {{- else if .Values.auth.apiToken }}
+            {{- else }}
             - name: STUDIO_API_TOKEN
-              value: {{ .Values.auth.apiToken | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: studio-cookie-secret
+                  key: api-token
+            {{- end }}
+            {{- if .Values.auth.oauth2Proxy.enabled }}
+            - name: LISTEN_HOST
+              value: "127.0.0.1"
+            - name: OAUTH2_PROXY_ENABLED
+              value: "true"
+            {{- else }}
+            - name: OAUTH2_PROXY_ENABLED
+              value: "false"
             {{- end }}
             {{- /*
               PROXY_SECRET activates StripUntrustedProxyHeaders — requires the
               proxy to send X-Proxy-Secret on every request. OAuth2 Proxy cannot
               inject custom upstream headers, so this is disabled for the sidecar
-              pattern. Trust is network-enforced: port 8080 is pod-internal only.
+              pattern. Trust is network-enforced: the app binds to 127.0.0.1 when
+              the proxy is active, making port 8080 pod-internal only.
               Enable manually for reverse-proxy deployments (Envoy/nginx) that
               can add the header.
             */ -}}

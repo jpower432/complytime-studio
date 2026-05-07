@@ -81,7 +81,7 @@ flowchart TB
 | Mode | Condition |
 |:--|:--|
 | **OAuth2 Proxy** | `auth.oauth2Proxy.enabled: true` — sidecar handles OIDC discovery, PKCE, JWKS, token refresh, session cookies. Gateway reads identity from `X-Forwarded-Email`, `X-Forwarded-User`, `X-Forwarded-Preferred-Username`, `X-Forwarded-Groups` headers. |
-| **Dev (no auth)** | `auth.oauth2Proxy.enabled: false` — sidecar omitted; no `X-Forwarded-*` headers; gateway middleware falls through to anonymous mode |
+| **Dev (no auth)** | `auth.oauth2Proxy.enabled: false` — sidecar omitted; no `X-Forwarded-*` headers. SPA and static routes are accessible without auth, but `/api/*` still returns 401 unless requests include `X-Forwarded-Email` (manual header injection) or `Authorization: Bearer <STUDIO_API_TOKEN>`. Use `make seed` for data loading. |
 
 Any OIDC-compliant IdP works (Keycloak, Okta, Azure AD, Google, Dex, Hydra). Keycloak has a dedicated `--provider=keycloak-oidc` with role/group mapping.
 
@@ -141,7 +141,7 @@ sequenceDiagram
 
 ## Key routes (partial)
 
-Exact registration lives in `internal/store/handlers.go`, `internal/postgres/handlers.go`, `internal/auth/auth.go`, `cmd/gateway/main.go`.
+Exact registration lives in `internal/store/handlers.go`, `internal/postgres/users.go`, `internal/auth/auth.go`, `cmd/gateway/main.go`.
 
 | Method(s) | Path | Notes |
 |:--|:--|:--|
