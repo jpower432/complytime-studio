@@ -3,8 +3,8 @@
 import { apiFetch } from "./fetch";
 
 function a2aEndpoint(agentName?: string): string {
-  if (agentName) return `/api/a2a/${agentName}`;
-  return "/api/a2a/studio-assistant";
+  if (agentName) return `/a2a/${agentName}`;
+  return "/a2a/studio-assistant";
 }
 
 interface A2AMessage {

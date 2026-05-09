@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# AgentGateway — production A2A and MCP routing proxy.
+# Handles all agent-to-agent traffic and MCP tool calls with protocol-aware
+# streaming, OTel observability, and CEL-based access policies.
+# See docs/decisions/agentgateway-production-routing.md.
+{{- if .Values.agentgateway.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: a2a
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.selectorLabels" (dict "component" "agentgateway" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.agentgateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "studio.selectorLabels" (dict "component" "agentgateway" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "studio.labels" . | nindent 8 }}
+        {{- include "studio.selectorLabels" (dict "component" "agentgateway" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: agentgateway
+          image: "{{ .Values.agentgateway.image.repository }}:{{ .Values.agentgateway.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: admin
+              containerPort: 19000
+              protocol: TCP
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 19000
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 19000
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    {{- include "studio.selectorLabels" (dict "component" "agentgateway" "root" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "studio.selectorLabels" (dict "component" "agentgateway" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+{{- end }}

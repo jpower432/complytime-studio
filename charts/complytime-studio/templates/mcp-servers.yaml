@@ -12,6 +12,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "studio.labels" . | nindent 4 }}
+    {{- if .Values.agentgateway.enabled }}
+    kagent.dev/discovery: disabled
+    {{- end }}
 spec:
   transportType: stdio
   stdioTransport: {}
@@ -31,6 +34,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "studio.labels" . | nindent 4 }}
+    {{- if .Values.agentgateway.enabled }}
+    kagent.dev/discovery: disabled
+    {{- end }}
 spec:
   transportType: stdio
   stdioTransport: {}
@@ -60,6 +66,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "studio.labels" . | nindent 4 }}
+    {{- if .Values.agentgateway.enabled }}
+    kagent.dev/discovery: disabled
+    {{- end }}
 spec:
   transportType: stdio
   stdioTransport: {}

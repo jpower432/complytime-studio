@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	nethttputil "net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -256,18 +258,6 @@ func main() {
 	agentCards := agents.ParseDirectory(os.Getenv("AGENT_DIRECTORY"))
 	agents.RegisterDirectory(mux, agentCards)
 
-	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
-		agents.RegisterA2AForward(mux, a2aProxyURL)
-	} else {
-		agents.RegisterA2AProxy(mux, agents.Options{
-			Cards:          agentCards,
-			TokenProvider:  authHandler,
-			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
-			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
-		})
-		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
-	}
-
 	config.Register(mux, config.Options{
 		Values: map[string]string{
 			"github_org":             httputil.EnvOr("GITHUB_ORG", ""),
@@ -361,10 +351,9 @@ func main() {
 		if err := pgClient.Ping(c.Request().Context()); err != nil {
 			dbStatus = "unreachable"
 		}
-		agentNames := []string{}
-		ns := os.Getenv("KAGENT_AGENT_NAMESPACE")
-		if ns != "" {
-			agentNames = append(agentNames, "kagent (ns: "+ns+")")
+		agentNames := make([]string, 0, len(agentCards))
+		for _, c := range agentCards {
+			agentNames = append(agentNames, c.Name)
 		}
 		return c.JSON(http.StatusOK, map[string]any{
 			"version":        httputil.EnvOr("STUDIO_VERSION", "dev"),
@@ -376,6 +365,17 @@ func main() {
 	})
 
 	slog.Info("api routes registered", "groups", []string{"store", "users", "gemara-proxy"})
+
+	if agentGWURL := os.Getenv("AGENTGATEWAY_URL"); agentGWURL != "" {
+		registerA2AProxy(e, agentGWURL)
+	} else {
+		e.Any("/a2a/*", func(c echo.Context) error {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error": "agent gateway not configured",
+			})
+		})
+		slog.Warn("AGENTGATEWAY_URL not set — /a2a/* requests will return 503")
+	}
 
 	// Legacy API routes (agents, a2a, registry, publish, config) are registered
 	// on the mux with full /api/ prefixes. The root catch-all delegates to them.
@@ -497,9 +497,11 @@ func writeProtect(writeGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 			if strings.HasPrefix(path, "/internal/") {
 				return c.String(http.StatusNotFound, "not found")
 			}
+			if strings.HasPrefix(path, "/a2a/") {
+				return next(c)
+			}
 			if strings.HasPrefix(path, "/api/") && method != http.MethodGet {
 				if path == "/api/chat/history" || path == "/api/bootstrap" ||
-					strings.HasPrefix(path, "/api/a2a/") ||
 					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) ||
 					(method == http.MethodPost && path == "/api/audit-logs/promote") ||
 					(method == http.MethodPatch && strings.HasPrefix(path, "/api/draft-audit-logs/")) {
@@ -602,4 +604,43 @@ func (a *certificationAdapter) UpdateEvidenceCertified(
 	ctx context.Context, evidenceID string, certified bool,
 ) error {
 	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
+}
+
+// registerA2AProxy forwards /a2a/* to the configured upstream.
+// In direct mode (A2A_DIRECT_MODE=true), the path is rewritten to "/"
+// because the agent pod serves A2A at root. When routing through
+// AgentGateway, the full path is preserved for HTTPRoute matching.
+func registerA2AProxy(e *echo.Echo, target string) {
+	u, err := url.Parse(target)
+	if err != nil {
+		slog.Error("invalid AGENTGATEWAY_URL", "url", target, "error", err)
+		e.Any("/a2a/*", func(c echo.Context) error {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error": "agent gateway not configured",
+			})
+		})
+		return
+	}
+
+	directMode := os.Getenv("A2A_DIRECT_MODE") == "true"
+
+	rp := &nethttputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = u.Scheme
+			req.URL.Host = u.Host
+			req.Host = u.Host
+			if directMode {
+				req.URL.Path = "/"
+				req.URL.RawPath = ""
+			}
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			slog.Error("a2a proxy error", "path", r.URL.Path, "error", err)
+			http.Error(w, "agent gateway unreachable", http.StatusBadGateway)
+		},
+	}
+
+	handler := echo.WrapHandler(rp)
+	e.Any("/a2a/*", handler)
+	slog.Info("a2a proxy registered", "target", target, "path", "/a2a/*", "direct_mode", directMode)
 }

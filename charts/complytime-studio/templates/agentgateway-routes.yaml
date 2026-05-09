@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A2A routing resources — generated from agentDirectory entries.
+# Each agent gets an AgentgatewayBackend (target) and HTTPRoute (path match).
+# AgentGateway routes /a2a/{agent-id} to the agent's K8s Service.
+{{- if .Values.agentgateway.enabled }}
+{{- range .Values.agentDirectory }}
+{{- $id := .id | default .name }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: {{ $id }}-backend
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "studio.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  a2a:
+    targets:
+      - name: {{ $id }}
+        backendRef:
+          name: {{ $id }}
+        port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $id }}-a2a-route
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "studio.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /a2a/{{ $id }}
+      backendRefs:
+        - name: {{ $id }}-backend
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+{{- end }}
+{{- end }}

@@ -17,6 +17,7 @@ import { SettingsView } from "./components/settings-view";
 import { AuditWorkspaceView } from "./components/audit-workspace-view";
 import { ChatAssistant } from "./components/chat-assistant";
 import { fetchMe, redirectToLogin, type UserInfo } from "./api/auth";
+import { fetchAgents, type AgentCard } from "./api/agents";
 import { apiFetch } from "./api/fetch";
 import { registerNames } from "./lib/format";
 
@@ -60,6 +61,9 @@ export const inboxVersion = signal(0);
 export function invalidateInbox() {
   inboxVersion.value++;
 }
+
+export const availableAgents = signal<AgentCard[]>([]);
+export const selectedAgent = signal<AgentCard | null>(null);
 
 const VALID_VIEWS: View[] = [
   "dashboard",
@@ -299,6 +303,13 @@ fetchMe().then((user) => {
   authChecked.value = true;
   if (user?.email) {
     registerNames([{ email: user.email, name: user.name }]);
+  }
+});
+
+fetchAgents().then((agents) => {
+  availableAgents.value = agents;
+  if (agents.length > 0 && !selectedAgent.value) {
+    selectedAgent.value = agents[0];
   }
 });
 

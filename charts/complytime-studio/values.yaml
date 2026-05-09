@@ -87,14 +87,23 @@ externalSkills:
     path: skills/gemara.md
 
 # -- kagent controller settings.
-# a2aURL routes all A2A traffic through the kagent controller, which manages
-# BYO agent lifecycles and exposes them in the kagent dashboard.
-# Set to empty string only for dev environments without kagent installed.
+# kagent manages Agent and MCPServer CRD lifecycle (Deployments, Services).
+# A2A traffic routes through AgentGateway, NOT the kagent controller.
 kagent:
-  a2aURL: "http://kagent-controller:8083"
+  # Retained for kagent dashboard / CLI access. Not used for production A2A routing.
+  controllerURL: "http://kagent-controller:8083"
 
-# -- Standalone A2A reverse proxy. Stateless — no session state.
-# Scales independently from the gateway for concurrent chat load.
+# -- AgentGateway — production A2A and MCP routing proxy.
+# All agent (A2A) and tool (MCP) traffic routes through AgentGateway.
+# Browser hits /a2a/* via ingress; agent pods hit AgentGateway for MCP.
+# See docs/decisions/agentgateway-production-routing.md.
+agentgateway:
+  enabled: true
+  image:
+    repository: ghcr.io/agentgateway/agentgateway
+    tag: v1.1.0
+  replicas: 1
+
 # -- BYO assistant agent. Standalone Python container with MCP sidecars.
 assistant:
   image:
@@ -126,14 +135,27 @@ model:
     credentialsSecret: studio-gcp-credentials
 
 # -- Agent directory entries exposed via GET /api/agents.
-# Single agent — BYO assistant deployed via byo-assistant.yaml.
-# The skills block MUST mirror agents/<name>/agent.yaml a2a.skills.
+# Each entry must include id (K8s Service name) + metadata for the workbench
+# agent picker. The skills block MUST mirror agents/<name>/agent.yaml a2a.skills.
+# Status values: active (shown in picker), hidden (internal-only, omitted from API).
 agentDirectory:
-  - name: studio-assistant
+  - id: studio-assistant
+    name: Studio Assistant
     description: >-
-      ComplyTime Studio assistant — audit preparation, evidence synthesis,
-      cross-framework coverage analysis, and compliance guidance
+      Audit preparation, evidence synthesis, cross-framework coverage
+      analysis, and compliance guidance
+    role: auditor
+    framework: langgraph
+    status: active
     url: "http://studio-assistant:8080"
+    tools:
+      - validate_gemara_artifact
+      - migrate_gemara_artifact
+      - query_database
+      - get_schema_info
+    examples:
+      - "Run an audit for my active policy"
+      - "Check posture for the last 30 days"
     skills:
       - id: compliance-assistant
         name: Studio Assistant
@@ -141,6 +163,22 @@ agentDirectory:
           Audit preparation, evidence synthesis, cross-framework coverage
           analysis, policy guidance, and AuditLog generation.
         tags: [assistant, audit, compliance, coverage, evidence, layer-7]
+
+  - id: studio-echo
+    name: Echo Agent (Test)
+    description: >-
+      Test agent that echoes messages back. Used for validating
+      agent picker and A2A connectivity.
+    role: utility
+    framework: langgraph
+    status: active
+    url: "http://studio-assistant:8080"
+    model:
+      provider: Anthropic
+      name: claude-haiku-4-5
+    examples:
+      - "Hello, are you there?"
+      - "Repeat after me: compliance is key"
 
 # -- MCP servers deployed via kagent MCPServer CRDs.
 # Platform servers (gemara, oras, clickhouse) use stdio with static credentials.

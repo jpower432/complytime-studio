@@ -9,6 +9,7 @@ description: >-
   ComplyTime Studio assistant — audit preparation, evidence synthesis,
   cross-framework coverage analysis, and compliance guidance
 
+framework: langgraph
 prompt: prompt.md
 
 # ---------------------------------------------------------------------------

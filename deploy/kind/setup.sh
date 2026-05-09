@@ -219,6 +219,15 @@ install_kagent() {
         --namespace "${NAMESPACE}" --timeout=180s 2>/dev/null || true
 }
 
+install_agentgateway() {
+    info "Installing Gateway API CRDs..."
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml 2>/dev/null || {
+        warn "Gateway API CRDs install failed (network?). AgentGateway features disabled in dev."
+        return 0
+    }
+    info "Gateway API CRDs installed. AgentGateway proxy deployed via Studio Helm chart when enabled."
+}
+
 print_access() {
     info ""
     info "Cluster ready. Next steps:"
@@ -239,6 +248,7 @@ main() {
     fix_coredns_for_podman
     fix_node_dns_for_podman
     install_kagent
+    install_agentgateway
     create_secrets
     wait_for_ready
     print_access

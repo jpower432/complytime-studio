@@ -6,6 +6,7 @@ import {
   selectedControlId, selectedRequirementId, selectedEvalResult,
   selectedPolicyDetail, activeTab,
   invalidateViews,
+  availableAgents, selectedAgent,
 } from "../app";
 import { streamMessage, streamReply, type StreamCallbacks } from "../api/a2a";
 import { apiFetch } from "../api/fetch";
@@ -23,7 +24,6 @@ interface ChatMessage {
 }
 
 const STICKY_NOTES_KEY = "studio-sticky-notes";
-const AGENT_NAME = "studio-assistant";
 const MAX_STICKY_NOTES = 10;
 const MAX_STICKY_NOTE_CHARS = 200;
 
@@ -279,7 +279,8 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
       const ctx = buildDashboardContext();
       const contextPrefix = ctx ? `[DASHBOARD CONTEXT]\n${buildInjectedContext(ctx, stickyNotes)}\n\n` : "";
       const history = contextPrefix + "--- Conversation so far ---\n" + historyLines.join("\n\n");
-      abortRef.current = streamReply(taskIdRef.current, text, callbacks, AGENT_NAME, { history });
+      const agentId = selectedAgent.value?.id ?? "studio-assistant";
+      abortRef.current = streamReply(taskIdRef.current, text, callbacks, agentId, { history });
     } else {
       const injected = buildInjectedContext(buildDashboardContext(), stickyNotes);
       const hasMemoryContext = stickyNotes.length > 0;
@@ -291,7 +292,8 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
         ]);
       }
 
-      abortRef.current = streamMessage(injected + "\n\n" + text, callbacks, AGENT_NAME);
+      const agentId = selectedAgent.value?.id ?? "studio-assistant";
+      abortRef.current = streamMessage(injected + "\n\n" + text, callbacks, agentId);
     }
   };
 
@@ -318,15 +320,58 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
     }
   };
 
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  const handleResizeStart = (e: MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = overlayRef.current?.offsetWidth ?? 380;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      const newWidth = Math.min(Math.max(startWidth + delta, 300), window.innerWidth * 0.6);
+      if (overlayRef.current) overlayRef.current.style.width = `${newWidth}px`;
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   if (!open) return null;
 
   return (
     <>
-        <div class="chat-overlay">
+        <div class="chat-overlay" ref={overlayRef}>
+          <div class="chat-resize-handle" onMouseDown={handleResizeStart} />
           <div class="chat-overlay-header">
-            <div>
-              <h3>Studio Assistant</h3>
-              {modelLabel && <span class="chat-model-label">{modelLabel}</span>}
+            <div class="chat-header-identity">
+              {availableAgents.value.length > 1 ? (
+                <select
+                  class="chat-agent-picker"
+                  value={selectedAgent.value?.id ?? ""}
+                  onChange={(e) => {
+                    const id = (e.target as HTMLSelectElement).value;
+                    const agent = availableAgents.value.find((a) => a.id === id);
+                    if (agent && agent.id !== selectedAgent.value?.id) {
+                      selectedAgent.value = agent;
+                      handleNewSession();
+                    }
+                  }}
+                  disabled={streaming}
+                  title={selectedAgent.value?.description ?? ""}
+                >
+                  {availableAgents.value.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span class="chat-agent-name">{selectedAgent.value?.name ?? "Assistant"}</span>
+              )}
+              {(selectedAgent.value?.model?.name || modelLabel) && (
+                <span class="chat-model-label">{selectedAgent.value?.model?.name || modelLabel}</span>
+              )}
             </div>
             <div class="chat-header-controls">
               <button

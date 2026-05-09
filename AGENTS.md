@@ -225,11 +225,11 @@ The gateway extracts the user's access token from the session cookie and injects
 
 | Agent | Layer | Type | Framework | A2A skill `id` (agent card) |
 |:--|:--|:--|:--|:--|
-| studio-assistant | L7 (Audit) | BYO (`kagent.dev/v1alpha2 Agent`) | Google ADK (Python) | `compliance-assistant` |
+| studio-assistant | L7 (Audit) | BYO (`kagent.dev/v1alpha2 Agent`) | LangGraph + kagent-langgraph (Python) | `compliance-assistant` |
 
 Canonical spec: `agents/assistant/agent.yaml` (Helm `agentDirectory` must keep `a2a.skills` in sync).
 
-All agents are deployed as kagent `Agent` CRDs with `type: BYO`. A2A traffic routes through the kagent controller (`kagent-controller:8083`). The gateway proxies requests via `KAGENT_A2A_URL`.
+All agents are deployed as kagent `Agent` CRDs with `type: BYO`. A2A traffic routes through AgentGateway when enabled (`agentgateway.enabled: true`). The Studio gateway proxies `/a2a/*` requests via `AGENTGATEWAY_URL` — preserving the full path for AgentGateway HTTPRoute matching. In direct mode (AgentGateway disabled), the gateway proxies to the agent pod and strips the path prefix since agents serve A2A at root.
 
 **studio-assistant internal skills** (`skills/*/SKILL.md`, also vendored under `agents/assistant/skills/` for the image):
 

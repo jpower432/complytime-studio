@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# MCP routing through AgentGateway — tool traffic from agent pods.
+# Agent pods connect to MCP servers via AgentGateway for observability
+# and CEL-based tool access enforcement.
+{{- if .Values.agentgateway.enabled }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mcp-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  mcp:
+    targets:
+      {{- if .Values.mcpServers.gemara.enabled }}
+      - name: gemara-mcp
+        backendRef:
+          name: studio-gemara-mcp
+        port: 3000
+        protocol: StreamableHTTP
+      {{- end }}
+      {{- if .Values.mcpServers.oras.enabled }}
+      - name: oras-mcp
+        backendRef:
+          name: studio-oras-mcp
+        port: 3000
+        protocol: StreamableHTTP
+      {{- end }}
+      {{- if .Values.postgres.enabled }}
+      - name: postgres-mcp
+        backendRef:
+          name: studio-postgres-mcp
+        port: 3000
+        protocol: StreamableHTTP
+      {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: mcp-backend
+          group: agentgateway.dev
+          kind: AgentgatewayBackend
+{{- end }}

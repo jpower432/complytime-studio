@@ -26,3 +26,8 @@ registry:
   enabled: true
   service:
     type: NodePort
+
+# AgentGateway CRDs not yet available in dev clusters.
+# Gateway serves /a2a/* with 503 until CRDs are installed.
+agentgateway:
+  enabled: false

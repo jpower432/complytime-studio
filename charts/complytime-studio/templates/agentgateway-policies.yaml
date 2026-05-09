@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# CEL-based tool access policies for AgentGateway.
+# Generated from agentDirectory[].tools — each agent is granted access
+# only to its declared tools. Deny-all default rejects unenumerated calls.
+{{- if .Values.agentgateway.enabled }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: tool-access
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  targetRef:
+    name: agentgateway-proxy
+    group: gateway.networking.k8s.io
+    kind: Gateway
+  rules:
+    {{- range .Values.agentDirectory }}
+    {{- $id := .id | default .name }}
+    {{- if .tools }}
+    - name: {{ $id }}-tools
+      action: ALLOW
+      when:
+        cel: >-
+          request.headers['X-Agent-ID'] == '{{ $id }}' &&
+          request.mcp.tool in [{{ range $i, $t := .tools }}{{ if $i }}, {{ end }}'{{ $t }}'{{ end }}]
+    {{- else }}
+    - name: {{ $id }}-unrestricted
+      action: ALLOW
+      when:
+        cel: >-
+          request.headers['X-Agent-ID'] == '{{ $id }}'
+    {{- end }}
+    {{- end }}
+    - name: deny-all-mcp
+      action: DENY
+      when:
+        cel: "true"
+{{- end }}

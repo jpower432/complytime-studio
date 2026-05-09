@@ -75,7 +75,8 @@ spec:
           protocol: TCP
 
 ---
-# Assistant: accept ingress from gateway only (A2A proxy) on port 8080.
+# Assistant: accept ingress from AgentGateway (A2A routing) on port 8080.
+# When AgentGateway is disabled, fall back to allowing from gateway directly.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -90,6 +91,12 @@ spec:
       app.kubernetes.io/part-of: complytime-studio
   ingress:
     - from:
+        {{- if .Values.agentgateway.enabled }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agentgateway
+              app.kubernetes.io/part-of: complytime-studio
+        {{- end }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: gateway
@@ -97,6 +104,36 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+
+{{- if .Values.agentgateway.enabled }}
+---
+# AgentGateway: accept ingress from gateway (A2A proxy) and assistant (MCP).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-agentgateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: agentgateway
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: assistant
+              app.kubernetes.io/part-of: complytime-studio
+      ports:
+        - port: 80
+          protocol: TCP
+{{- end }}
 
 {{- if .Values.registry.enabled }}
 ---

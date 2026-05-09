@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-# BYO ADK assistant — kagent Agent CRD (type: BYO).
+# BYO LangGraph assistant — kagent Agent CRD (type: BYO).
 # kagent controller manages the Deployment + Service lifecycle.
 # Agent appears in the kagent dashboard and routes A2A through the controller.
-# Connects to KMCP-managed MCP services over HTTP (same infra as declarative agents).
+# Uses kagentCheckpointer for durable conversation state.
+# Connects to MCP services via AgentGateway (or direct when gateway disabled).
 apiVersion: kagent.dev/v1alpha2
 kind: Agent
 metadata:
@@ -44,12 +45,28 @@ spec:
           value: "http://studio-gateway-internal:8081"
         {{- if .Values.mcpServers.gemara.enabled }}
         - name: GEMARA_MCP_URL
+          {{- if .Values.agentgateway.enabled }}
+          value: "http://agentgateway-proxy/mcp/gemara-mcp"
+          {{- else }}
           value: "http://studio-gemara-mcp:3000/mcp"
+          {{- end }}
         {{- end }}
         {{- if .Values.postgres.enabled }}
         - name: POSTGRES_MCP_URL
+          {{- if .Values.agentgateway.enabled }}
+          value: "http://agentgateway-proxy/mcp/postgres-mcp"
+          {{- else }}
           value: "http://studio-postgres-mcp:3000/mcp"
+          {{- end }}
         {{- end }}
+        {{- if .Values.agentgateway.enabled }}
+        - name: AGENT_ID
+          value: "studio-assistant"
+        {{- end }}
+        - name: KAGENT_URL
+          value: "http://kagent-controller:8083"
+        - name: APP_NAME
+          value: "studio_assistant"
         {{- if .Values.model.vertexAI.credentialsSecret }}
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: /var/secrets/gcp/application_default_credentials.json

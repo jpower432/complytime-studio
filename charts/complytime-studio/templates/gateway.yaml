@@ -65,25 +65,24 @@ spec:
               value: >-
                 {{- $enriched := list -}}
                 {{- range .Values.agentDirectory -}}
-                {{- $shortName := trimPrefix "studio-" .name -}}
+                {{- $shortName := trimPrefix "studio-" (.id | default .name) -}}
                 {{- $agentOverride := dict -}}
                 {{- if hasKey $.Values.agents $shortName -}}
                 {{- $agentOverride = index $.Values.agents $shortName -}}
                 {{- end -}}
                 {{- $agentModel := dict -}}
+                {{- if hasKey . "model" -}}
+                {{- $agentModel = .model -}}
+                {{- end -}}
                 {{- if hasKey $agentOverride "model" -}}
                 {{- $agentModel = $agentOverride.model -}}
                 {{- end -}}
                 {{- $provider := default $.Values.model.provider (index $agentModel "provider" | default "") -}}
                 {{- $modelName := default $.Values.model.name (index $agentModel "name" | default "") -}}
-                {{- $entry := merge (dict "model" (dict "provider" $provider "name" $modelName)) (deepCopy .) -}}
+                {{- $entry := merge (deepCopy .) (dict "model" (dict "provider" $provider "name" $modelName)) -}}
                 {{- $enriched = append $enriched $entry -}}
                 {{- end }}
                 {{ $enriched | toJson }}
-            - name: KAGENT_A2A_URL
-              value: {{ .Values.kagent.a2aURL | quote }}
-            - name: KAGENT_AGENT_NAMESPACE
-              value: {{ .Release.Namespace | quote }}
             {{- if .Values.mcpServers.gemara.enabled }}
             - name: GEMARA_MCP_URL
               value: "http://studio-gemara-mcp:3000/mcp"
@@ -156,6 +155,18 @@ spec:
               value: {{ .Values.gateway.autoPersistArtifacts | default true | quote }}
             - name: NATS_URL
               value: "nats://studio-nats:4222"
+            {{- if .Values.agentgateway.enabled }}
+            - name: AGENTGATEWAY_URL
+              value: "http://agentgateway-proxy"
+            {{- else }}
+            {{- /* Direct-to-agent fallback when AgentGateway is not deployed */ -}}
+            {{- with (first .Values.agentDirectory) }}
+            - name: AGENTGATEWAY_URL
+              value: {{ .url | default (printf "http://%s:8080" (.id | default .name)) | quote }}
+            {{- end }}
+            - name: A2A_DIRECT_MODE
+              value: "true"
+            {{- end }}
             - name: NETWORKPOLICY_ENFORCED
               value: "true"
             {{- if .Values.registry.credentials.secretName }}

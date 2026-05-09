@@ -34,13 +34,28 @@ func TestParseDirectory_ValidJSON(t *testing.T) {
 	}
 }
 
+func TestParseDirectory_URLOmittedFromJSON(t *testing.T) {
+	cards := []Card{{Name: "test", Description: "d", URL: "http://internal:8080"}}
+	data, err := json.Marshal(cards)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded[0]["url"]; ok {
+		t.Fatal("URL should be omitted from JSON output (json:\"-\")")
+	}
+}
+
 func TestRegisterDirectory_GET(t *testing.T) {
 	mux := http.NewServeMux()
 	cards := []Card{
 		{Name: "studio-threat-modeler", Description: "STRIDE analysis"},
 		{Name: "studio-assistant", Description: "Compliance assistant"},
 	}
-	registerDirectory(mux, cards)
+	RegisterDirectory(mux, cards)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
@@ -61,7 +76,7 @@ func TestRegisterDirectory_GET(t *testing.T) {
 
 func TestRegisterDirectory_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
-	registerDirectory(mux, nil)
+	RegisterDirectory(mux, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/agents", nil)
@@ -72,30 +87,30 @@ func TestRegisterDirectory_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestA2AProxy_UnknownAgent(t *testing.T) {
+func TestRegisterDirectory_FiltersHidden(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, Options{
-		Cards: []Card{{Name: "known-agent", URL: "http://known:8080"}},
-	})
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/a2a/unknown-agent", nil)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 for unknown agent", rec.Code)
+	cards := []Card{
+		{ID: "visible-agent", Name: "Visible", Status: "active"},
+		{ID: "hidden-agent", Name: "Hidden", Status: "hidden"},
 	}
-}
-
-func TestA2AProxy_MissingAgentName(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux, Options{Cards: []Card{}})
+	RegisterDirectory(mux, cards)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/a2a/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 for missing agent name", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var got []Card
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d agents, want 1 (hidden should be filtered)", len(got))
+	}
+	if got[0].ID != "visible-agent" {
+		t.Fatalf("got id = %q, want visible-agent", got[0].ID)
 	}
 }
