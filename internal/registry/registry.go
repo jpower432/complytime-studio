@@ -84,18 +84,6 @@ func (rp *proxy) connectMCP(ctx context.Context) (*mcp.ClientSession, error) {
 	return orasClient.Connect(connectCtx, transport, nil)
 }
 
-func (rp *proxy) isInsecure(host string) bool {
-	if !isValidRegistryHost(host) {
-		return false
-	}
-	for _, h := range rp.insecure {
-		if h == host {
-			return true
-		}
-	}
-	return false
-}
-
 // isValidRegistryHost rejects host values that could cause SSRF via URL
 // injection (path separators, userinfo markers, backslashes).
 func isValidRegistryHost(host string) bool {
@@ -105,14 +93,29 @@ func isValidRegistryHost(host string) bool {
 	return !strings.ContainsAny(host, "/@\\")
 }
 
-// directGet performs an HTTP GET against an allowlisted insecure registry.
-// The host MUST already have passed rp.isInsecure before calling this.
-func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, error) {
-	if !rp.isInsecure(host) {
-		return nil, fmt.Errorf("host %q not in insecure allowlist", host)
+// BuildAllowedRegistryURL validates that host is present in allowlist and
+// returns a safe URL string. CodeQL's MaD extension at .github/codeql/models/
+// declares this function's ReturnValue as a request-forgery barrier.
+func BuildAllowedRegistryURL(host, path string, allowlist []string) (string, error) {
+	if !isValidRegistryHost(host) {
+		return "", fmt.Errorf("invalid registry host: %q", host)
+	}
+	var matched bool
+	for _, h := range allowlist {
+		if h == host {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return "", fmt.Errorf("host %q not in insecure allowlist", host)
 	}
 	target := &url.URL{Scheme: "http", Host: host, Path: path}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	return target.String(), nil
+}
+
+func (rp *proxy) directGet(ctx context.Context, safeURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, safeURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -123,15 +126,15 @@ func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, erro
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry %s: %s", target.Redacted(), resp.Status)
+		return nil, fmt.Errorf("registry %s: %s", safeURL, resp.Status)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
 func (rp *proxy) handleListRepositories(c echo.Context) error {
 	registry := c.QueryParam("registry")
-	if rp.isInsecure(registry) {
-		body, err := rp.directGet(c.Request().Context(), registry, "/v2/_catalog")
+	if safeURL, err := BuildAllowedRegistryURL(registry, "/v2/_catalog", rp.insecure); err == nil {
+		body, err := rp.directGet(c.Request().Context(), safeURL)
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
@@ -156,11 +159,11 @@ func (rp *proxy) handleListRepositories(c echo.Context) error {
 func (rp *proxy) handleListTags(c echo.Context) error {
 	ref := c.QueryParam("ref")
 	host, repo := splitReference(ref)
-	if rp.isInsecure(host) {
-		if !reOCIRepo.MatchString(repo) {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository name"})
-		}
-		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/tags/list", repo))
+	if !reOCIRepo.MatchString(repo) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository name"})
+	}
+	if safeURL, err := BuildAllowedRegistryURL(host, fmt.Sprintf("/v2/%s/tags/list", repo), rp.insecure); err == nil {
+		body, err := rp.directGet(c.Request().Context(), safeURL)
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
@@ -185,12 +188,12 @@ func (rp *proxy) handleListTags(c echo.Context) error {
 func (rp *proxy) handleFetchManifest(c echo.Context) error {
 	ref := c.QueryParam("ref")
 	host, repoAndTag := splitReference(ref)
-	if rp.isInsecure(host) {
-		repo, tag := splitRepoTag(repoAndTag)
-		if !reOCIRepo.MatchString(repo) || !reOCITag.MatchString(tag) {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or tag"})
-		}
-		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/manifests/%s", repo, tag))
+	repo, tag := splitRepoTag(repoAndTag)
+	if !reOCIRepo.MatchString(repo) || !reOCITag.MatchString(tag) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or tag"})
+	}
+	if safeURL, err := BuildAllowedRegistryURL(host, fmt.Sprintf("/v2/%s/manifests/%s", repo, tag), rp.insecure); err == nil {
+		body, err := rp.directGet(c.Request().Context(), safeURL)
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
@@ -202,12 +205,12 @@ func (rp *proxy) handleFetchManifest(c echo.Context) error {
 func (rp *proxy) handleFetchLayer(c echo.Context) error {
 	ref := c.QueryParam("ref")
 	host, repoAndDigest := splitReference(ref)
-	if rp.isInsecure(host) {
-		repo, digest := splitRepoDigest(repoAndDigest)
-		if !reOCIRepo.MatchString(repo) || !reOCIDigest.MatchString(digest) {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or digest"})
-		}
-		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest))
+	repo, digest := splitRepoDigest(repoAndDigest)
+	if !reOCIRepo.MatchString(repo) || !reOCIDigest.MatchString(digest) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or digest"})
+	}
+	if safeURL, err := BuildAllowedRegistryURL(host, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest), rp.insecure); err == nil {
+		body, err := rp.directGet(c.Request().Context(), safeURL)
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
