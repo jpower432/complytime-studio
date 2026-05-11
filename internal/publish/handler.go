@@ -3,11 +3,11 @@
 package publish
 
 import (
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/labstack/echo/v4"
 
 	"github.com/complytime/complytime-studio/internal/httputil"
 )
@@ -18,26 +18,21 @@ type Options struct {
 	InsecureRegistries []string
 }
 
-// Register mounts the /api/publish endpoint on the mux.
-func Register(mux *http.ServeMux, opts Options) {
-	mux.HandleFunc("/api/publish", handler(opts))
+// Register mounts the /publish endpoint on the Echo group.
+func Register(g *echo.Group, opts Options) {
+	g.POST("/publish", publishHandler(opts))
 	slog.Info("publish endpoint registered", "route", "/api/publish")
 }
 
-func handler(opts Options) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+func publishHandler(opts Options) echo.HandlerFunc {
+	return func(c echo.Context) error {
 		var req struct {
 			Artifacts []string `json:"artifacts"`
 			Target    string   `json:"target"`
 			Tag       string   `json:"tag"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
-			httputil.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
+		if err := c.Bind(&req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
 		var yamlContents [][]byte
@@ -47,7 +42,7 @@ func handler(opts Options) http.HandlerFunc {
 
 		pushOpts := PushOptions{}
 		if opts.TokenProvider != nil {
-			if token, ok := opts.TokenProvider.TokenFromRequest(r); ok {
+			if token, ok := opts.TokenProvider.TokenFromRequest(c.Request()); ok {
 				pushOpts.Token = token
 			}
 		}
@@ -58,12 +53,11 @@ func handler(opts Options) http.HandlerFunc {
 			}
 		}
 
-		result, err := AssembleAndPush(r.Context(), yamlContents, req.Target, req.Tag, pushOpts)
+		result, err := AssembleAndPush(c.Request().Context(), yamlContents, req.Target, req.Tag, pushOpts)
 		if err != nil {
-			httputil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		httputil.WriteJSON(w, http.StatusOK, result)
+		return c.JSON(http.StatusOK, result)
 	}
 }

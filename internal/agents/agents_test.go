@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/labstack/echo/v4"
 )
 
 func TestParseDirectory_Empty(t *testing.T) {
@@ -35,16 +37,17 @@ func TestParseDirectory_ValidJSON(t *testing.T) {
 }
 
 func TestRegisterDirectory_GET(t *testing.T) {
-	mux := http.NewServeMux()
+	e := echo.New()
+	g := e.Group("/api")
 	cards := []Card{
 		{Name: "studio-threat-modeler", Description: "STRIDE analysis"},
 		{Name: "studio-assistant", Description: "Compliance assistant"},
 	}
-	registerDirectory(mux, cards)
+	RegisterDirectory(g, cards)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -60,12 +63,13 @@ func TestRegisterDirectory_GET(t *testing.T) {
 }
 
 func TestRegisterDirectory_MethodNotAllowed(t *testing.T) {
-	mux := http.NewServeMux()
-	registerDirectory(mux, nil)
+	e := echo.New()
+	g := e.Group("/api")
+	RegisterDirectory(g, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/agents", nil)
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
@@ -73,14 +77,16 @@ func TestRegisterDirectory_MethodNotAllowed(t *testing.T) {
 }
 
 func TestA2AProxy_UnknownAgent(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux, Options{
+	e := echo.New()
+	g := e.Group("/api")
+	RegisterDirectory(g, []Card{{Name: "known-agent", URL: "http://known:8080"}})
+	RegisterA2AProxy(g, Options{
 		Cards: []Card{{Name: "known-agent", URL: "http://known:8080"}},
 	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/a2a/unknown-agent", nil)
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 for unknown agent", rec.Code)
@@ -88,12 +94,13 @@ func TestA2AProxy_UnknownAgent(t *testing.T) {
 }
 
 func TestA2AProxy_MissingAgentName(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux, Options{Cards: []Card{}})
+	e := echo.New()
+	g := e.Group("/api")
+	RegisterA2AProxy(g, Options{Cards: []Card{}})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/a2a/", nil)
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for missing agent name", rec.Code)

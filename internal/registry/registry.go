@@ -9,11 +9,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/labstack/echo/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+var (
+	reOCIRepo   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$`)
+	reOCITag    = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$`)
+	reOCIDigest = regexp.MustCompile(`^sha(256:[a-f0-9]{64}|512:[a-f0-9]{128})$`)
 )
 
 // Options configures the registry proxy module.
@@ -22,12 +30,19 @@ type Options struct {
 	InsecureRegistries []string
 }
 
-// Register mounts OCI registry proxy routes on the mux.
-func Register(mux *http.ServeMux, opts Options) {
+// Register mounts OCI registry proxy routes on the Echo group.
+func Register(g *echo.Group, opts Options) {
 	insecure := parseInsecureRegistries(opts.InsecureRegistries)
 
+	unavail := func(c echo.Context) error {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable"})
+	}
+
 	if opts.MCPURL == "" && len(insecure) == 0 {
-		mux.HandleFunc("/api/registry/", httputil.UnavailableHandler("oras-mcp unavailable"))
+		g.GET("/registry/repositories", unavail)
+		g.GET("/registry/tags", unavail)
+		g.GET("/registry/manifest", unavail)
+		g.GET("/registry/layer", unavail)
 		slog.Info("registry proxy disabled", "reason", "ORAS_MCP_URL not set")
 		return
 	}
@@ -38,10 +53,10 @@ func Register(mux *http.ServeMux, opts Options) {
 		client:   &http.Client{Timeout: 15 * time.Second},
 	}
 
-	mux.HandleFunc("/api/registry/repositories", rp.handleListRepositories)
-	mux.HandleFunc("/api/registry/tags", rp.handleListTags)
-	mux.HandleFunc("/api/registry/manifest", rp.handleFetchManifest)
-	mux.HandleFunc("/api/registry/layer", rp.handleFetchLayer)
+	g.GET("/registry/repositories", rp.handleListRepositories)
+	g.GET("/registry/tags", rp.handleListTags)
+	g.GET("/registry/manifest", rp.handleFetchManifest)
+	g.GET("/registry/layer", rp.handleFetchLayer)
 	if len(insecure) > 0 {
 		slog.Info("registry proxy registered", "insecure", insecure)
 	} else {
@@ -90,12 +105,14 @@ func isValidRegistryHost(host string) bool {
 	return !strings.ContainsAny(host, "/@\\")
 }
 
+// directGet performs an HTTP GET against an allowlisted insecure registry.
+// The host MUST already have passed rp.isInsecure before calling this.
 func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, error) {
-	if !isValidRegistryHost(host) {
-		return nil, fmt.Errorf("invalid registry host: %q", host)
+	if !rp.isInsecure(host) {
+		return nil, fmt.Errorf("host %q not in insecure allowlist", host)
 	}
-	u := fmt.Sprintf("http://%s%s", host, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	target := &url.URL{Scheme: "http", Host: host, Path: path}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -106,25 +123,23 @@ func (rp *proxy) directGet(ctx context.Context, host, path string) ([]byte, erro
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry %s: %s", u, resp.Status)
+		return nil, fmt.Errorf("registry %s: %s", target.Redacted(), resp.Status)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-func (rp *proxy) handleListRepositories(w http.ResponseWriter, r *http.Request) {
-	registry := r.URL.Query().Get("registry")
+func (rp *proxy) handleListRepositories(c echo.Context) error {
+	registry := c.QueryParam("registry")
 	if rp.isInsecure(registry) {
-		body, err := rp.directGet(r.Context(), registry, "/v2/_catalog")
+		body, err := rp.directGet(c.Request().Context(), registry, "/v2/_catalog")
 		if err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-			return
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
 		var catalog struct {
 			Repositories []string `json:"repositories"`
 		}
 		if err := json.Unmarshal(body, &catalog); err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "parse catalog: " + err.Error()})
-			return
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "parse catalog: " + err.Error()})
 		}
 		type repoEntry struct {
 			Name string `json:"name"`
@@ -133,27 +148,27 @@ func (rp *proxy) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 		for i, name := range catalog.Repositories {
 			out[i] = repoEntry{Name: name}
 		}
-		httputil.WriteJSON(w, http.StatusOK, out)
-		return
+		return c.JSON(http.StatusOK, out)
 	}
-	rp.toolCall(w, r, "list_repositories", map[string]any{"registry": registry})
+	return rp.toolCall(c, "list_repositories", map[string]any{"registry": registry})
 }
 
-func (rp *proxy) handleListTags(w http.ResponseWriter, r *http.Request) {
-	ref := r.URL.Query().Get("ref")
+func (rp *proxy) handleListTags(c echo.Context) error {
+	ref := c.QueryParam("ref")
 	host, repo := splitReference(ref)
 	if rp.isInsecure(host) {
-		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/tags/list", repo))
+		if !reOCIRepo.MatchString(repo) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository name"})
+		}
+		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/tags/list", repo))
 		if err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-			return
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
 		var tagList struct {
 			Tags []string `json:"tags"`
 		}
 		if err := json.Unmarshal(body, &tagList); err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "parse tags: " + err.Error()})
-			return
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "parse tags: " + err.Error()})
 		}
 		type tagEntry struct {
 			Name string `json:"name"`
@@ -162,75 +177,70 @@ func (rp *proxy) handleListTags(w http.ResponseWriter, r *http.Request) {
 		for i, t := range tagList.Tags {
 			out[i] = tagEntry{Name: t}
 		}
-		httputil.WriteJSON(w, http.StatusOK, out)
-		return
+		return c.JSON(http.StatusOK, out)
 	}
-	rp.toolCall(w, r, "list_tags", map[string]any{"reference": ref})
+	return rp.toolCall(c, "list_tags", map[string]any{"reference": ref})
 }
 
-func (rp *proxy) handleFetchManifest(w http.ResponseWriter, r *http.Request) {
-	ref := r.URL.Query().Get("ref")
+func (rp *proxy) handleFetchManifest(c echo.Context) error {
+	ref := c.QueryParam("ref")
 	host, repoAndTag := splitReference(ref)
 	if rp.isInsecure(host) {
 		repo, tag := splitRepoTag(repoAndTag)
-		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/manifests/%s", repo, tag))
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-			return
+		if !reOCIRepo.MatchString(repo) || !reOCITag.MatchString(tag) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or tag"})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-		return
+		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/manifests/%s", repo, tag))
+		if err != nil {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+		}
+		return c.Blob(http.StatusOK, "application/json", body)
 	}
-	rp.toolCall(w, r, "fetch_manifest", map[string]any{"reference": ref})
+	return rp.toolCall(c, "fetch_manifest", map[string]any{"reference": ref})
 }
 
-func (rp *proxy) handleFetchLayer(w http.ResponseWriter, r *http.Request) {
-	ref := r.URL.Query().Get("ref")
+func (rp *proxy) handleFetchLayer(c echo.Context) error {
+	ref := c.QueryParam("ref")
 	host, repoAndDigest := splitReference(ref)
 	if rp.isInsecure(host) {
 		repo, digest := splitRepoDigest(repoAndDigest)
-		body, err := rp.directGet(r.Context(), host, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest))
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-			return
+		if !reOCIRepo.MatchString(repo) || !reOCIDigest.MatchString(digest) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository or digest"})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-		return
+		body, err := rp.directGet(c.Request().Context(), host, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest))
+		if err != nil {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+		}
+		return c.Blob(http.StatusOK, "application/json", body)
 	}
-	rp.toolCall(w, r, "fetch_layer", map[string]any{"reference": ref})
+	return rp.toolCall(c, "fetch_layer", map[string]any{"reference": ref})
 }
 
-func (rp *proxy) toolCall(w http.ResponseWriter, r *http.Request, toolName string, args map[string]any) {
-	sess, err := rp.connectMCP(r.Context())
+func (rp *proxy) toolCall(c echo.Context, toolName string, args map[string]any) error {
+	ctx := c.Request().Context()
+	sess, err := rp.connectMCP(ctx)
 	if err != nil {
-		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable: " + err.Error()})
-		return
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "oras-mcp unavailable: " + err.Error()})
 	}
 	defer func() { _ = sess.Close() }()
-	res, err := sess.CallTool(r.Context(), &mcp.CallToolParams{
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
 	})
 	if err != nil {
-		httputil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 	var sb strings.Builder
-	for _, c := range res.Content {
-		if t, ok := c.(*mcp.TextContent); ok {
+	for _, ct := range res.Content {
+		if t, ok := ct.(*mcp.TextContent); ok {
 			sb.WriteString(t.Text)
 		}
 	}
 	body := sb.String()
-	w.Header().Set("Content-Type", "application/json")
 	if !json.Valid([]byte(body)) {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": body})
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": body})
 	}
-	_, _ = w.Write([]byte(body))
+	return c.Blob(http.StatusOK, "application/json", []byte(body))
 }
 
 func parseInsecureRegistries(raw []string) []string {

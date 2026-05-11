@@ -5,7 +5,7 @@ package config
 import (
 	"net/http"
 
-	"github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/labstack/echo/v4"
 )
 
 // Options holds the platform configuration key-value pairs.
@@ -13,13 +13,13 @@ type Options struct {
 	Values map[string]string
 }
 
-// Register mounts the /api/config endpoint on the mux.
-func Register(mux *http.ServeMux, opts Options) {
+// Register mounts the /config endpoint on the Echo group.
+func Register(g *echo.Group, opts Options) {
 	cfg := opts.Values
 	if cfg == nil {
 		cfg = map[string]string{}
 	}
-	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
-		httputil.WriteJSON(w, http.StatusOK, cfg)
+	g.GET("/config", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, cfg)
 	})
 }

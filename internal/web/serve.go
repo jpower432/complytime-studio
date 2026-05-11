@@ -12,34 +12,10 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// Register mounts the SPA file server with history-mode fallback on the mux.
-func Register(mux *http.ServeMux, assets fs.FS) {
-	sub, err := fs.Sub(assets, "dist")
-	if err != nil {
-		slog.Error("embed workbench failed", "error", err)
-		os.Exit(1)
-	}
-
-	fileServer := http.FileServer(http.FS(sub))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/" {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		if _, err := sub.(fs.ReadFileFS).ReadFile(strings.TrimPrefix(path, "/")); err != nil {
-			r.URL.Path = "/"
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		fileServer.ServeHTTP(w, r)
-	})
-}
-
-// RegisterEchoWithMux sets Echo's fallback handlers to serve the SPA for
-// non-API paths and delegate unmatched /api/* paths to the legacy ServeMux.
-// This avoids e.Any("/*") which conflicts with apiGroup route priority.
-func RegisterEchoWithMux(e *echo.Echo, assets fs.FS, apiMux *http.ServeMux) {
+// RegisterSPA configures Echo's error handler to serve the embedded SPA for
+// any non-API 404. Static assets are served directly; all other paths get
+// index.html (history-mode routing).
+func RegisterSPA(e *echo.Echo, assets fs.FS) {
 	sub, err := fs.Sub(assets, "dist")
 	if err != nil {
 		slog.Error("embed workbench failed", "error", err)
@@ -76,9 +52,8 @@ func RegisterEchoWithMux(e *echo.Echo, assets fs.FS, apiMux *http.ServeMux) {
 			defaultErrHandler(err, c)
 			return
 		}
-		path := c.Request().URL.Path
-		if strings.HasPrefix(path, "/api/") {
-			apiMux.ServeHTTP(c.Response(), c.Request())
+		if strings.HasPrefix(c.Request().URL.Path, "/api/") {
+			defaultErrHandler(err, c)
 			return
 		}
 		_ = serveSPA(c)

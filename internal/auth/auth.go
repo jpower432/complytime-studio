@@ -128,7 +128,7 @@ func (h *Handler) Middleware() echo.MiddlewareFunc {
 			}
 
 			if h.apiToken != "" {
-				if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
+				if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); subtle.ConstantTimeCompare([]byte(bearer), []byte(h.apiToken)) == 1 {
 					sess := &Session{
 						Email:          "api-token@internal",
 						Name:           "API Token",

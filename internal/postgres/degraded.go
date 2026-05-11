@@ -28,8 +28,12 @@ type pingResult struct {
 // header when a backing store is unavailable. Results are cached to avoid
 // pinging on every HTTP request.
 func DegradedMiddleware(subsystems map[string]Pinger) func(http.Handler) http.Handler {
-	cacheTTL := consts.DegradedCacheTTL
+	return DegradedMiddlewareWithTTL(subsystems, consts.DegradedCacheTTL)
+}
 
+// DegradedMiddlewareWithTTL is like DegradedMiddleware but accepts a custom
+// cache TTL. Useful for testing with short durations.
+func DegradedMiddlewareWithTTL(subsystems map[string]Pinger, cacheTTL time.Duration) func(http.Handler) http.Handler {
 	var (
 		mu     sync.RWMutex
 		cached pingResult

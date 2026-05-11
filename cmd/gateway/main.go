@@ -42,7 +42,6 @@ func main() {
 	defer stop()
 
 	port := httputil.EnvOr("PORT", "8080")
-	mux := http.NewServeMux()
 
 	pgCfg, ok := pgstore.ConfigFromEnv()
 	if !ok {
@@ -192,41 +191,7 @@ func main() {
 	insecureRaw := os.Getenv("REGISTRY_INSECURE")
 	insecureList := splitComma(insecureRaw)
 
-	registry.Register(mux, registry.Options{
-		MCPURL:             os.Getenv("ORAS_MCP_URL"),
-		InsecureRegistries: insecureList,
-	})
-
-	publish.Register(mux, publish.Options{
-		TokenProvider:      authHandler,
-		InsecureRegistries: insecureList,
-	})
-
 	agentCards := agents.ParseDirectory(os.Getenv("AGENT_DIRECTORY"))
-	agents.RegisterDirectory(mux, agentCards)
-
-	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
-		agents.RegisterA2AForward(mux, a2aProxyURL)
-	} else {
-		agents.RegisterA2AProxy(mux, agents.Options{
-			Cards:          agentCards,
-			TokenProvider:  authHandler,
-			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
-			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
-		})
-		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
-	}
-
-	config.Register(mux, config.Options{
-		Values: map[string]string{
-			"github_org":             httputil.EnvOr("GITHUB_ORG", ""),
-			"github_repo":            httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
-			"registry_insecure":      httputil.EnvOr("REGISTRY_INSECURE", ""),
-			"model_provider":         httputil.EnvOr("MODEL_PROVIDER", ""),
-			"model_name":             httputil.EnvOr("MODEL_NAME", ""),
-			"auto_persist_artifacts": httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true"),
-		},
-	})
 
 	// --- Echo server setup ---
 	e := echo.New()
@@ -296,6 +261,37 @@ func main() {
 	authHandler.RegisterChatHistory(apiGroup, chatStore)
 	registerGemaraProxy(apiGroup, os.Getenv("GEMARA_MCP_URL"))
 
+	registry.Register(apiGroup, registry.Options{
+		MCPURL:             os.Getenv("ORAS_MCP_URL"),
+		InsecureRegistries: insecureList,
+	})
+	publish.Register(apiGroup, publish.Options{
+		TokenProvider:      authHandler,
+		InsecureRegistries: insecureList,
+	})
+	agents.RegisterDirectory(apiGroup, agentCards)
+	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
+		agents.RegisterA2AForward(apiGroup, a2aProxyURL)
+	} else {
+		agents.RegisterA2AProxy(apiGroup, agents.Options{
+			Cards:          agentCards,
+			TokenProvider:  authHandler,
+			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
+			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
+		})
+		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
+	}
+	config.Register(apiGroup, config.Options{
+		Values: map[string]string{
+			"github_org":             httputil.EnvOr("GITHUB_ORG", ""),
+			"github_repo":            httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
+			"registry_insecure":      httputil.EnvOr("REGISTRY_INSECURE", ""),
+			"model_provider":         httputil.EnvOr("MODEL_PROVIDER", ""),
+			"model_name":             httputil.EnvOr("MODEL_NAME", ""),
+			"auto_persist_artifacts": httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true"),
+		},
+	})
+
 	apiGroup.GET("/system-info", func(c echo.Context) error {
 		authProvider := "OAuth2 Proxy (external)"
 		if os.Getenv("OAUTH2_PROXY_ENABLED") == "false" {
@@ -324,12 +320,11 @@ func main() {
 		})
 	})
 
-	slog.Info("api routes registered", "groups", []string{"store", "users", "gemara-proxy"})
+	slog.Info("api routes registered", "groups", []string{
+		"store", "users", "gemara-proxy", "registry", "publish", "agents", "config",
+	})
 
-	// Legacy API routes (agents, a2a, registry, publish, config) are registered
-	// on the mux with full /api/ prefixes. The root catch-all delegates to them.
-	// The SPA fallback is handled in the same catch-all for non-API paths.
-	web.RegisterEchoWithMux(e, workbench.Assets, mux)
+	web.RegisterSPA(e, workbench.Assets)
 
 	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
 	addr := net.JoinHostPort(listenHost, port)

@@ -131,9 +131,9 @@ func TestDegradedMiddleware_CachesResults(t *testing.T) {
 
 func TestDegradedMiddleware_CacheExpires(t *testing.T) {
 	pinger := &fakePinger{err: errors.New("down")}
-	mw := DegradedMiddleware(map[string]Pinger{
+	mw := DegradedMiddlewareWithTTL(map[string]Pinger{
 		"postgres": pinger,
-	})
+	}, 50*time.Millisecond)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -143,9 +143,8 @@ func TestDegradedMiddleware_CacheExpires(t *testing.T) {
 		t.Fatalf("first request: expected degraded, got %q", got)
 	}
 
-	// Recover, then wait for cache to expire.
 	pinger.setErr(nil)
-	time.Sleep(6 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
