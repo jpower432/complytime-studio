@@ -6,7 +6,6 @@ import {
   selectedControlId, selectedRequirementId, selectedEvalResult,
   selectedPolicyDetail, activeTab,
   invalidateViews,
-  availableAgents, selectedAgent,
 } from "../app";
 import { streamMessage, streamReply, type StreamCallbacks } from "../api/a2a";
 import { apiFetch } from "../api/fetch";
@@ -345,29 +344,9 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
           <div class="chat-resize-handle" onMouseDown={handleResizeStart} />
           <div class="chat-overlay-header">
             <div class="chat-header-identity">
-              {availableAgents.value.length > 1 ? (
-                <select
-                  class="chat-agent-picker"
-                  value={selectedAgent.value?.id ?? ""}
-                  onChange={(e) => {
-                    const id = (e.target as HTMLSelectElement).value;
-                    const agent = availableAgents.value.find((a) => a.id === id);
-                    if (agent) {
-                      selectedAgent.value = agent;
-                    }
-                  }}
-                  disabled={streaming}
-                  title="Available agent capabilities (informational)"
-                >
-                  {availableAgents.value.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <span class="chat-agent-name">{selectedAgent.value?.name ?? "Assistant"}</span>
-              )}
-              {(selectedAgent.value?.model?.name || modelLabel) && (
-                <span class="chat-model-label">{selectedAgent.value?.model?.name || modelLabel}</span>
+              <span class="chat-agent-name">Studio Assistant</span>
+              {modelLabel && (
+                <span class="chat-model-label">{modelLabel}</span>
               )}
             </div>
             <div class="chat-header-controls">
