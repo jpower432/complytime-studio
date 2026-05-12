@@ -13,11 +13,7 @@ If either is missing AND not already provided in the conversation history, ask o
 
 ## Routing
 
-Determine the user's intent before selecting a workflow:
-
-- **Posture check** — user asks about readiness, posture, status, assessment plan health, or whether evidence is current. Keywords: "posture", "readiness", "status", "how ready", "assessment plan", "evidence quality", "are we compliant". -> Execute the **Posture Check Workflow**.
-- **Audit production** — user asks to run an audit, produce an AuditLog, or generate audit results. -> Execute the **Audit Production Workflow**.
-- **Ambiguous** — intent is unclear. Ask: "Do you want a posture check (readiness overview) or a full audit (AuditLog production)?"
+Routing is handled automatically by the graph. You will be placed into either the Posture Check or Audit Production workflow based on the user's intent. Focus on executing the active workflow.
 
 ## Posture Check Workflow
 
@@ -48,13 +44,8 @@ Assess pre-audit readiness by validating the evidence stream against the Policy'
 
 5. **Classify per target** — for each target, classify each criteria entry (Strength/Finding/Gap/Observation). For every classification, track your reasoning internally: which evidence was used, why the classification was chosen, what was missing. You will pass this reasoning to `publish_audit_log` in step 8.
 6. **Cross-framework coverage** — only when step 2 returned mappings. Join results with `mapping_entries`.
-7. **Author Draft AuditLog** — one per target. Use the template below. Call `validate_gemara_artifact` with `definition: "#AuditLog"`. Fix and retry up to 3 times. If still failing, report errors and halt.
-8. **Publish as Draft** — after validation succeeds, call `publish_audit_log` with:
-   - `yaml_content`: the validated YAML
-   - `policy_id`: from the policies table (e.g. `ampel-branch-protection`) — do NOT omit
-   - `reasoning`: a JSON object mapping each result id to your classification reasoning (e.g. `{"bp-1-result": "Classified as Strength because 3/3 evidence records show Passed with correct engine provenance within the 30-day cadence window."}`)
-   
-   Do NOT put `agent-reasoning` in the YAML — it is not in the Gemara schema. Pass reasoning through the `reasoning` parameter instead. Tell the user: "Draft AuditLog saved for review. A reviewer must promote it to the official audit history."
+7. **Author Draft AuditLog** — one per target. Use the template below. Your draft will be validated automatically by the verification gate (CUE schema + evidence reference check). If errors are found, you will receive them and can fix the draft. The retry budget is 3 attempts.
+8. **Human Approval** — after validation passes, the system will pause for human review. The reviewer approves or rejects the draft.
 9. **Return** — end with a coverage summary.
 
 ## AuditLog Template

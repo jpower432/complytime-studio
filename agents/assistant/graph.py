@@ -1,26 +1,37 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""ComplyTime Studio assistant — LangGraph agent with kagent checkpointing.
+"""ComplyTime Studio assistant — LangGraph supervisor with verification harness.
 
-Defines the StateGraph, MCP tool integration, and KAgentApp bootstrap.
-A2A protocol serving is handled by kagent-langgraph (KAgentApp).
+Graph topology:
+  __start__ → router → (posture_check | audit_production | clarify)
+
+Audit production subgraph:
+  agent → tools → agent ... → validate_draft → (publish | fix | halt)
+  publish has interrupt_before for human approval.
+
+Posture check subgraph:
+  agent → tools → agent ... → __end__ (no publish path)
 """
 
 import logging
 import os
-from typing import Annotated, Sequence, TypedDict
+from typing import Annotated, Sequence
 
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from kagent.core import KAgentConfig
 from kagent.langgraph import KAgentApp
 from langchain_core.messages import BaseMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.graph import StateGraph
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from nodes import clarify_node, halt_node, publish_draft_node
 from prompt import load_system_prompt
-from tools import build_tools, publish_audit_log, sql_guard_filter
+from router import route_by_intent, router_node
+from state import AuditState
+from tools import build_tools, sql_guard_filter
+from validation import route_after_validation, validate_draft_node
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,13 +42,10 @@ PORT = int(os.environ.get("PORT", "8080"))
 
 GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
 POSTGRES_MCP_URL = os.environ.get("POSTGRES_MCP_URL", "")
+POSTGRES_URL = os.environ.get("POSTGRES_URL", "")
 AGENT_ID = os.environ.get("AGENT_ID", "studio-assistant")
 KAGENT_URL = os.environ.get("KAGENT_URL", "http://kagent-controller:8083")
 APP_NAME = os.environ.get("APP_NAME", "studio_assistant")
-
-
-class State(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
 def _create_model():
@@ -66,8 +74,8 @@ def _create_model():
     return ChatAnthropic(model=MODEL_NAME, max_tokens=16384)
 
 
-def _build_mcp_tools() -> dict:
-    """Connect to MCP servers via langchain-mcp-adapters."""
+def _build_mcp_servers() -> dict:
+    """Build MCP server config for langchain-mcp-adapters."""
     headers = {"X-Agent-ID": AGENT_ID}
     servers = {}
     if GEMARA_MCP_URL:
@@ -87,32 +95,47 @@ def _build_mcp_tools() -> dict:
     return servers
 
 
-def build_graph() -> StateGraph:
-    """Construct the StateGraph with agent + tool nodes."""
-    system_prompt = load_system_prompt()
-    model = _create_model()
-    mcp_servers = _build_mcp_tools()
+def _build_checkpointer():
+    """Create PostgresSaver checkpointer if POSTGRES_URL is configured."""
+    if not POSTGRES_URL:
+        logger.warning("POSTGRES_URL not set — running without persistent checkpointer")
+        return None
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-    all_tools = build_tools()
+        return AsyncPostgresSaver.from_conn_string(POSTGRES_URL)
+    except Exception as e:
+        logger.error("Failed to create PostgresSaver: %s", e)
+        return None
 
-    async def agent_node(state: State, config):
-        """Invoke the LLM with tools bound."""
+
+def _build_audit_subgraph(model, mcp_servers: dict, system_prompt: str) -> StateGraph:
+    """Build the audit production subgraph with verification harness."""
+    local_tools = build_tools()
+
+    async def agent_node(state: AuditState, config):
+        """LLM reasoning node — tool selection and draft generation."""
         messages = state["messages"]
         system_messages = [{"role": "system", "content": system_prompt}]
 
-        tools_for_model = all_tools
+        worker_data = state.get("worker_data", {})
+        if worker_data:
+            import json
+            data_context = f"\n\n--- Worker Data (reference only) ---\n{json.dumps(worker_data, indent=2)}"
+            system_messages[0]["content"] += data_context
+
+        tools_for_model = list(local_tools)
         if mcp_servers:
             client = MultiServerMCPClient(mcp_servers)
             mcp_tools = await client.get_tools()
-            tools_for_model = all_tools + mcp_tools
+            tools_for_model = tools_for_model + mcp_tools
 
         bound_model = model.bind_tools(tools_for_model)
         response = await bound_model.ainvoke(system_messages + list(messages))
-
         return {"messages": [response]}
 
-    async def tool_node_fn(state: State, config):
-        """Execute tool calls (MCP + local) with SQL write guard."""
+    async def tool_node_fn(state: AuditState, config):
+        """Execute tool calls with SQL write guard."""
         last_msg = state["messages"][-1]
         if hasattr(last_msg, "tool_calls"):
             for tc in last_msg.tool_calls:
@@ -125,32 +148,139 @@ def build_graph() -> StateGraph:
                         tool_call_id=tc.get("id", ""),
                     )]}
 
-        tools_for_node = all_tools
+        tools_for_node = list(local_tools)
         if mcp_servers:
             client = MultiServerMCPClient(mcp_servers)
             mcp_tools = await client.get_tools()
-            tools_for_node = all_tools + mcp_tools
+            tools_for_node = tools_for_node + mcp_tools
         node = ToolNode(tools_for_node, handle_tool_errors=True)
         return await node.ainvoke(state, config)
 
-    def should_use_tool(state: State):
-        """Route to tools if the last message has tool_calls."""
+    def should_use_tool(state: AuditState):
+        """Route: tools if tool_calls present, else end (draft ready for validation)."""
         last = state["messages"][-1]
         if hasattr(last, "tool_calls") and last.tool_calls:
             return "tools"
-        return "__end__"
+        return "end_loop"
 
-    builder = StateGraph(State)
+    builder = StateGraph(AuditState)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", tool_node_fn)
+    builder.add_node("validate_draft", validate_draft_node)
+    builder.add_node("publish_draft", publish_draft_node)
+    builder.add_node("halt", halt_node)
+
     builder.add_edge("__start__", "agent")
-    builder.add_conditional_edges("agent", should_use_tool, {"tools": "tools", "__end__": "__end__"})
+    builder.add_conditional_edges("agent", should_use_tool, {
+        "tools": "tools",
+        "end_loop": "validate_draft",
+    })
     builder.add_edge("tools", "agent")
+    builder.add_conditional_edges("validate_draft", route_after_validation, {
+        "publish": "publish_draft",
+        "fix": "agent",
+        "halt": "halt",
+    })
+    builder.add_edge("publish_draft", END)
+    builder.add_edge("halt", END)
+
     return builder
 
 
+def _build_posture_subgraph(model, mcp_servers: dict, system_prompt: str) -> StateGraph:
+    """Build the posture check subgraph — no publish path."""
+    local_tools = build_tools()
+
+    async def agent_node(state: AuditState, config):
+        """LLM reasoning node for posture checks."""
+        messages = state["messages"]
+        system_messages = [{"role": "system", "content": system_prompt}]
+
+        tools_for_model = list(local_tools)
+        if mcp_servers:
+            client = MultiServerMCPClient(mcp_servers)
+            mcp_tools = await client.get_tools()
+            tools_for_model = tools_for_model + mcp_tools
+
+        bound_model = model.bind_tools(tools_for_model)
+        response = await bound_model.ainvoke(system_messages + list(messages))
+        return {"messages": [response]}
+
+    async def tool_node_fn(state: AuditState, config):
+        """Execute tool calls with SQL write guard."""
+        last_msg = state["messages"][-1]
+        if hasattr(last_msg, "tool_calls"):
+            for tc in last_msg.tool_calls:
+                blocked = sql_guard_filter(tc.get("name", ""), tc.get("args", {}))
+                if blocked:
+                    from langchain_core.messages import ToolMessage
+
+                    return {"messages": [ToolMessage(
+                        content=str(blocked),
+                        tool_call_id=tc.get("id", ""),
+                    )]}
+
+        tools_for_node = list(local_tools)
+        if mcp_servers:
+            client = MultiServerMCPClient(mcp_servers)
+            mcp_tools = await client.get_tools()
+            tools_for_node = tools_for_node + mcp_tools
+        node = ToolNode(tools_for_node, handle_tool_errors=True)
+        return await node.ainvoke(state, config)
+
+    def should_use_tool(state: AuditState):
+        last = state["messages"][-1]
+        if hasattr(last, "tool_calls") and last.tool_calls:
+            return "tools"
+        return END
+
+    builder = StateGraph(AuditState)
+    builder.add_node("agent", agent_node)
+    builder.add_node("tools", tool_node_fn)
+
+    builder.add_edge("__start__", "agent")
+    builder.add_conditional_edges("agent", should_use_tool, {
+        "tools": "tools",
+        END: END,
+    })
+    builder.add_edge("tools", "agent")
+
+    return builder
+
+
+def build_graph() -> StateGraph:
+    """Construct the top-level supervisor graph with router and subgraphs."""
+    system_prompt = load_system_prompt()
+    model = _create_model()
+    mcp_servers = _build_mcp_servers()
+
+    audit_subgraph = _build_audit_subgraph(model, mcp_servers, system_prompt).compile(
+        interrupt_before=["publish_draft"],
+    )
+    posture_subgraph = _build_posture_subgraph(model, mcp_servers, system_prompt).compile()
+
+    builder = StateGraph(AuditState)
+    builder.add_node("router", router_node)
+    builder.add_node("clarify", clarify_node)
+    builder.add_node("audit_production", audit_subgraph)
+    builder.add_node("posture_check", posture_subgraph)
+
+    builder.add_edge("__start__", "router")
+    builder.add_conditional_edges("router", route_by_intent, {
+        "audit_production": "audit_production",
+        "posture_check": "posture_check",
+        "clarify": "clarify",
+    })
+    builder.add_edge("audit_production", END)
+    builder.add_edge("posture_check", END)
+    builder.add_edge("clarify", END)
+
+    return builder
+
+
+_checkpointer = _build_checkpointer()
 _builder = build_graph()
-_compiled_graph = _builder.compile()
+_compiled_graph = _builder.compile(checkpointer=_checkpointer)
 
 _agent_card = AgentCard(
     name="studio_assistant",
@@ -158,7 +288,7 @@ _agent_card = AgentCard(
         "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
         "cross-framework coverage analysis, and compliance guidance"
     ),
-    version="0.1.0",
+    version="0.2.0",
     url=f"http://localhost:{os.getenv('PORT', '8080')}",
     capabilities=AgentCapabilities(streaming=True),
     default_input_modes=["text"],

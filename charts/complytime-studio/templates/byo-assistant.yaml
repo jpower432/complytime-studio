@@ -67,6 +67,13 @@ spec:
           value: "http://kagent-controller:8083"
         - name: APP_NAME
           value: "studio_assistant"
+        {{- if .Values.postgres.enabled }}
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.secretName | default "studio-postgres-credentials" }}
+              key: uri
+        {{- end }}
         {{- if .Values.model.vertexAI.credentialsSecret }}
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: /var/secrets/gcp/application_default_credentials.json

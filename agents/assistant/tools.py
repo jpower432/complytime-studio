@@ -16,7 +16,6 @@ import re
 
 import httpx
 import yaml
-from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,6 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:64]
 
 
-@tool
 async def publish_audit_log(
     yaml_content: str,
     policy_id: str = "",
@@ -43,9 +41,8 @@ async def publish_audit_log(
 ) -> dict:
     """Publish a validated AuditLog YAML as a draft for human review.
 
-    Call this AFTER validate_gemara_artifact succeeds. The AuditLog is persisted
-    as a draft to the internal Gateway endpoint. A human reviewer must promote
-    it to an official record via the workbench.
+    Called by the publish_draft graph node AFTER the validation gate passes
+    and human approval is received. Not directly callable by the LLM.
 
     Args:
         yaml_content: The complete, validated AuditLog YAML string.
@@ -130,8 +127,12 @@ def sql_guard_filter(tool_name: str, args: dict) -> dict | None:
 
 
 def build_tools() -> list:
-    """Return the list of local LangChain tools for the assistant."""
-    return [publish_audit_log]
+    """Return the list of local LangChain tools for the assistant.
+
+    publish_audit_log is NOT included — it is called by the publish_draft
+    graph node, not by the LLM directly.
+    """
+    return []
 
 
 def _extract_policy_id(doc: dict) -> str:
