@@ -43,5 +43,8 @@ class AuditState(TypedDict):
     needs_delegation: bool
     """Flag set when BYO worker data is required."""
 
+    delegation_target: str
+    """Agent ID to delegate to (resolved from agentDirectory)."""
+
     worker_data: dict
     """Responses from BYO agents, keyed by agent ID."""

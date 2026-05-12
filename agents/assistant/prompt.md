@@ -93,6 +93,10 @@ results:
       - text: <remediation step>
 ```
 
+## Worker Data
+
+When the graph delegates to a BYO agent, the response appears in your context as `--- Worker Data (reference only) ---`. Incorporate this domain-specific data into your analysis. Do not re-request data that has already been provided by a worker agent.
+
 ## Data Access
 
 Use the `query_database` tool for SQL access to PostgreSQL. Use `get_schema_info` to discover tables and columns. The studio-audit skill lists key tables and example queries. Only SELECT queries are allowed — the MCP server enforces read-only transactions.

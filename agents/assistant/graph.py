@@ -26,6 +26,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from delegate import delegate_node
 from nodes import clarify_node, halt_node, publish_draft_node
 from prompt import load_system_prompt
 from router import route_by_intent, router_node
@@ -163,14 +164,25 @@ def _build_audit_subgraph(model, mcp_servers: dict, system_prompt: str) -> State
             return "tools"
         return "end_loop"
 
+    def should_delegate(state: AuditState):
+        """Route: delegate if needs_delegation is set, else straight to agent."""
+        if state.get("needs_delegation"):
+            return "delegate"
+        return "agent"
+
     builder = StateGraph(AuditState)
+    builder.add_node("delegate", delegate_node)
     builder.add_node("agent", agent_node)
     builder.add_node("tools", tool_node_fn)
     builder.add_node("validate_draft", validate_draft_node)
     builder.add_node("publish_draft", publish_draft_node)
     builder.add_node("halt", halt_node)
 
-    builder.add_edge("__start__", "agent")
+    builder.add_conditional_edges("__start__", should_delegate, {
+        "delegate": "delegate",
+        "agent": "agent",
+    })
+    builder.add_edge("delegate", "agent")
     builder.add_conditional_edges("agent", should_use_tool, {
         "tools": "tools",
         "end_loop": "validate_draft",

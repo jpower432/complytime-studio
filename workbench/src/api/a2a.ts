@@ -2,8 +2,7 @@
 
 import { apiFetch } from "./fetch";
 
-function a2aEndpoint(agentName?: string): string {
-  if (agentName) return `/a2a/${agentName}`;
+function a2aEndpoint(): string {
   return "/a2a/studio-assistant";
 }
 
@@ -34,7 +33,7 @@ function contextArtifactText(a: ContextArtifact): string {
   return `--- Context: ${a.name} (reference only) ---\n${a.yaml}`;
 }
 
-export function streamMessage(text: string, callbacks: StreamCallbacks, agentName?: string, context?: ContextArtifact[]): () => void {
+export function streamMessage(text: string, callbacks: StreamCallbacks, context?: ContextArtifact[]): () => void {
   const parts: Array<{ kind: string; text: string }> = [{ kind: "text", text }];
   if (context?.length) {
     for (const a of context) {
@@ -53,7 +52,7 @@ export function streamMessage(text: string, callbacks: StreamCallbacks, agentNam
       },
     },
   };
-  return doStreamFetch(a2aEndpoint(agentName), body, callbacks);
+  return doStreamFetch(a2aEndpoint(), body, callbacks);
 }
 
 export interface StreamReplyOptions {
@@ -70,7 +69,6 @@ export function streamReply(
   taskId: string,
   text: string,
   callbacks: StreamCallbacks,
-  agentName?: string,
   options?: StreamReplyOptions,
 ): () => void {
   const parts: Array<{ kind: string; text: string }> = [];
@@ -96,7 +94,7 @@ export function streamReply(
       taskId,
     },
   };
-  return doStreamFetch(a2aEndpoint(agentName), body, callbacks);
+  return doStreamFetch(a2aEndpoint(), body, callbacks);
 }
 
 function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): () => void {

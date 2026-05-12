@@ -279,8 +279,7 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
       const ctx = buildDashboardContext();
       const contextPrefix = ctx ? `[DASHBOARD CONTEXT]\n${buildInjectedContext(ctx, stickyNotes)}\n\n` : "";
       const history = contextPrefix + "--- Conversation so far ---\n" + historyLines.join("\n\n");
-      const agentId = selectedAgent.value?.id ?? "studio-assistant";
-      abortRef.current = streamReply(taskIdRef.current, text, callbacks, agentId, { history });
+      abortRef.current = streamReply(taskIdRef.current, text, callbacks, { history });
     } else {
       const injected = buildInjectedContext(buildDashboardContext(), stickyNotes);
       const hasMemoryContext = stickyNotes.length > 0;
@@ -292,8 +291,7 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
         ]);
       }
 
-      const agentId = selectedAgent.value?.id ?? "studio-assistant";
-      abortRef.current = streamMessage(injected + "\n\n" + text, callbacks, agentId);
+      abortRef.current = streamMessage(injected + "\n\n" + text, callbacks);
     }
   };
 
@@ -354,13 +352,12 @@ export function ChatAssistant({ open, onClose }: { open: boolean; onClose?: () =
                   onChange={(e) => {
                     const id = (e.target as HTMLSelectElement).value;
                     const agent = availableAgents.value.find((a) => a.id === id);
-                    if (agent && agent.id !== selectedAgent.value?.id) {
+                    if (agent) {
                       selectedAgent.value = agent;
-                      handleNewSession();
                     }
                   }}
                   disabled={streaming}
-                  title={selectedAgent.value?.description ?? ""}
+                  title="Available agent capabilities (informational)"
                 >
                   {availableAgents.value.map((a) => (
                     <option key={a.id} value={a.id}>{a.name}</option>
