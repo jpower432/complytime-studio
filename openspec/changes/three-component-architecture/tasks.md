@@ -83,7 +83,7 @@
 - [x] 9.3 Run `make sync-prompts` to copy updated prompt to chart
 - [x] 9.4 Add `studio-mcp` MCPServer CRD template to Helm chart
 - [x] 9.5 Add `studio-mcp` service to `docker-compose.yaml`
-- [ ] 9.6 Verify: agent can read `studio://policies` and `studio://evidence` via studio-mcp
+- [x] 9.6 Verify: agent can read `studio://policies` and `studio://evidence` via studio-mcp
 
 ## 10. Helm Chart Rename and Finalize
 
@@ -111,4 +111,4 @@
 - [x] 12.3 `cd studio && npm run build` succeeds (verified via Docker build)
 - [x] 12.4 `docker compose up` starts all services and Studio can reach Platform
 - [x] 12.5 `helm template` renders correctly with both `studio.enabled=true` and `studio.enabled=false`
-- [ ] 12.6 Agent successfully reads data via `studio-mcp` (manual test)
+- [x] 12.6 Agent successfully reads data via `studio-mcp` (manual test)
