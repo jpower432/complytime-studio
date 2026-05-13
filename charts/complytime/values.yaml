@@ -100,8 +100,11 @@ externalSkills:
 # a2aURL routes all A2A traffic through the kagent controller, which manages
 # BYO agent lifecycles and exposes them in the kagent dashboard.
 # Set to empty string only for dev environments without kagent installed.
+# crdsAvailable gates MCPServer and Agent CRD templates. Set to false for
+# kind clusters without the kagent operator installed.
 kagent:
   a2aURL: "http://kagent-controller:8083"
+  crdsAvailable: true
 
 # -- Standalone A2A reverse proxy. Stateless — no session state.
 # Scales independently from the gateway for concurrent chat load.
@@ -233,12 +236,6 @@ postgres:
     limits:
       memory: "1Gi"
       cpu: "1"
-
-# -- studio-mcp — MCP resources + ingest_evidence / save_draft_audit_log for agents.
-studioMcp:
-  image:
-    repository: studio-mcp
-    tag: latest
 
 # -- Built-in OCI registry (dev only). Disable for production clusters
 # where an external registry (Quay, GHCR, etc.) is available.

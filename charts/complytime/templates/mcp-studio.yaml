@@ -2,7 +2,7 @@
 #
 # studio-mcp — platform data access for agents (resources + evidence/draft tools).
 # Connects to the application PostgreSQL database.
-{{- if and .Values.postgres.enabled .Values.mcpServers.studio.enabled }}
+{{- if and .Values.kagent.crdsAvailable .Values.postgres.enabled .Values.mcpServers.studio.enabled }}
 ---
 apiVersion: kagent.dev/v1alpha1
 kind: MCPServer
