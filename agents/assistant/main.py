@@ -31,9 +31,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 )
 from starlette.applications import Starlette
 
-from callbacks import after_agent, before_agent, before_tool
+from callbacks import after_agent, before_agent
 from event_converter import convert_event_with_yaml_metadata
-from tools import publish_audit_log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "claude-opus-4-6")
 PORT = int(os.environ.get("PORT", "8080"))
 
 GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
-POSTGRES_MCP_URL = os.environ.get("POSTGRES_MCP_URL", "")
+STUDIO_MCP_URL = os.environ.get("STUDIO_MCP_URL", "")
 
 
 def load_skills() -> str:
@@ -170,17 +169,21 @@ def build_tools() -> list:
         else:
             logger.error("gemara-mcp unreachable — tools will not be available")
 
-    if POSTGRES_MCP_URL:
-        if _probe_mcp_sync(POSTGRES_MCP_URL, "postgres-mcp"):
+    if STUDIO_MCP_URL:
+        if _probe_mcp_sync(STUDIO_MCP_URL, "studio-mcp"):
             tools.append(
                 McpToolset(
-                    connection_params=StreamableHTTPConnectionParams(url=POSTGRES_MCP_URL),
-                    tool_filter=["query_database", "get_schema_info"],
+                    connection_params=StreamableHTTPConnectionParams(url=STUDIO_MCP_URL),
+                    tool_filter=["ingest_evidence", "save_draft_audit_log"],
+                    use_mcp_resources=True,
                 )
             )
-            logger.info("postgres-mcp toolset registered (url=%s)", POSTGRES_MCP_URL)
+            logger.info("studio-mcp toolset registered (url=%s)", STUDIO_MCP_URL)
         else:
-            logger.error("postgres-mcp unreachable — query_database/get_schema_info will not be available")
+            logger.error(
+                "studio-mcp unreachable — ingest_evidence/save_draft_audit_log "
+                "and studio:// resources will not be available"
+            )
 
     if not tools:
         logger.warning("No MCP servers reachable — agent running without tools")
@@ -208,14 +211,13 @@ root_agent = LlmAgent(
     name="studio_assistant",
     model=MODEL_NAME,
     instruction=_INSTRUCTION,
-    tools=[*build_tools(), publish_audit_log],
+    tools=build_tools(),
     description=(
         "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
         "cross-framework coverage analysis, and compliance guidance"
     ),
     before_agent_callback=before_agent,
     after_agent_callback=after_agent,
-    before_tool_callback=before_tool,
 )
 
 

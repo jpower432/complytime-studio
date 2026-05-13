@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: complytime
+description: >-
+  ComplyTime Studio — compliance analytics and audit preparation platform.
+  Deploys a BYO ADK agent with PostgreSQL data store and MCP servers.
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+kubeVersion: ">=1.29.0-0"
+keywords:
+  - gemara
+  - grc
+  - threat-modeling
+  - oci
+  - kagent
+  - adk
+  - complytime
+home: https://github.com/jpower432/complytime-studio
+sources:
+  - https://github.com/jpower432/complytime-studio
+maintainers:
+  - name: jpower432
+annotations:
+  studio.complytime.org/requires: "kagent >= 0.8.0"

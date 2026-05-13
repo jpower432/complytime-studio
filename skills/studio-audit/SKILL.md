@@ -1,6 +1,6 @@
 ---
 name: studio-audit
-description: Audit methodology, classification criteria, coverage mapping, and PostgreSQL schema reference
+description: Audit methodology, classification criteria, coverage mapping, and studio-mcp resource reference
 ---
 
 # Studio Audit
@@ -44,73 +44,40 @@ When `mapping_documents` exist for the policy, join AuditResults with mapping en
 
 Multiple controls mapping to the same external entry: use strongest coverage. No mapping documents = skip cross-framework analysis.
 
-## MCP Tools
+## MCP — Gemara tools
 
 **validate_gemara_artifact**: `artifact_content` (YAML string), `definition` (e.g. `#AuditLog`), `version` (optional)
+
 **migrate_gemara_artifact**: `artifact_content` (YAML string), `artifact_type` (optional), `gemara_version` (optional)
-**query_database**: `query` (string) — execute a read-only SELECT against PostgreSQL
-**get_schema_info**: `schema_name` (optional), `table_name` (optional) — introspect database tables and columns
 
-## Workbench posture list vs. SQL
+## MCP — studio-mcp (data)
 
-The workbench calls `GET /api/posture` with optional `start` and `end` query parameters to limit rows to evidence whose `collected_at` falls in that window (omitting both parameters includes all evidence). When you run ad-hoc SQL that should match the on-screen posture numbers, apply the same `collected_at` range the user selected (including workbench time presets: 7d, 30d, 90d, or all-time).
+Read JSON via **`studio://`** resources (see agent prompt). Do **not** execute SQL.
 
-## PostgreSQL Tables
+**ingest_evidence**: Insert evidence rows when the user explicitly needs new rows loaded; each row needs `policy_id`, `target_id`, `control_id`, `collected_at`, and other fields expected by the platform store.
 
-All data lives in PostgreSQL. Use `query_database` for SQL access and `get_schema_info` to discover tables.
+**save_draft_audit_log**: After validation, persist draft YAML — `policy_id`, `yaml`, optional `agent_reasoning` (JSON string), optional `model` / `prompt_version`.
 
-| Table | Key Columns | Purpose |
+## Workbench posture vs. studio resources
+
+The workbench calls `GET /api/posture` with optional `start` and `end` to bound evidence by `collected_at`. **`studio://posture`** returns aggregates from the store; when you need parity with a user-selected window, filter evidence rows client-side using the same date range (presets: 7d, 30d, 90d, or all-time).
+
+## Platform entities (JSON shape)
+
+Underlying storage is PostgreSQL; **`studio://`** resources expose the same entities as JSON. Use resource payloads instead of ad-hoc SQL.
+
+| Entity | Typical fields | Resource hints |
 |:--|:--|:--|
-| `policies` | policy_id, title, content (YAML), oci_reference | Imported L3 policies |
-| `evidence` | evidence_id, target_id, policy_id, control_id, requirement_id, eval_result, compliance_status, collected_at | Flattened evaluation evidence |
-| `mapping_documents` | mapping_id, policy_id, framework, content | Cross-framework mappings |
-| `mapping_entries` | mapping_id, policy_id, control_id, requirement_id, framework, reference, strength | Individual mapping links |
-| `catalogs` | catalog_id, catalog_type, title, policy_id | Control/threat/risk catalogs |
-| `controls` | catalog_id, control_id, title, objective, policy_id | Individual controls |
-| `assessment_requirements` | catalog_id, control_id, requirement_id, text | Assessment criteria |
-| `threats` | catalog_id, threat_id, title, description, policy_id | Threat entries |
-| `risks` | catalog_id, risk_id, title, severity, impact, policy_id | Risk entries |
-| `control_threats` | catalog_id, control_id, threat_reference_id, threat_entry_id | Control-threat links |
-| `risk_threats` | catalog_id, risk_id, threat_reference_id, threat_entry_id | Risk-threat links |
-| `audit_logs` | audit_id, policy_id, audit_start, audit_end, content, summary | Promoted audit logs |
-| `draft_audit_logs` | draft_id, policy_id, status, content, agent_reasoning | Draft audit logs |
-| `certifications` | id, evidence_id, certifier, result, reason | Evidence certification verdicts |
-| `evidence_assessments` | id, evidence_id, policy_id, plan_id, classification, reason | Posture check results |
-| `programs` | id, name, description, owner, policy_ids | Compliance programs |
+| Policies | policy_id, title, content (YAML), oci_reference | `studio://policies`, `studio://policies/{id}` |
+| Evidence | evidence_id, target_id, policy_id, control_id, requirement_id, eval_result, compliance_status, collected_at, engine_name | `studio://evidence?policy_id=` |
+| Mappings | mapping_id, policy_id, framework, content | `studio://mappings` |
+| Catalogs | catalog_id, catalog_type, title, policy_id | `studio://catalogs` |
+| Threats / Risks | catalog_id, ids, titles, severity | `studio://threats`, `studio://risks` |
+| Audit logs | audit metadata + content | `studio://audit-logs?policy_id=` (policy_id required) |
 
-## Example Queries
+## Example resource reads
 
-```sql
--- All evidence for a policy within an audit window
-SELECT evidence_id, target_id, control_id, eval_result, collected_at
-FROM evidence
-WHERE policy_id = 'ampel-branch-protection'
-  AND collected_at BETWEEN '2026-01-01' AND '2026-03-31'
-ORDER BY collected_at DESC;
-
--- Risk exposure by severity
-SELECT r.severity, COUNT(*) AS risk_count
-FROM risks r
-GROUP BY r.severity
-ORDER BY CASE r.severity
-  WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
-  WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5
-END;
-
--- Failing evidence with threat chain
-SELECT e.evidence_id, e.control_id, e.eval_result,
-       t.title AS threat, r.title AS risk, r.severity
-FROM evidence e
-JOIN control_threats ct ON ct.control_id = e.control_id
-JOIN threats t ON t.threat_id = ct.threat_entry_id
-JOIN risk_threats rt ON rt.threat_entry_id = t.threat_id
-JOIN risks r ON r.risk_id = rt.risk_id
-WHERE e.policy_id = 'ampel-branch-protection'
-  AND e.eval_result = 'Failed';
-
--- Coverage matrix: controls mapped to external frameworks
-SELECT me.control_id, me.framework, me.reference, me.strength
-FROM mapping_entries me
-WHERE me.policy_id = 'ampel-branch-protection'
-ORDER BY me.framework, me.reference;
-```
+- Policy body: `studio://policies/ampel-branch-protection`
+- Evidence page: `studio://evidence?policy_id=ampel-branch-protection&limit=100&offset=0`
+- Mapping list: `studio://mappings`
+- Risks for catalog: `studio://risks?catalog_id=<catalog_id>`

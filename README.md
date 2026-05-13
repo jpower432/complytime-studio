@@ -26,7 +26,7 @@ Studio ingests evidence from scanning tools, maps it against compliance framewor
 | `kubectl` | Kubernetes CLI | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
 | `helm` | Chart management | [helm.sh](https://helm.sh/docs/intro/install/) |
 | `go` (>= 1.25) | Build the gateway | [go.dev](https://go.dev/dl/) |
-| `node` / `npm` | Build the workbench SPA | [nodejs.org](https://nodejs.org/) |
+| `node` / `npm` | Build the Studio SPA | [nodejs.org](https://nodejs.org/) |
 
 ### Deploy
 
@@ -78,7 +78,9 @@ Gateway (Go)  ──── PostgreSQL (all application data)
 AI Agents (kagent)  ──── MCP tools (gemara-mcp, oras-mcp)
 ```
 
-**Gateway** serves the workbench SPA, REST APIs, and proxies agent communication. PostgreSQL stores programs, users, evidence, policies, audit logs, and all analytics data.
+**Three-component layout:** the repo splits **Platform** (headless Go gateway under `cmd/` and `internal/`), **Studio** (Preact SPA in `studio/` with its own container), and **Agents** (kagent workloads). Those boundaries deploy independently; the Studio browser origin talks to the Platform API using runtime configuration (`PLATFORM_URL` / CORS). Agents consume platform state through **`studio-mcp`** MCP resources instead of talking to PostgreSQL directly. Further detail lives in [`docs/architecture.md`](docs/architecture.md).
+
+**Gateway** exposes REST APIs, OAuth, and agent/A2A plumbing; the Studio SPA is a separate static deployment that calls the gateway over HTTP. PostgreSQL stores programs, users, evidence, policies, audit logs, and all analytics data.
 
 **Agents** run as [kagent](https://github.com/kagent-dev/kagent) Declarative Agents in Kubernetes. They use MCP tools to validate and publish Gemara artifacts.
 
@@ -95,7 +97,10 @@ For REST API reference, deployment configuration, and data flows, see [Architect
 | `make deploy` | Build, load to kind, helm install, rollout restart |
 | `make gateway-build` | Compile gateway to `bin/studio-gateway` |
 | `make gateway-image` | Build gateway container image (includes workbench) |
-| `make workbench-build` | Build workbench SPA |
+| `make studio-build` | Build Studio SPA (`studio/`) |
+| `make studio-image` | Build Studio container (`complytime-studio`) |
+| `make studio-mcp-build` | Compile `studio-mcp` to `bin/studio-mcp` |
+| `make studio-mcp-image` | Build `studio-mcp` container image |
 | `make test` | Run Go tests |
 | `make lint` | Run golangci-lint |
 | `make seed` | Seed demo data |
@@ -108,6 +113,7 @@ For REST API reference, deployment configuration, and data flows, see [Architect
 | Document | Purpose |
 |:--|:--|
 | [Architecture](docs/design/architecture.md) | System design, REST API, deployment, data flows |
+| [Three-component overview](docs/architecture.md) | Platform / Studio / Agents boundaries, MCP vs REST |
 | [Agent Data Flows](docs/design/agent-data-flows.md) | Workbench-to-agent communication |
 | [Evidence Semconv](docs/design/evidence-semconv-alignment.md) | Evidence column mapping to OTel semantic conventions |
 | [Decisions](docs/decisions/) | Architecture Decision Records |

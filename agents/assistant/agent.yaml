@@ -65,10 +65,19 @@ mcp:
     tools:
       - validate_gemara_artifact   # Validate artifact YAML against CUE schema
       - migrate_gemara_artifact    # Migrate v0 artifacts to v1 schema
-  - server: studio-postgres-mcp
+  - server: studio-mcp
+    resources:
+      - studio://policies
+      - studio://evidence
+      - studio://posture
+      - studio://audit-logs
+      - studio://mappings
+      - studio://catalogs
+      - studio://threats
+      - studio://risks
     tools:
-      - query_database              # Read-only SQL against PostgreSQL
-      - get_schema_info             # Introspect table schemas
+      - ingest_evidence            # Insert evidence rows (optional workflows)
+      - save_draft_audit_log       # Persist validated AuditLog YAML as draft
 
 # ---------------------------------------------------------------------------
 # A2A — Agent-to-Agent protocol skills advertised on the agent card.

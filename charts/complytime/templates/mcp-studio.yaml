@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# studio-mcp — platform data access for agents (resources + evidence/draft tools).
+# Connects to the application PostgreSQL database.
+{{- if and .Values.postgres.enabled .Values.mcpServers.studio.enabled }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.mcpServers.studio.image.repository }}:{{ .Values.mcpServers.studio.image.tag }}
+    cmd: /studio-mcp
+    port: 3000
+    env:
+      POSTGRES_URL: "postgres://{{ .Values.postgres.auth.user }}:{{ .Values.postgres.auth.password }}@studio-postgres:5432/{{ .Values.postgres.auth.database }}?sslmode={{ .Values.postgres.auth.sslmode | default "disable" }}"
+{{- end }}

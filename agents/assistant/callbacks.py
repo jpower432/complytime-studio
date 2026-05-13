@@ -1,22 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deterministic gates for the BYO gap analyst agent.
+"""Lifecycle callbacks for the BYO Studio assistant.
 
-before_agent_callback: input validation — policy reference + audit timeline detection
-after_agent_callback: reserved for future post-processing
-before_tool_callback: input guard for query_database — SQL injection prevention
+before_agent_callback: input validation — policy reference + audit timeline hints
+after_agent_callback: reserved for future post-processing (drafts via studio-mcp tools)
 """
 
 import logging
-import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-
-_SQL_WRITE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC)\b",
-    re.IGNORECASE,
-)
 
 POLICY_KEYWORDS = {"policy", "policy_id", "audit"}
 TIMELINE_KEYWORDS = {"q1", "q2", "q3", "q4", "2025", "2026", "start", "end", "period"}
@@ -50,21 +43,5 @@ async def before_agent(callback_context) -> Optional[Any]:
 
 
 async def after_agent(callback_context) -> Optional[Any]:
-    """Post-processing hook. AuditLogs are published via the publish_audit_log tool."""
-    return None
-
-
-async def before_tool(
-    tool: Any, args: dict[str, Any], tool_context: Any
-) -> Optional[dict]:
-    """Input guard for query_database — reject write statements in SQL."""
-    tool_name = getattr(tool, "name", str(tool))
-    if tool_name != "query_database":
-        return None
-
-    sql = args.get("query", "")
-    if _SQL_WRITE.search(sql):
-        logger.warning("Blocked write SQL in query_database: %s", sql[:200])
-        return {"error": "Only SELECT queries are allowed."}
-
+    """Post-processing hook. Draft AuditLogs are persisted via save_draft_audit_log on studio-mcp."""
     return None

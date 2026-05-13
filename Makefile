@@ -38,6 +38,8 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
+	studio-build studio-image \
+	studio-mcp-build studio-mcp-image \
 	assistant-image \
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
@@ -59,14 +61,26 @@ clean:
 	rm -rf bin/
 
 sync-prompts:
-	@mkdir -p charts/complytime-studio/agents/assistant
-	@cp agents/assistant/prompt.md charts/complytime-studio/agents/assistant/prompt.md
+	@mkdir -p charts/complytime/agents/assistant
+	@cp agents/assistant/prompt.md charts/complytime/agents/assistant/prompt.md
 
 sync-skills:
 	@rsync -a --delete --exclude='.gitkeep' skills/ agents/assistant/skills/
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
+
+studio-build:
+	cd studio && npm run build
+
+studio-image:
+	docker build -t complytime-studio studio/
+
+studio-mcp-build:
+	go build -o bin/studio-mcp ./cmd/studio-mcp/
+
+studio-mcp-image:
+	docker build -f Dockerfile.studio-mcp -t studio-mcp .
 
 gateway-image: workbench-build
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
@@ -97,7 +111,7 @@ HELM_MODEL_FLAGS += --set model.name=$(MODEL_NAME)
 endif
 
 studio-up: sync-prompts
-	helm upgrade --install complytime-studio ./charts/complytime-studio \
+	helm upgrade --install complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
 		--reset-values \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
@@ -115,7 +129,7 @@ studio-down:
 	helm uninstall complytime-studio --namespace $(NAMESPACE)
 
 studio-template: sync-prompts
-	helm template complytime-studio ./charts/complytime-studio \
+	helm template complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
 		$(HELM_FEATURE_FLAGS)
 

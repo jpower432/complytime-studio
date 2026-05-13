@@ -30,8 +30,6 @@ import (
 	"github.com/complytime/complytime-studio/internal/publish"
 	"github.com/complytime/complytime-studio/internal/registry"
 	"github.com/complytime/complytime-studio/internal/store"
-	"github.com/complytime/complytime-studio/internal/web"
-	"github.com/complytime/complytime-studio/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -227,6 +225,9 @@ func main() {
 			MaxAge:           consts.CORSMaxAgeSecs,
 		}))
 		slog.Info("CORS enabled", "origins", origins)
+	} else {
+		slog.Warn("CORS_ORIGINS not set — Studio SPA on a separate origin will be blocked",
+			"hint", "set CORS_ORIGINS to the Studio URL (e.g. http://localhost:3000)")
 	}
 
 	subsystems := map[string]pgstore.Pinger{
@@ -324,7 +325,9 @@ func main() {
 		"store", "users", "gemara-proxy", "registry", "publish", "agents", "config",
 	})
 
-	web.RegisterSPA(e, workbench.Assets)
+	e.Any("/*", func(c echo.Context) error {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "not found"})
+	})
 
 	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
 	addr := net.JoinHostPort(listenHost, port)

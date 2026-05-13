@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Local development stack — gateway + MCP servers.
+# Local development stack — platform (gateway) + studio (SPA) + MCP servers.
 # Agents are kagent Declarative CRDs; they run in Kubernetes, not here.
 
 services:
@@ -16,11 +16,20 @@ services:
       ORAS_MCP_URL: http://oras-mcp:3000
       POSTGRES_URL: postgres://studio:complytime-dev@postgres:5432/studio?sslmode=disable
       NATS_URL: nats://nats:4222
+      CORS_ORIGINS: http://localhost:3000
     depends_on:
       - gemara-mcp
       - oras-mcp
       - postgres
       - nats
+
+  studio:
+    build:
+      context: ./studio
+    ports:
+      - "3000:80"
+    environment:
+      PLATFORM_URL: http://gateway:8080
 
   postgres:
     image: postgres:17-alpine
@@ -51,6 +60,19 @@ services:
     image: nats:2-alpine
     ports:
       - "4222:4222"
+
+  studio-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.studio-mcp
+    command:
+      - --transport=http
+      - --port=3000
+      - --postgres-url=postgres://studio:complytime-dev@postgres:5432/studio?sslmode=disable
+    expose:
+      - "3000"
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:

@@ -1,0 +1,211 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# NetworkPolicies for Helm-managed studio pods.
+# Scope: gateway, registry, clickhouse, postgres (pods with part-of: complytime-studio).
+# Out of scope: agents and MCP servers — managed by kagent/kmcp with their own
+# label scheme (part-of: kagent / managed-by: kmcp). Configure those at the
+# kagent level if needed.
+#
+# Requires a CNI that supports NetworkPolicy (Calico, Cilium, etc.).
+# Kind's default kindnet does NOT enforce policies.
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default deny ingress for all Helm-managed studio pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: complytime-studio
+  policyTypes:
+    - Ingress
+
+---
+# Gateway public port: accept ingress from anywhere on the user-facing port.
+# When OAuth2 Proxy is enabled, external traffic enters via port 4180 (the proxy);
+# the app on 8080 is bound to 127.0.0.1 and unreachable from outside the pod.
+# When proxy is disabled, traffic hits the app directly on 8080.
+# /internal/* paths return 404 on the public port — served exclusively on 8081.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - ports:
+        {{- if .Values.auth.oauth2Proxy.enabled }}
+        - port: 4180
+        {{- else }}
+        - port: 8080
+        {{- end }}
+          protocol: TCP
+
+---
+# Gateway internal port: accept ingress only from assistant pods on port 8081.
+# Selector uses both name and component to prevent label-spoofing lateral movement.
+# See docs/decisions/internal-endpoint-isolation.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-gateway-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: studio-assistant
+              app.kubernetes.io/part-of: complytime-studio
+        - podSelector:
+            matchLabels:
+              kagent: studio-assistant
+      ports:
+        - port: 8081
+          protocol: TCP
+
+---
+# Assistant: accept ingress from gateway only (A2A proxy) on port 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-assistant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: assistant
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
+      ports:
+        - port: 8080
+          protocol: TCP
+
+{{- if .Values.registry.enabled }}
+---
+# Registry: accept ingress from namespace peers (gateway, seed job, oras-mcp).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-registry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-registry
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5000
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.clickhouse.enabled }}
+---
+# ClickHouse: accept ingress from namespace peers (clickhouse-mcp, ingest).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-clickhouse
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-clickhouse
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8123
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.postgres.enabled }}
+---
+# PostgreSQL: accept ingress from gateway and studio-mcp pods on port 5432.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: studio-mcp
+      ports:
+        - port: 5432
+          protocol: TCP
+{{- end }}
+
+{{- if .Values.nats.enabled }}
+---
+# NATS: accept ingress only from the gateway pod on port 4222.
+# In production, a service mesh provides mTLS; this policy is defense-in-depth.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: studio-allow-nats
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: studio-nats
+      app.kubernetes.io/part-of: complytime-studio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/part-of: complytime-studio
+      ports:
+        - port: 4222
+          protocol: TCP
+{{- end }}
+{{- end }}

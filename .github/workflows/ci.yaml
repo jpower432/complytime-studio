@@ -21,18 +21,20 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version-file: workbench/package.json
+          node-version-file: studio/package.json
           cache: npm
-          cache-dependency-path: workbench/package-lock.json
+          cache-dependency-path: studio/package-lock.json
       - name: Vet
         run: go vet -tags dev ./...
       - name: Test
         run: go test -tags dev -v -race -cover ./...
-      - name: Build workbench
+      - name: Build studio
         run: npm ci && npm run build
-        working-directory: workbench
+        working-directory: studio
       - name: Build gateway
         run: go build -o /dev/null ./cmd/gateway/
+      - name: Build studio-mcp
+        run: go build -o /dev/null ./cmd/studio-mcp/
 
   lint:
     name: Lint
@@ -47,19 +49,19 @@ jobs:
           version: v2.11.4
           args: --build-tags dev
 
-  workbench:
-    name: Workbench
+  studio:
+    name: Studio
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: workbench
+        working-directory: studio
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: workbench/package.json
+          node-version-file: studio/package.json
           cache: npm
-          cache-dependency-path: workbench/package-lock.json
+          cache-dependency-path: studio/package-lock.json
       - run: npm ci
       - name: Type check
         run: npx tsc --noEmit
@@ -73,8 +75,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - name: Lint
-        run: helm lint charts/complytime-studio/
+        run: helm lint charts/complytime/
       - name: Template (default)
-        run: helm template studio charts/complytime-studio/
+        run: helm template complytime charts/complytime/
       - name: Template (ClickHouse enabled)
-        run: helm template studio charts/complytime-studio/ --set clickhouse.enabled=true
+        run: helm template complytime charts/complytime/ --set clickhouse.enabled=true
+
