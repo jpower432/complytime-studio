@@ -28,13 +28,13 @@
 - [x] 4.3 Remove `web.RegisterEchoWithMux()` call — replace with Echo default 404 handler returning JSON `{"error": "not found"}`
 - [x] 4.4 Make `CORS_ORIGINS` configuration explicit in startup logs (warn if empty when not in dev mode)
 - [x] 4.5 Verify: `go build ./cmd/gateway/` succeeds without `workbench/` or `internal/web/`
-- [ ] 4.6 Verify: `GET /` returns `404 {"error": "not found"}`, `GET /api/policies` returns 200
+- [x] 4.6 Verify: `GET /` returns `404 {"error": "not found"}`, `GET /api/policies` returns 200
 
 ## 5. Docker Compose Integration
 
 - [x] 5.1 Add `studio` service to `docker-compose.yaml` (build from `studio/`, port 3000, env `PLATFORM_URL=http://gateway:8080`)
-- [ ] 5.2 Verify: `docker compose up` starts gateway + studio + postgres + nats + mcp servers
-- [ ] 5.3 Verify: Browser at `http://localhost:3000` loads SPA and calls API at gateway:8080
+- [x] 5.2 Verify: `docker compose up` starts gateway + studio + clickhouse + mcp servers
+- [x] 5.3 Verify: Browser at `http://localhost:3000` loads SPA, env.js injects platform URL
 
 ## 6. Helm Chart — Studio Deployment
 
@@ -109,6 +109,6 @@
 - [x] 12.1 `go build ./...` passes (no broken imports)
 - [x] 12.2 `go test ./...` passes
 - [x] 12.3 `cd studio && npm run build` succeeds (verified via Docker build)
-- [ ] 12.4 `docker compose up` starts all services and Studio can reach Platform
+- [x] 12.4 `docker compose up` starts all services and Studio can reach Platform
 - [x] 12.5 `helm template` renders correctly with both `studio.enabled=true` and `studio.enabled=false`
 - [ ] 12.6 Agent successfully reads data via `studio-mcp` (manual test)

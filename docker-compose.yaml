@@ -46,7 +46,7 @@ services:
       - "3000"
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.3
+    image: docker.io/clickhouse/clickhouse-server:25.3
     environment:
       CLICKHOUSE_PASSWORD: complytime-dev
     ports:
