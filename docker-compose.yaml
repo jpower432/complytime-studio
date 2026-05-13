@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Local development stack — gateway + MCP servers.
+# Local development stack — platform (gateway) + studio (SPA) + MCP servers.
 # Agents are kagent Declarative CRDs; they run in Kubernetes, not here.
 
 services:
@@ -14,9 +14,18 @@ services:
       PORT: "8080"
       GEMARA_MCP_URL: http://gemara-mcp:3000
       ORAS_MCP_URL: http://oras-mcp:3000
+      CORS_ORIGINS: http://localhost:3000
     depends_on:
       - gemara-mcp
       - oras-mcp
+
+  studio:
+    build:
+      context: ./studio
+    ports:
+      - "3000:80"
+    environment:
+      PLATFORM_URL: http://gateway:8080
 
   gemara-mcp:
     build:

@@ -3,7 +3,16 @@
 # Default values for complytime-studio — targeting kind development clusters.
 # Override with values-openshift.yaml (or equivalent) for production.
 
-# -- Gateway configuration. User-facing entry point serving workbench SPA,
+# -- Studio SPA deployment. Standalone Nginx container serving the Preact
+# workbench. Set enabled=false for headless (API-only) deployments.
+studio:
+  enabled: true
+  image:
+    repository: complytime-studio
+    tag: latest
+  platformUrl: ""
+
+# -- Gateway configuration. Headless API server serving
 # REST APIs, MCP proxy, and OAuth authentication. A2A proxy is separate.
 gateway:
   image:

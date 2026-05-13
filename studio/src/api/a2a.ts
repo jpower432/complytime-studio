@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { apiFetch } from "./fetch";
+import { apiFetch, platformUrl } from "./fetch";
 
 function a2aEndpoint(agentName?: string): string {
   if (agentName) return `/api/a2a/${agentName}`;
@@ -104,16 +104,16 @@ function doStreamFetch(url: string, body: object, callbacks: StreamCallbacks): (
 
   (async () => {
     try {
-      const res = await fetch(url, {
+      const res = await fetch(platformUrl(url), {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         body: JSON.stringify(body),
         signal: controller.signal,
-        credentials: "same-origin",
+        credentials: "include",
       });
 
       if (res.status === 401) {
-        window.location.href = "/auth/login";
+        window.location.href = platformUrl("/auth/login");
         return;
       }
 

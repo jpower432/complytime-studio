@@ -28,8 +28,6 @@ import (
 	"github.com/complytime/complytime-studio/internal/publish"
 	"github.com/complytime/complytime-studio/internal/registry"
 	"github.com/complytime/complytime-studio/internal/store"
-	"github.com/complytime/complytime-studio/internal/web"
-	"github.com/complytime/complytime-studio/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -263,7 +261,9 @@ func main() {
 		},
 	})
 
-	web.Register(mux, workbench.Assets)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		httputil.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	})
 
 	var handler http.Handler = mux
 	if authCfg.ClientID != "" {
@@ -281,6 +281,9 @@ func main() {
 	if origins := splitComma(os.Getenv("CORS_ORIGINS")); len(origins) > 0 {
 		handler = httputil.CORS(httputil.CORSOptions{AllowedOrigins: origins})(handler)
 		slog.Info("CORS enabled", "origins", origins)
+	} else {
+		slog.Warn("CORS_ORIGINS not set — Studio SPA on a separate origin will be blocked",
+			"hint", "set CORS_ORIGINS to the Studio URL (e.g. http://localhost:3000)")
 	}
 
 	handler = httputil.SecurityHeaders(handler)
