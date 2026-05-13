@@ -5,6 +5,8 @@ KIND_CLUSTER ?= complytime-studio
 NAMESPACE ?= kagent
 GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
+STUDIO_UI_IMAGE ?= complytime-studio
+STUDIO_UI_TAG ?= local
 ASSISTANT_IMAGE ?= studio-assistant
 ASSISTANT_TAG ?= local
 CONTAINER_RUNTIME ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
@@ -77,7 +79,7 @@ studio-build:
 	cd studio && npm run build
 
 studio-image:
-	docker build -t complytime-studio studio/
+	docker build -t $(STUDIO_UI_IMAGE):$(STUDIO_UI_TAG) studio/
 
 studio-mcp-build:
 	go build -o bin/studio-mcp ./cmd/studio-mcp/
@@ -85,7 +87,7 @@ studio-mcp-build:
 studio-mcp-image:
 	docker build -f Dockerfile.studio-mcp -t studio-mcp .
 
-gateway-image: studio-build
+gateway-image:
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
 
 assistant-image: sync-skills
@@ -117,6 +119,8 @@ studio-up: sync-prompts
 		--reset-values \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
+		--set "studio.image.repository=$(STUDIO_UI_IMAGE)" \
+		--set "studio.image.tag=$(STUDIO_UI_TAG)" \
 		--set "assistant.image.repository=$(ASSISTANT_IMAGE)" \
 		--set "assistant.image.tag=$(ASSISTANT_TAG)" \
 		$(HELM_MODEL_FLAGS) \
@@ -124,7 +128,7 @@ studio-up: sync-prompts
 		$(HELM_AGENT_FLAGS) \
 		$(HELM_FEATURE_FLAGS) \
 		--timeout 5m
-	@echo "Chart installed. Access: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
+	@echo "Chart installed. Access: kubectl port-forward -n $(NAMESPACE) svc/studio-ui $(PORT):80"
 
 studio-down:
 	helm uninstall complytime-studio --namespace $(NAMESPACE)
@@ -150,12 +154,17 @@ oidc-secret:
 # Full build → load → deploy → port-forward cycle for kind clusters.
 # Usage: make deploy
 # With OIDC: OIDC_CLIENT_ID=<id> OIDC_CLIENT_SECRET=<secret> OIDC_ISSUER_URL=<url> make deploy
-deploy: gateway-image assistant-image
+deploy: gateway-image studio-image assistant-image
 	kind load docker-image $(GATEWAY_IMAGE):$(GATEWAY_TAG) --name $(KIND_CLUSTER)
 	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
 		ctr --namespace=k8s.io images tag --force \
 		localhost/$(GATEWAY_IMAGE):$(GATEWAY_TAG) \
 		docker.io/library/$(GATEWAY_IMAGE):$(GATEWAY_TAG) 2>/dev/null || true
+	kind load docker-image $(STUDIO_UI_IMAGE):$(STUDIO_UI_TAG) --name $(KIND_CLUSTER)
+	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
+		ctr --namespace=k8s.io images tag --force \
+		localhost/$(STUDIO_UI_IMAGE):$(STUDIO_UI_TAG) \
+		docker.io/library/$(STUDIO_UI_IMAGE):$(STUDIO_UI_TAG) 2>/dev/null || true
 	kind load docker-image $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) --name $(KIND_CLUSTER)
 	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
 		ctr --namespace=k8s.io images tag --force \
@@ -167,9 +176,11 @@ deploy: gateway-image assistant-image
 	$(MAKE) studio-up
 	kubectl rollout restart deployment/studio-gateway -n $(NAMESPACE)
 	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=240s
+	kubectl rollout restart deployment/studio-ui -n $(NAMESPACE)
+	kubectl rollout status deployment/studio-ui -n $(NAMESPACE) --timeout=120s
 	kubectl delete pods -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --ignore-not-found
 	kubectl wait --for=condition=ready pod -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --timeout=120s 2>/dev/null || true
-	@echo "Deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
+	@echo "Deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-ui $(PORT):80"
 
 # Seed demo data into a running Studio instance.
 # Port-forwards directly to the gateway container (bypassing OAuth2 Proxy).
