@@ -19,7 +19,7 @@
 - [x] 3.1 Create `studio/nginx.conf` with history-mode fallback and no-cache for `env.js`
 - [x] 3.2 Create `studio/Dockerfile` (multi-stage: Node build, Nginx serve)
 - [x] 3.3 Add `studio/docker-entrypoint.sh` that runs `envsubst` on `env.js.template` then starts Nginx
-- [ ] 3.4 Verify: `docker build -t complytime-studio studio/` succeeds and produces a minimal image
+- [x] 3.4 Verify: `docker build -t complytime-studio studio/` succeeds and produces a minimal image
 
 ## 4. Platform Headless Mode
 
@@ -106,9 +106,9 @@
 
 ## 12. Validation
 
-- [ ] 12.1 `go build ./...` passes (no broken imports)
-- [ ] 12.2 `go test ./...` passes
-- [ ] 12.3 `cd studio && npm run build` succeeds
+- [x] 12.1 `go build ./...` passes (no broken imports)
+- [x] 12.2 `go test ./...` passes
+- [x] 12.3 `cd studio && npm run build` succeeds (verified via Docker build)
 - [ ] 12.4 `docker compose up` starts all services and Studio can reach Platform
-- [ ] 12.5 `helm template` renders correctly with both `studio.enabled=true` and `studio.enabled=false`
+- [x] 12.5 `helm template` renders correctly with both `studio.enabled=true` and `studio.enabled=false`
 - [ ] 12.6 Agent successfully reads data via `studio-mcp` (manual test)
