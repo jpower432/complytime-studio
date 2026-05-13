@@ -57,6 +57,9 @@ test-integration:
 lint:
 	golangci-lint run ./...
 
+lint-openapi:
+	go test ./internal/openapi/... -run TestSpecDrift -v -count=1
+
 clean:
 	rm -rf bin/
 

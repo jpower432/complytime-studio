@@ -30,7 +30,6 @@ tags:
   - name: Catalogs
   - name: Posture
   - name: Requirements
-  - name: Export
   - name: ThreatsRisks
   - name: Notifications
   - name: Users
@@ -64,44 +63,23 @@ paths:
               schema:
                 type: string
 
-  /auth/login:
-    get:
-      tags: [Auth]
-      operationId: authLogin
-      security: []
-      summary: Start Google OAuth
-      description: Redirects to Google authorization endpoint (302). Requires OAuth env configuration.
-      responses:
-        '302':
-          description: Redirect to Google
+  # /auth/login, /auth/callback, /auth/logout are handled by OAuth2 Proxy
+  # externally and are NOT registered in the gateway's Echo router.
 
-  /auth/callback:
+  /auth/logged-out:
     get:
       tags: [Auth]
-      operationId: authCallback
+      operationId: authLoggedOut
       security: []
-      summary: OAuth redirect URI
-      description: Validates state, exchanges code, sets encrypted session cookie, redirects to `/`.
-      parameters:
-        - name: code
-          in: query
-          schema:
-            type: string
-        - name: state
-          in: query
-          schema:
-            type: string
+      summary: Post-logout landing page
+      description: Static HTML page shown after OAuth2 Proxy clears the session cookie.
       responses:
-        '302':
-          description: Redirect to `/` on success
-        '400':
-          description: Missing code
-        '403':
-          description: Invalid OAuth state
-        '502':
-          description: Token exchange or userinfo failure
-        '500':
-          description: Session persistence error
+        '200':
+          description: HTML page with sign-in link
+          content:
+            text/html:
+              schema:
+                type: string
 
   /auth/me:
     get:
@@ -124,16 +102,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /auth/logout:
-    get:
-      tags: [Auth]
-      operationId: authLogout
-      security: []
-      summary: Clear session
-      description: Deletes server session and clears cookie; redirects to `/`.
-      responses:
-        '302':
-          description: Redirect to `/`
+  # /auth/logout is handled by OAuth2 Proxy externally.
 
   /api/config:
     get:
@@ -150,6 +119,33 @@ paths:
                 type: object
                 additionalProperties:
                   type: string
+
+  /api/system-info:
+    get:
+      tags: [Config]
+      operationId: getSystemInfo
+      summary: Runtime system information
+      description: Returns version, database status, auth provider, model provider, and connected agents.
+      responses:
+        '200':
+          description: System info map
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  database:
+                    type: string
+                  auth_provider:
+                    type: string
+                  model_provider:
+                    type: string
+                  agents:
+                    type: array
+                    items:
+                      type: string
 
   /api/agents:
     get:
@@ -362,6 +358,8 @@ paths:
                   $ref: '#/components/schemas/EvidenceRecord'
         '500':
           description: Query failed
+
+  /api/evidence/ingest:
     post:
       tags: [Evidence]
       operationId: ingestEvidence
@@ -391,6 +389,7 @@ paths:
                   format: binary
       responses:
         '201':
+          description: Evidence rows inserted
           content:
             application/json:
               schema:
@@ -399,25 +398,13 @@ paths:
                   inserted:
                     type: integer
         '400':
+          description: Validation errors
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorsListResponse'
         '502':
           description: Blob upload failed
-
-  /api/evidence/upload:
-    post:
-      tags: [Evidence]
-      operationId: evidenceUploadRemoved
-      summary: Deprecated upload endpoint
-      responses:
-        '410':
-          description: Removed — use Gemara ingest tooling
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
   /api/certifications:
     get:
@@ -756,70 +743,7 @@ paths:
         '404':
           description: Requirement unknown for policy
 
-  /api/export/csv:
-    get:
-      tags: [Export]
-      operationId: exportCsv
-      summary: CSV attachment for requirement matrix
-      parameters:
-        - $ref: '#/components/parameters/ExportPolicyId'
-        - $ref: '#/components/parameters/ExportAuditId'
-        - $ref: '#/components/parameters/ExportAuditStart'
-        - $ref: '#/components/parameters/ExportAuditEnd'
-      responses:
-        '200':
-          description: CSV stream
-          content:
-            text/csv:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Invalid query
-        '413':
-          description: Row limit exceeded
-
-  /api/export/excel:
-    get:
-      tags: [Export]
-      operationId: exportExcel
-      summary: Excel workbook export
-      parameters:
-        - $ref: '#/components/parameters/ExportPolicyId'
-        - $ref: '#/components/parameters/ExportAuditId'
-        - $ref: '#/components/parameters/ExportAuditStart'
-        - $ref: '#/components/parameters/ExportAuditEnd'
-      responses:
-        '200':
-          description: XLSX binary
-          content:
-            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
-              schema:
-                type: string
-                format: binary
-        '413':
-          description: Row limit exceeded
-
-  /api/export/pdf:
-    get:
-      tags: [Export]
-      operationId: exportPdf
-      summary: PDF export
-      parameters:
-        - $ref: '#/components/parameters/ExportPolicyId'
-        - $ref: '#/components/parameters/ExportAuditId'
-        - $ref: '#/components/parameters/ExportAuditStart'
-        - $ref: '#/components/parameters/ExportAuditEnd'
-      responses:
-        '200':
-          description: PDF binary
-          content:
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '413':
-          description: Row limit exceeded
+  # Export endpoints (CSV, Excel, PDF) are planned but not yet implemented.
 
   /api/threats:
     get:
@@ -955,12 +879,36 @@ paths:
             type: integer
       responses:
         '200':
+          description: List of notifications
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Notification'
+    post:
+      tags: [Notifications]
+      operationId: createNotification
+      summary: Create a notification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Notification'
+      responses:
+        '201':
+          description: Notification created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: created
+        '400':
+          description: Invalid JSON or missing required fields
 
   /api/notifications/unread-count:
     get:
@@ -1333,28 +1281,6 @@ components:
       required: true
       schema:
         type: string
-    ExportPolicyId:
-      name: policy_id
-      in: query
-      required: true
-      schema:
-        type: string
-    ExportAuditId:
-      name: audit_id
-      in: query
-      schema:
-        type: string
-    ExportAuditStart:
-      name: audit_start
-      in: query
-      schema:
-        type: string
-    ExportAuditEnd:
-      name: audit_end
-      in: query
-      schema:
-        type: string
-
   schemas:
     ErrorResponse:
       type: object
