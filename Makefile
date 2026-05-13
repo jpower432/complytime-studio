@@ -43,7 +43,7 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=
 	assistant-image \
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
-	workbench-build workbench-dev \
+	studio-build \
 	deploy oauth-secret \
 	demo demo-change demo-all
 
@@ -85,7 +85,7 @@ studio-mcp-build:
 studio-mcp-image:
 	docker build -f Dockerfile.studio-mcp -t studio-mcp .
 
-gateway-image: workbench-build
+gateway-image: studio-build
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
 
 assistant-image: sync-skills
@@ -94,10 +94,7 @@ assistant-image: sync-skills
 compose-up:
 	docker compose up --build
 
-workbench-build:
-	cd workbench && npm run build
-
-workbench-dev: workbench-build gateway-build
+studio-dev: studio-build gateway-build
 
 cluster-up:
 	@./deploy/kind/setup.sh
@@ -116,6 +113,7 @@ endif
 studio-up: sync-prompts
 	helm upgrade --install complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime/values-dev.yaml \
 		--reset-values \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
@@ -134,6 +132,7 @@ studio-down:
 studio-template: sync-prompts
 	helm template complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
+		-f charts/complytime/values-dev.yaml \
 		$(HELM_FEATURE_FLAGS)
 
 # Create the Kubernetes secret for OIDC credentials.

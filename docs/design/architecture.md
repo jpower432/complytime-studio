@@ -187,7 +187,7 @@ Exact registration lives in `internal/store/handlers.go`, `internal/postgres/use
 | `STUDIO_API_TOKEN` | No | Static bearer for scripts/CI |
 | `NETWORKPOLICY_ENFORCED` | Prod | Acknowledges internal port locked down |
 
-### Helm defaults (`charts/complytime-studio/values.yaml`)
+### Helm defaults (`charts/complytime/values.yaml`)
 
 | Key | Default | Notes |
 |:--|:--|:--|

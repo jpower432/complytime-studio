@@ -90,7 +90,7 @@ You specialize in <Layer N (Name)>: <what you do>.
 
 ### 4. Register in Helm
 
-Create a kagent `Agent` CRD template with `type: BYO` in `charts/complytime-studio/templates/`. The agent container must serve A2A at `/.well-known/agent-card.json`. kagent manages the Deployment + Service lifecycle and exposes the agent in the dashboard.
+Create a kagent `Agent` CRD template with `type: BYO` in `charts/complytime/templates/`. The agent container must serve A2A at `/.well-known/agent-card.json`. kagent manages the Deployment + Service lifecycle and exposes the agent in the dashboard.
 
 ```yaml
 apiVersion: kagent.dev/v1alpha2
@@ -139,7 +139,7 @@ Authentication and data persistence changed significantly in 2026-05.
 
 **Key references:**
 - Auth design: `openspec/changes/generic-oidc-auth/design.md`
-- Helm auth values: `charts/complytime-studio/values.yaml` → `auth.oauth2Proxy.*`
+- Helm auth values: `charts/complytime/values.yaml` → `auth.oauth2Proxy.*`
 - Architecture: `docs/design/architecture.md`
 - ADR: `docs/decisions/postgres-with-extensions.md`
 
@@ -287,7 +287,7 @@ EOF
 - [ ] `agents/<name>/agent.yaml` with name, description, skills, mcp, a2a
 - [ ] `agents/<name>/prompt.md` with workflow steps only
 - [ ] Skills extracted to `skills/<name>/SKILL.md` if reusable
-- [ ] Agent CRD template (`type: BYO`) added to `charts/complytime-studio/templates/`
+- [ ] Agent CRD template (`type: BYO`) added to `charts/complytime/templates/`
 - [ ] Agent entry added to `agentDirectory` in `values.yaml`
 - [ ] `make sync-prompts` copies prompt to chart
 - [ ] Container serves A2A at `/.well-known/agent-card.json`
@@ -337,7 +337,7 @@ After any agent change, verify the Kubernetes deployment renders correctly.
 
 | Check | Command | Expected Result |
 |:------|:--------|:----------------|
-| CRD renders | `helm template studio charts/complytime-studio/` | Agent CRD contains updated description, prompt, A2A skills |
+| CRD renders | `helm template studio charts/complytime/` | Agent CRD contains updated description, prompt, A2A skills |
 | Prompt content | Inspect rendered `systemMessage` field | Full prompt.md content embedded, no truncation |
 | Values match | Compare `values.yaml` agent directory entry | Description and skills match `agent.yaml` |
 | No stale refs | Search chart templates for old descriptions | Zero matches |

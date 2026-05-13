@@ -211,5 +211,5 @@ Conditionally render UI controls based on the user's RACI role per policy. The `
 - [Impact Graph](impact-graph.md) — `mapping_entries` parsing pattern reused for `policy_contacts`
 - [Backend Architecture](backend-architecture.md) — gateway as the auth/proxy chokepoint
 - `internal/auth/auth.go` — current session and middleware implementation
-- `charts/complytime-studio/values.yaml` — Helm auth configuration
+- `charts/complytime/values.yaml` — Helm auth configuration
 - [gemaraproj/go-gemara](https://github.com/gemaraproj/go-gemara) — `Policy.Contacts` RACI types

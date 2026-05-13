@@ -41,8 +41,8 @@ go vet -tags dev ./...
 go test -tags dev -race ./...
 go build ./cmd/gateway/
 golangci-lint run ./...
-cd workbench && npx tsc --noEmit && npm run build
-helm lint charts/complytime-studio/
+cd studio && npx tsc --noEmit && npm run build
+helm lint charts/complytime/
 ```
 
 **Review:** 2 maintainer approvals required. Exceptions for transient CI failures require maintainer consensus.
@@ -61,7 +61,7 @@ Conventions are defined in [AGENTS.md](AGENTS.md). Key points:
 
 ## Frontend Standards
 
-Preact SPA in `workbench/`. TypeScript strict mode — `npx tsc --noEmit` must pass.
+Preact SPA in `studio/`. TypeScript strict mode — `npx tsc --noEmit` must pass.
 
 Do not run `npm install` or modify `package-lock.json` without maintainer approval. Dependency changes are a separate PR with justification.
 
@@ -76,7 +76,7 @@ Do not run `npm install` or modify `package-lock.json` without maintainer approv
 | Agent spec | `agents/assistant/agent.yaml` |
 | Prompt | `agents/assistant/prompt.md` |
 | Skills | `skills/*/SKILL.md` (vendored to `agents/assistant/skills/`) |
-| Helm template (Agent CRD) | `charts/complytime-studio/templates/byo-assistant.yaml` |
+| Helm template (Agent CRD) | `charts/complytime/templates/byo-assistant.yaml` |
 
 After changing prompts or skills:
 
@@ -88,7 +88,7 @@ make sync-skills
 **Adding a new BYO agent:**
 
 1. Build a container that serves A2A at `/.well-known/agent-card.json`
-2. Create a Helm template rendering a kagent `Agent` CRD (`type: BYO`) in `charts/complytime-studio/templates/`
+2. Create a Helm template rendering a kagent `Agent` CRD (`type: BYO`) in `charts/complytime/templates/`
 3. Add an entry to `agentDirectory` in `values.yaml` (name, description, url, skills)
 4. Pass MCP server URLs as env vars in the CRD's `byo.deployment.env`
 
