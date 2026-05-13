@@ -53,7 +53,10 @@ spec:
             - name: GEMARA_MCP_URL
               value: "http://studio-gemara-mcp:3000/mcp"
             {{- end }}
-            {{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
+            {{- if and .Values.clickhouse.enabled .Values.mcpServers.studio.enabled }}
+            - name: STUDIO_MCP_URL
+              value: "http://studio-mcp:3000/mcp"
+            {{- else if and .Values.clickhouse.enabled .Values.clickhouse.mcp (not .Values.mcpServers.studio.enabled) }}
             - name: CLICKHOUSE_MCP_URL
               value: "http://studio-clickhouse-mcp:3000/mcp"
             {{- end }}

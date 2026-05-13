@@ -24,6 +24,10 @@ profile.cov
 go.work
 go.work.sum
 
+# Node.js
+node_modules/
+studio/dist/
+
 # Build output
 bin/
 /gateway

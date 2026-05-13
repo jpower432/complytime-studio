@@ -35,6 +35,7 @@ HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=
 	compose-up sync-prompts seed \
 	cluster-up cluster-down studio-up studio-down studio-template \
 	workbench-build workbench-dev \
+	studio-build studio-image studio-mcp-build studio-mcp-image \
 	deploy oauth-secret
 
 test:
@@ -47,8 +48,8 @@ clean:
 	rm -rf bin/
 
 sync-prompts:
-	@mkdir -p charts/complytime-studio/agents/assistant
-	@cp agents/assistant/prompt.md charts/complytime-studio/agents/assistant/prompt.md
+	@mkdir -p charts/complytime/agents/assistant
+	@cp agents/assistant/prompt.md charts/complytime/agents/assistant/prompt.md
 
 sync-skills:
 	@rsync -a --delete --exclude='.gitkeep' skills/ agents/assistant/skills/
@@ -56,7 +57,7 @@ sync-skills:
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
 
-gateway-image: workbench-build
+gateway-image:
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
 
 assistant-image: sync-skills
@@ -65,10 +66,22 @@ assistant-image: sync-skills
 compose-up:
 	docker compose up --build
 
-workbench-build:
-	cd workbench && npm run build
+studio-build:
+	cd studio && npm run build
 
-workbench-dev: workbench-build gateway-build
+studio-image:
+	docker build -t complytime-studio studio/
+
+studio-mcp-build:
+	go build -o bin/studio-mcp ./cmd/studio-mcp/
+
+studio-mcp-image:
+	docker build -f Dockerfile.studio-mcp -t studio-mcp .
+
+# Deprecated alias — SPA lives under studio/
+workbench-build: studio-build
+
+workbench-dev: studio-build gateway-build
 
 cluster-up:
 	@./deploy/kind/setup.sh
@@ -85,7 +98,7 @@ HELM_MODEL_FLAGS += --set model.name=$(MODEL_NAME)
 endif
 
 studio-up: sync-prompts
-	helm upgrade --install complytime-studio ./charts/complytime-studio \
+	helm upgrade --install complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
 		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
 		--set "gateway.image.tag=$(GATEWAY_TAG)" \
@@ -102,7 +115,7 @@ studio-down:
 	helm uninstall complytime-studio --namespace $(NAMESPACE)
 
 studio-template: sync-prompts
-	helm template complytime-studio ./charts/complytime-studio \
+	helm template complytime-studio ./charts/complytime \
 		--namespace $(NAMESPACE) \
 		$(HELM_FEATURE_FLAGS)
 

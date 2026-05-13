@@ -73,8 +73,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - name: Lint
-        run: helm lint charts/complytime-studio/
+        run: helm lint charts/complytime/
       - name: Template (default)
-        run: helm template studio charts/complytime-studio/
+        run: helm template studio charts/complytime/
       - name: Template (ClickHouse enabled)
-        run: helm template studio charts/complytime-studio/ --set clickhouse.enabled=true
+        run: helm template studio charts/complytime/ --set clickhouse.enabled=true

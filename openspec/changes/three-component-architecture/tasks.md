@@ -38,7 +38,7 @@
 
 ## 6. Helm Chart — Studio Deployment
 
-- [x] 6.1 Add `studio.enabled` and `studio.image` to `charts/complytime-studio/values.yaml`
+- [x] 6.1 Add `studio.enabled` and `studio.image` to `charts/complytime/values.yaml`
 - [x] 6.2 Create `templates/studio-deployment.yaml` (Nginx container, `PLATFORM_URL` env var from platform Service URL)
 - [x] 6.3 Create `templates/studio-service.yaml` (ClusterIP, port 80)
 - [x] 6.4 Wrap Studio templates in `{{- if .Values.studio.enabled }}`
@@ -47,62 +47,62 @@
 
 ## 7. OpenAPI Spec
 
-- [ ] 7.1 Create `docs/api/openapi.yaml` with info block and server definitions
-- [ ] 7.2 Document policy endpoints (GET list, GET by ID, POST)
-- [ ] 7.3 Document evidence endpoints (POST ingest, GET query)
-- [ ] 7.4 Document audit-log endpoints (GET list, GET by ID, POST promote)
-- [ ] 7.5 Document draft-audit-log endpoints (GET list, PATCH)
-- [ ] 7.6 Document posture, mappings, requirements, catalogs, programs, agents, config, system-info
-- [ ] 7.7 Document notifications, certifications, threats, risks, validate, migrate
-- [ ] 7.8 Document auth endpoints (GET /api/me, POST /api/bootstrap)
-- [ ] 7.9 Define shared schemas (Policy, EvidenceRecord, AuditLog, PostureRow, error response)
-- [ ] 7.10 Define security schemes (bearerAuth, oauth2)
+- [x] 7.1 Create `docs/api/openapi.yaml` with info block and server definitions
+- [x] 7.2 Document policy endpoints (GET list, GET by ID, POST)
+- [x] 7.3 Document evidence endpoints (POST ingest, GET query)
+- [x] 7.4 Document audit-log endpoints (GET list, GET by ID, POST promote)
+- [x] 7.5 Document draft-audit-log endpoints (GET list, PATCH)
+- [x] 7.6 Document posture, mappings, requirements, catalogs, programs, agents, config, system-info
+- [x] 7.7 Document notifications, certifications, threats, risks, validate, migrate
+- [x] 7.8 Document auth endpoints (GET /api/me, POST /api/bootstrap)
+- [x] 7.9 Define shared schemas (Policy, EvidenceRecord, AuditLog, PostureRow, error response)
+- [x] 7.10 Define security schemes (bearerAuth, oauth2)
 
 ## 8. Studio-MCP Server
 
-- [ ] 8.1 Create `cmd/studio-mcp/main.go` scaffold (CLI with `--transport` and `--port` flags)
-- [ ] 8.2 Add PostgreSQL connection setup (import `internal/postgres`)
-- [ ] 8.3 Implement `studio://policies` resource (list and get-by-id)
-- [ ] 8.4 Implement `studio://evidence` resource with `policy_id`, `limit`, `offset` params
-- [ ] 8.5 Implement `studio://posture` resource with `policy_id` param
-- [ ] 8.6 Implement `studio://audit-logs` resource with `policy_id` param
-- [ ] 8.7 Implement `studio://mappings` resource with `source_catalog` param
-- [ ] 8.8 Implement `studio://catalogs` resource
-- [ ] 8.9 Implement `studio://threats` and `studio://risks` resources with `catalog_id` param
-- [ ] 8.10 Implement `ingest_evidence` tool
-- [ ] 8.11 Implement `save_draft_audit_log` tool
-- [ ] 8.12 Add stdio transport support
-- [ ] 8.13 Add HTTP transport support
-- [ ] 8.14 Create `Dockerfile.studio-mcp`
-- [ ] 8.15 Verify: `go build ./cmd/studio-mcp/` succeeds
+- [x] 8.1 Create `cmd/studio-mcp/main.go` scaffold (CLI with `--transport` and `--port` flags)
+- [x] 8.2 Add ClickHouse connection setup (`internal/clickhouse`, `store.New`)
+- [x] 8.3 Implement `studio://policies` resource (list and get-by-id)
+- [x] 8.4 Implement `studio://evidence` resource with `policy_id`, `limit`, `offset` params
+- [x] 8.5 Implement `studio://posture` resource with `policy_id` param
+- [x] 8.6 Implement `studio://audit-logs` resource with `policy_id` param
+- [x] 8.7 Implement `studio://mappings` resource with `source_catalog` param
+- [x] 8.8 Implement `studio://catalogs` resource
+- [x] 8.9 Implement `studio://threats` and `studio://risks` resources with `catalog_id` param
+- [x] 8.10 Implement `ingest_evidence` tool
+- [x] 8.11 Implement `save_draft_audit_log` tool
+- [x] 8.12 Add stdio transport support
+- [x] 8.13 Add HTTP transport support
+- [x] 8.14 Create `Dockerfile.studio-mcp`
+- [x] 8.15 Verify: `go build ./cmd/studio-mcp/` succeeds
 
 ## 9. Agent Layer Update
 
-- [ ] 9.1 Update `agents/assistant/agent.yaml` — replace `postgres-mcp` with `studio-mcp` in mcp block
-- [ ] 9.2 Update `agents/assistant/prompt.md` — replace SQL query references with `studio://` resource URIs
-- [ ] 9.3 Run `make sync-prompts` to copy updated prompt to chart
-- [ ] 9.4 Add `studio-mcp` MCPServer CRD template to Helm chart
-- [ ] 9.5 Add `studio-mcp` service to `docker-compose.yaml`
+- [x] 9.1 Update `agents/assistant/agent.yaml` — replace `postgres-mcp` with `studio-mcp` in mcp block
+- [x] 9.2 Update `agents/assistant/prompt.md` — replace SQL query references with `studio://` resource URIs
+- [x] 9.3 Run `make sync-prompts` to copy updated prompt to chart
+- [x] 9.4 Add `studio-mcp` MCPServer CRD template to Helm chart
+- [x] 9.5 Add `studio-mcp` service to `docker-compose.yaml`
 - [ ] 9.6 Verify: agent can read `studio://policies` and `studio://evidence` via studio-mcp
 
 ## 10. Helm Chart Rename and Finalize
 
-- [ ] 10.1 Rename `charts/complytime-studio/` to `charts/complytime/`
-- [ ] 10.2 Update `Chart.yaml` name to `complytime`
-- [ ] 10.3 Update Makefile references to chart path
-- [ ] 10.4 Verify: `helm template complytime ./charts/complytime/` renders all three Deployment groups
+- [x] 10.1 Rename `charts/complytime-studio/` to `charts/complytime/`
+- [x] 10.2 Update `Chart.yaml` name to `complytime`
+- [x] 10.3 Update Makefile references to chart path
+- [x] 10.4 Verify: `helm template complytime ./charts/complytime/` renders all three Deployment groups
 
 ## 11. Documentation
 
-- [ ] 11.1 Create `docs/architecture.md` — three-component overview with communication diagram
-- [ ] 11.2 Create `docs/api/studio-mcp.md` — MCP resource URI reference
-- [ ] 11.3 Create `docs/decisions/three-component-architecture.md` ADR
-- [ ] 11.4 Create `docs/decisions/studio-spa-extraction.md` ADR
-- [ ] 11.5 Create `docs/decisions/studio-mcp-server.md` ADR
-- [ ] 11.6 Create `docs/decisions/agent-mcp-surface.md` ADR
-- [ ] 11.7 Update `AGENTS.md` with boundary rules section
-- [ ] 11.8 Update `README.md` with three-component architecture and local dev instructions
-- [ ] 11.9 Update Makefile with new targets: `studio-build`, `studio-image`, `studio-mcp-build`, `studio-mcp-image`
+- [x] 11.1 Create `docs/architecture.md` — three-component overview with communication diagram
+- [x] 11.2 Create `docs/api/studio-mcp.md` — MCP resource URI reference
+- [x] 11.3 Create `docs/decisions/three-component-architecture.md` ADR
+- [x] 11.4 Create `docs/decisions/studio-spa-extraction.md` ADR
+- [x] 11.5 Create `docs/decisions/studio-mcp-server.md` ADR
+- [x] 11.6 Create `docs/decisions/agent-mcp-surface.md` ADR
+- [x] 11.7 Update `AGENTS.md` with boundary rules section
+- [x] 11.8 Update `README.md` with three-component architecture and local dev instructions
+- [x] 11.9 Update Makefile with new targets: `studio-build`, `studio-image`, `studio-mcp-build`, `studio-mcp-image`
 
 ## 12. Validation
 

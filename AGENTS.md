@@ -290,3 +290,11 @@ After any agent change, verify the Kubernetes deployment renders correctly.
 | Prompt content | Inspect rendered `systemMessage` field | Full prompt.md content embedded, no truncation |
 | Values match | Compare `values.yaml` agent directory entry | Description and skills match `agent.yaml` |
 | No stale refs | Search chart templates for old descriptions | Zero matches |
+
+## Boundary Rules
+
+- Studio (`studio/`) MUST NOT import Go packages or depend on the Go toolchain
+- Platform (`cmd/`, `internal/`) MUST NOT import from `studio/`
+- Agents MUST NOT import `internal/store` or `internal/postgres` at runtime
+- Agents access platform data exclusively through `studio-mcp` MCP resources
+- All cross-component communication uses REST API or MCP protocol

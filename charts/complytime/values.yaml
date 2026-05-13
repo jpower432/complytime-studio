@@ -134,7 +134,8 @@ agentDirectory:
         tags: [assistant, audit, compliance, coverage, evidence, layer-7]
 
 # -- MCP servers deployed via kagent MCPServer CRDs.
-# Platform servers (gemara, oras, clickhouse) use stdio with static credentials.
+# Platform servers (gemara, oras, studio-mcp) use stdio with static credentials.
+# Legacy clickhouse-mcp (SQL) is omitted when mcpServers.studio.enabled is true.
 #
 # To add a new MCP server:
 #   1. Add an entry here with enabled + image
@@ -153,6 +154,11 @@ mcpServers:
   oras:
     enabled: true
     image: ghcr.io/oras-project/oras-mcp:v0.2.1
+  studio:
+    enabled: true
+    image:
+      repository: studio-mcp
+      tag: latest
   # github-mcp removed — not required for audit dashboard workflow.
   # Re-enable if code search or repository access is needed.
 

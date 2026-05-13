@@ -41,7 +41,7 @@ spec:
       - serve
     port: 3000
 {{- end }}
-{{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
+{{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp (not .Values.mcpServers.studio.enabled) }}
 ---
 apiVersion: kagent.dev/v1alpha1
 kind: MCPServer

@@ -14,10 +14,14 @@ services:
       PORT: "8080"
       GEMARA_MCP_URL: http://gemara-mcp:3000
       ORAS_MCP_URL: http://oras-mcp:3000
+      CLICKHOUSE_ADDR: clickhouse:9000
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: complytime-dev
       CORS_ORIGINS: http://localhost:3000
     depends_on:
       - gemara-mcp
       - oras-mcp
+      - clickhouse
 
   studio:
     build:
@@ -40,3 +44,26 @@ services:
     command: ["/bin/oras-mcp", "serve", "--transport", "sse", "--port", "3000"]
     expose:
       - "3000"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    environment:
+      CLICKHOUSE_PASSWORD: complytime-dev
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+
+  studio-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.studio-mcp
+    command:
+      - --transport=http
+      - --port=3000
+      - --clickhouse-addr=clickhouse:9000
+      - --clickhouse-user=default
+      - --clickhouse-password=complytime-dev
+    expose:
+      - "3000"
+    depends_on:
+      - clickhouse

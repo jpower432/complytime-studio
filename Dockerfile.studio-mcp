@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+
+FROM golang:1.25 AS builder
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+RUN CGO_ENABLED=0 go build -o /studio-mcp ./cmd/studio-mcp/
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /studio-mcp /studio-mcp
+
+EXPOSE 3000
+
+# Example: pass ClickHouse flags at runtime, e.g.
+#   docker run ... /studio-mcp --transport=http --port=3000 --clickhouse-addr=clickhouse:9000
+ENTRYPOINT ["/studio-mcp"]

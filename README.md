@@ -4,6 +4,18 @@ Compliance analytics and audit preparation platform for compliance analysts and 
 
 Studio is the aggregation point in a decoupled compliance ecosystem -- policies live in Git, evidence flows through OTel, raw artifacts stay in per-boundary OCI registries, and Studio holds **summaries only**. The [Gemara schema](https://gemara.openssf.org/) is the shared contract.
 
+## Three-component layout
+
+This repository ships three boundaries that deploy independently:
+
+| Component | Location | Role |
+|:--|:--|:--|
+| **ComplyTime Platform** | `cmd/gateway`, `internal/` | Headless Go gateway: REST `/api/*`, OAuth, A2A proxy, ClickHouse store, optional NATS events, certifier pipeline |
+| **ComplyTime Studio** | `studio/` | Preact SPA in an Nginx image; `PLATFORM_URL` injected at runtime via `env.js` |
+| **ComplyTime Agents** | `agents/`, kagent CRDs | Assistant workloads with MCP sidecars (gemara-mcp, studio-mcp, oras-mcp) |
+
+Studio calls the Platform cross-origin (**CORS** required on the gateway). Agents load platform data via **studio-mcp** (`studio://` resources), not database MCPs. Overview: [docs/architecture.md](docs/architecture.md). MCP contract: [docs/api/studio-mcp.md](docs/api/studio-mcp.md).
+
 ## What It Does
 
 | Capability | Description |
@@ -28,7 +40,7 @@ Studio is the aggregation point in a decoupled compliance ecosystem -- policies 
 | `kubectl` | Kubernetes CLI | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
 | `helm` | Chart management | [helm.sh](https://helm.sh/docs/intro/install/) |
 | `go` (>= 1.22) | Build the gateway | [go.dev](https://go.dev/dl/) |
-| `node` / `npm` | Build the workbench SPA | [nodejs.org](https://nodejs.org/) |
+| `node` / `npm` | Build the Studio SPA (`studio/`) | [nodejs.org](https://nodejs.org/) |
 | `gcloud` | GCP credentials for Vertex AI | [cloud.google.com](https://cloud.google.com/sdk/docs/install) |
 
 ### 2. Configure credentials
@@ -60,13 +72,17 @@ GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET \
   make deploy
 ```
 
-### 4. Access the workbench
+### 4. Access Studio
+
+**Kubernetes (gateway-only port-forward):**
 
 ```bash
 kubectl port-forward -n kagent svc/studio-gateway 8080:8080
 ```
 
-Open [http://localhost:8080](http://localhost:8080).
+Use the Studio Service URL from your chart when `studio.enabled=true`, or port-forward the Studio Service when deployed separately.
+
+**Docker Compose:** gateway listens on [http://localhost:8080](http://localhost:8080); Studio SPA on [http://localhost:3000](http://localhost:3000) with `PLATFORM_URL` pointing at the gateway container.
 
 ### 5. Seed demo data
 
@@ -84,39 +100,40 @@ make cluster-down
 
 ### Local (Docker Compose)
 
-Runs the gateway and MCP servers without Kubernetes. Agents are not available in this mode.
+Runs **gateway** (platform API), **studio** (Nginx + SPA from `./studio`), and MCP helper services. Compose does not run kagent agents.
 
 ```bash
 cp .env.example .env
-docker compose up
+docker compose up --build
 ```
+
+- Studio UI: `http://localhost:3000` (configure API base via injected `env.js` / `PLATFORM_URL`)
+- Platform API: `http://localhost:8080` (`CORS_ORIGINS` includes `http://localhost:3000` in the bundled compose file)
+
+For SPA iteration without Compose: `cd studio && npm run dev` with `VITE_PLATFORM_URL` pointing at a local gateway.
 
 ## Architecture
 
+See **[docs/architecture.md](docs/architecture.md)** for the three-component diagram (browser ↔ Studio static, browser ↔ Platform REST/A2A, agents ↔ studio-mcp).
+
+Legacy single-process mental model:
+
 ```
-Browser (Preact SPA)
-  |
-  | HTTP / SSE
-  v
-Gateway public (Go :8080)  --- REST ---> ClickHouse
-  |                          --- S3 ---> Blob storage (optional; MinIO-compatible)
-  |                          --- optional NATS ---> posture checks / inbox
-  |
-  +-- Gateway internal (:8081, /internal/* only, NetworkPolicy)
+Browser  --->  Studio SPA (static, optional separate origin)
+         --->  Gateway public (Go :8080)  --- REST ---> ClickHouse
+Gateway                           --- S3 ---> Blob storage (optional; MinIO-compatible)
+                                  --- optional NATS ---> posture checks / inbox
+Gateway internal (:8081, /internal/*)  --- trusted workloads
   |
   | A2A proxy
   v
-Studio Assistant (Python ADK)  ---> internal gateway URL for draft creation
-  |
-  | MCP tools
-  v
-gemara-mcp / clickhouse-mcp / oras-mcp
+Agents (e.g. Assistant)  --->  MCP: gemara-mcp, studio-mcp, oras-mcp
 ```
 
 **Key design decisions:**
 
 - **Dashboard-first.** Structured views (posture, requirement matrix, evidence, inbox) are the primary analyst surface. The chat agent augments with synthesis and deep questions.
-- **Dual listener.** Public **8080** serves the SPA and `/api/*`. **8081** serves unauthenticated `/internal/*` for trusted workloads — isolate with `NetworkPolicy`. See `docs/decisions/internal-endpoint-isolation.md`.
+- **Dual listener.** Public **8080** serves `/api/*` (no embedded SPA). **8081** serves unauthenticated `/internal/*` for trusted workloads — isolate with `NetworkPolicy`. See `docs/decisions/internal-endpoint-isolation.md`.
 - **Optional NATS.** Helm `nats.enabled` deploys a single-node NATS bus; `cmd/ingest` publishes evidence events and the gateway debounces posture recomputation and inbox writes. Without `NATS_URL`, core APIs still run.
 - **Summary-only ingestion.** Raw evidence never enters Studio. It stays in per-boundary OCI registries as attestation bundles. Studio stores `attestation_ref` + `source_registry` references.
 - **Semconv-aligned evidence.** The `evidence` table maps to OTel semantic conventions (`beacon.evidence`). REST, CSV, multipart, and OTel paths write the same columns.
@@ -151,7 +168,7 @@ gemara-mcp / clickhouse-mcp / oras-mcp
 | `PATCH` | `/api/draft-audit-logs/{id}` | Update draft reviewer edits |
 | `POST` | `/api/audit-logs/promote` | Promote draft to final |
 
-See [Architecture](docs/design/architecture.md) for the complete API reference.
+See [Architecture](docs/architecture.md) and [design architecture](docs/design/architecture.md) for system detail and REST surface notes.
 
 ## Build Targets
 
@@ -159,8 +176,12 @@ See [Architecture](docs/design/architecture.md) for the complete API reference.
 |:--|:--|
 | `make deploy` | Full build, kind load, helm install, rollout restart |
 | `make gateway-build` | Compile gateway to `bin/studio-gateway` |
-| `make gateway-image` | Build gateway container image (includes workbench SPA) |
-| `make workbench-build` | Build workbench SPA |
+| `make gateway-image` | Build gateway container image (Go binary only; SPA is separate) |
+| `make studio-build` | Production build of `studio/` (`npm run build`) |
+| `make studio-image` | Build `complytime-studio` image from `studio/Dockerfile` |
+| `make studio-mcp-build` | Compile `bin/studio-mcp` |
+| `make studio-mcp-image` | Build `studio-mcp` image (`Dockerfile.studio-mcp`) |
+| `make workbench-build` | Alias for `studio-build` |
 | `make assistant-image` | Build assistant container image |
 | `make sync-prompts` | Copy `agents/*/prompt.md` into Helm chart |
 | `make sync-skills` | Copy skills into assistant image |
@@ -169,7 +190,7 @@ See [Architecture](docs/design/architecture.md) for the complete API reference.
 | `make oauth-secret` | Create Google OAuth credentials secret |
 | `make cluster-up` | Create Kind cluster with kagent |
 | `make cluster-down` | Delete Kind cluster |
-| `make compose-up` | Docker Compose (no agents) |
+| `make compose-up` | Docker Compose (gateway + studio + MCP servers; no agents) |
 | `make test` | Run Go tests |
 | `make lint` | Run golangci-lint |
 | `make seed` | Seed demo data |
@@ -178,6 +199,8 @@ See [Architecture](docs/design/architecture.md) for the complete API reference.
 
 | Document | Purpose |
 |:--|:--|
+| [Three-component architecture](docs/architecture.md) | Platform vs Studio vs Agents, diagrams |
+| [studio-mcp API](docs/api/studio-mcp.md) | MCP `studio://` resources and tools |
 | [Architecture](docs/design/architecture.md) | System design, components, REST API, data flows |
 | [Agent Data Flows](docs/design/agent-data-flows.md) | Workbench-to-agent communication patterns |
 | [Evidence Semconv](docs/design/evidence-semconv-alignment.md) | OTel attribute -> ClickHouse column mapping |
@@ -187,6 +210,10 @@ See [Architecture](docs/design/architecture.md) for the complete API reference.
 
 | ADR | Status |
 |:--|:--|
+| [Three-component architecture](docs/decisions/three-component-architecture.md) | Accepted |
+| [Studio SPA extraction](docs/decisions/studio-spa-extraction.md) | Accepted |
+| [studio-mcp server](docs/decisions/studio-mcp-server.md) | Accepted |
+| [Agent MCP surface](docs/decisions/agent-mcp-surface.md) | Accepted |
 | [Cloud-Native Posture Correction](docs/decisions/cloud-native-posture-correction.md) | Proposed |
 | [Enforcement Log Traceability](docs/decisions/enforcement-log-traceability.md) | Exploratory |
 | [Internal Endpoint Isolation](docs/decisions/internal-endpoint-isolation.md) | Accepted |

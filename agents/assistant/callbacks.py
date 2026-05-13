@@ -1,22 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deterministic gates for the BYO gap analyst agent.
+"""Deterministic gates for the BYO assistant agent.
 
-before_agent_callback: input validation — policy reference + audit timeline detection
+before_agent_callback: input validation — policy reference + audit timeline hints
 after_agent_callback: reserved for future post-processing
-before_tool_callback: SQL sanitization — DDL/DML deny-list for run_select_query
+before_tool_callback: reserved (legacy SQL guard removed — data via studio-mcp resources)
 """
 
 import logging
-import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-
-FORBIDDEN_SQL = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b",
-    re.IGNORECASE,
-)
 
 POLICY_KEYWORDS = {"policy", "policy_id", "audit"}
 TIMELINE_KEYWORDS = {"q1", "q2", "q3", "q4", "2025", "2026", "start", "end", "period"}
@@ -50,26 +44,14 @@ async def before_agent(callback_context) -> Optional[Any]:
 
 
 async def after_agent(callback_context) -> Optional[Any]:
-    """Post-processing hook. AuditLogs are published via the publish_audit_log tool."""
+    """Post-processing hook. AuditLogs are persisted via studio-mcp `save_draft_audit_log`."""
     return None
 
 
 async def before_tool(
     tool: Any, args: dict[str, Any], tool_context: Any
 ) -> Optional[dict]:
-    """SQL injection guard for ClickHouse run_select_query."""
-    tool_name = getattr(tool, "name", str(tool))
-    if tool_name != "run_select_query":
-        return None
-
-    query = args.get("query", "")
-    if FORBIDDEN_SQL.search(query):
-        logger.warning("Blocked forbidden SQL: %s", query[:200])
-        return {
-            "error": "Query rejected: only SELECT statements are allowed. "
-            "DDL and DML operations are forbidden."
-        }
-
+    """Reserved for tool-level policy hooks."""
     return None
 
 

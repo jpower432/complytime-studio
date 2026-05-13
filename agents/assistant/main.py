@@ -32,8 +32,7 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 from starlette.applications import Starlette
 
 from callbacks import after_agent, before_agent, before_tool
-from event_converter import convert_event_with_yaml_metadata
-from tools import publish_audit_log
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "claude-opus-4-6")
 PORT = int(os.environ.get("PORT", "8080"))
 
 GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
-CLICKHOUSE_MCP_URL = os.environ.get("CLICKHOUSE_MCP_URL", "")
+STUDIO_MCP_URL = os.environ.get("STUDIO_MCP_URL", "")
 
 
 def load_skills() -> str:
@@ -168,17 +167,16 @@ def build_tools() -> list:
         )
         logger.info("gemara-mcp toolset registered (url=%s, reachable=%s)", GEMARA_MCP_URL, reachable)
 
-    if CLICKHOUSE_MCP_URL:
-        reachable = _probe_mcp_sync(CLICKHOUSE_MCP_URL, "clickhouse-mcp")
+    if STUDIO_MCP_URL:
+        reachable = _probe_mcp_sync(STUDIO_MCP_URL, "studio-mcp")
         tools.append(
             McpToolset(
-                connection_params=StreamableHTTPConnectionParams(
-                    url=CLICKHOUSE_MCP_URL
-                ),
-                tool_filter=["run_select_query", "list_databases", "list_tables"],
+                connection_params=StreamableHTTPConnectionParams(url=STUDIO_MCP_URL),
+                tool_filter=["ingest_evidence", "save_draft_audit_log"],
+                use_mcp_resources=True,
             )
         )
-        logger.info("clickhouse-mcp toolset registered (url=%s, reachable=%s)", CLICKHOUSE_MCP_URL, reachable)
+        logger.info("studio-mcp toolset registered (url=%s, reachable=%s)", STUDIO_MCP_URL, reachable)
 
     if not tools:
         logger.warning("No MCP URLs configured — agent running without tools")
@@ -206,7 +204,7 @@ root_agent = LlmAgent(
     name="studio_assistant",
     model=MODEL_NAME,
     instruction=_INSTRUCTION,
-    tools=[*build_tools(), publish_audit_log],
+    tools=[*build_tools()],
     description=(
         "ComplyTime Studio assistant — audit preparation, evidence synthesis, "
         "cross-framework coverage analysis, and compliance guidance"

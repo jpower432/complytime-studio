@@ -7,7 +7,7 @@ Architecture:
   Gateway:       Go service — serves workbench SPA, REST APIs, A2A proxy
   MCP servers:   gemara-mcp, oras-mcp — deployed as MCPServer CRDs via KMCP
 {{- if .Values.clickhouse.enabled }}
-  ClickHouse:    Evidence store + clickhouse-mcp MCP server
+  ClickHouse:    Evidence store + {{- if .Values.mcpServers.studio.enabled }}studio-mcp{{- else }}clickhouse-mcp{{- end }} MCP server
 {{- end }}
 
 Access:

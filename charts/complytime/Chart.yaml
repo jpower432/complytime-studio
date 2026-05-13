@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
-name: complytime-studio
+name: complytime
 description: >-
   ComplyTime Studio — compliance analytics and audit preparation platform.
   Deploys a BYO ADK agent with ClickHouse evidence store and MCP servers.

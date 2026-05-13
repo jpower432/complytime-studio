@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# studio-mcp — platform data access for agents (resources + evidence/draft tools).
+# Uses the application ClickHouse user so ingest + draft writes succeed.
+{{- if and .Values.clickhouse.enabled .Values.mcpServers.studio.enabled }}
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.mcpServers.studio.image.repository }}:{{ .Values.mcpServers.studio.image.tag }}
+    cmd: /studio-mcp
+    args:
+      - --clickhouse-addr=studio-clickhouse:9000
+      - --clickhouse-user={{ .Values.clickhouse.auth.user | quote }}
+    port: 3000
+    env:
+      - name: CLICKHOUSE_PASSWORD
+        {{- if .Values.clickhouse.auth.existingSecret }}
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.clickhouse.auth.existingSecret }}
+            key: password
+        {{- else }}
+        value: {{ .Values.clickhouse.auth.password | quote }}
+        {{- end }}
+{{- end }}
