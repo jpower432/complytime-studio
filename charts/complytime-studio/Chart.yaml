@@ -3,7 +3,7 @@ apiVersion: v2
 name: complytime-studio
 description: >-
   ComplyTime Studio — compliance analytics and audit preparation platform.
-  Deploys a BYO ADK agent with ClickHouse evidence store and MCP servers.
+  Deploys a BYO ADK agent with PostgreSQL data store and MCP servers.
 type: application
 version: 0.2.0
 appVersion: "0.2.0"

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	"github.com/labstack/echo/v4"
 )
 
 type fakeThreatStore struct {
@@ -93,12 +94,13 @@ func TestListThreatsHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fake := &fakeThreatStore{threats: tt.rows}
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/threats", listThreatsHandler(fake))
+			e := echo.New()
+			g := e.Group("/api")
+			g.GET("/threats", listThreatsHandler(fake))
 
 			req := httptest.NewRequest(http.MethodGet, tt.query, nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d, body: %q", rec.Code, tt.wantStatus, rec.Body.String())
@@ -117,12 +119,13 @@ func TestListThreatsHandler(t *testing.T) {
 func TestListThreatsHandler_DefaultLimit(t *testing.T) {
 	t.Parallel()
 	fake := &fakeThreatStore{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/threats", listThreatsHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/threats", listThreatsHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/threats", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -139,12 +142,13 @@ func TestListControlThreatsHandler(t *testing.T) {
 	}
 
 	fake := &fakeThreatStore{controlThreats: seeded}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/control-threats", listControlThreatsHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/control-threats", listControlThreatsHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/control-threats?catalog_id=cc-1&control_id=ctrl-1", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %q", rec.Code, rec.Body.String())
@@ -194,12 +198,13 @@ func TestListRisksHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fake := &fakeRiskStore{risks: tt.rows}
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/risks", listRisksHandler(fake))
+			e := echo.New()
+			g := e.Group("/api")
+			g.GET("/risks", listRisksHandler(fake))
 
 			req := httptest.NewRequest(http.MethodGet, tt.query, nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d, body: %q", rec.Code, tt.wantStatus, rec.Body.String())
@@ -218,12 +223,13 @@ func TestListRisksHandler(t *testing.T) {
 func TestListRisksHandler_DefaultLimit(t *testing.T) {
 	t.Parallel()
 	fake := &fakeRiskStore{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/risks", listRisksHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/risks", listRisksHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/risks", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -240,12 +246,13 @@ func TestListRiskThreatsHandler(t *testing.T) {
 	}
 
 	fake := &fakeRiskStore{riskThreats: seeded}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/risk-threats", listRiskThreatsHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/risk-threats", listRiskThreatsHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/risk-threats?catalog_id=rc-1&risk_id=r-1", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %q", rec.Code, rec.Body.String())
@@ -265,12 +272,13 @@ func TestListRiskThreatsHandler(t *testing.T) {
 func TestListThreatsHandler_CustomLimit(t *testing.T) {
 	t.Parallel()
 	fake := &fakeThreatStore{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/threats", listThreatsHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/threats", listThreatsHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/threats?limit=50", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -283,12 +291,13 @@ func TestListThreatsHandler_CustomLimit(t *testing.T) {
 func TestListThreatsHandler_LimitClamped(t *testing.T) {
 	t.Parallel()
 	fake := &fakeThreatStore{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/threats", listThreatsHandler(fake))
+	e := echo.New()
+	g := e.Group("/api")
+	g.GET("/threats", listThreatsHandler(fake))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/threats?limit=9999", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)

@@ -10,7 +10,7 @@ import (
 )
 
 // MemoryFetcher satisfies the gemara.Fetcher interface using in-memory content.
-// Useful for feeding already-loaded YAML (e.g. from ClickHouse or a request body)
+// Useful for feeding already-loaded YAML (e.g. from a database query or request body)
 // into the sdk.Load[T] pipeline without hitting the filesystem or network.
 type MemoryFetcher struct {
 	content map[string][]byte

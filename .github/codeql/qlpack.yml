@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# CodeQL model pack for complytime-studio.
+#
+# Extends the standard Go queries with project-specific Models-as-Data
+# (MaD) extensions. Currently declares BuildAllowedRegistryURL as a
+# request-forgery barrier so CodeQL's taint tracker recognises the
+# server-configured allowlist as SSRF sanitisation.
+#
+# Requires CodeQL CLI >= 2.25.2 (barrierModel support for Go, shipped
+# 2026-04-21). github/codeql-action@v3 includes a recent-enough CLI.
+
+name: complytime/complytime-studio-codeql-models
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/go-all: '*'
+dataExtensions:
+  - models/*.model.yml

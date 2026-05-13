@@ -5,7 +5,7 @@ description: Pre-audit readiness check — validates evidence stream against Pol
 
 # Posture Check
 
-Evaluate compliance readiness by joining a Policy's assessment plans against the evidence stream in ClickHouse. Returns a per-plan, per-target readiness table and emits a structured EvidenceAssessment artifact for Gateway persistence.
+Evaluate compliance readiness by joining a Policy's assessment plans against evidence in PostgreSQL. Returns a per-plan, per-target readiness table and emits a structured EvidenceAssessment artifact for Gateway persistence.
 
 ## Assessment Plan Extraction
 
@@ -27,11 +27,18 @@ If the Policy has no `adherence.assessment-plans`, report "Policy has no assessm
 
 ## Evidence Query
 
-For each assessment plan, query the `evidence` table via `run_select_query`. Filter by `policy_id` and `control_id` within the frequency-derived window. Order by `collected_at DESC` to get the most recent evidence first.
+For each assessment plan, query evidence via SQL:
 
-Columns needed: `evidence_id`, `engine_name`, `engine_version`, `eval_result`, `collected_at`, `confidence`, `control_id`, `target_id`, `target_name`, `attestation_ref`.
-
-IMPORTANT: Use literal string values in SQL queries, not template variables like `plan_id:String`. The `plan_id` and `requirement_id` columns are often NULL. Always filter by `control_id` first. Only add `AND plan_id = 'value'` or `AND requirement_id = 'value'` when you have a known non-empty value to match.
+```sql
+SELECT evidence_id, engine_name, engine_version, eval_result,
+       collected_at, confidence, control_id, target_id, target_name,
+       attestation_ref
+FROM evidence
+WHERE policy_id = '<policy_id>'
+  AND control_id = '<control_id>'
+  AND collected_at >= '<window_start>'
+ORDER BY collected_at DESC;
+```
 
 ## Provenance Validation
 
@@ -52,7 +59,7 @@ Compare evidence collection context against the plan's `evaluation-methods[]`:
 
 | Check | Evidence Signal | Plan Field | Mismatch Result |
 |:--|:--|:--|:--|
-| Mode | OTel collector path → Automated; REST upload → Manual | `mode` | **Wrong Method** — "Plan requires <mode>, evidence was <actual>" |
+| Mode | OTel collector path -> Automated; REST upload -> Manual | `mode` | **Wrong Method** — "Plan requires <mode>, evidence was <actual>" |
 | Type | Evidence metadata indicates Intent or Behavioral | `type` | **Wrong Method** — "Plan requires <type>, evidence is <actual>" |
 
 If the plan's `evaluation-methods[]` does not specify mode or type, skip the corresponding check.
@@ -67,7 +74,7 @@ Compare evidence content against the plan's `evidence-requirements` field. This 
 | Does not match described requirement | Defined | **Unfit Evidence** — explain mismatch |
 | Any | Not defined | Skip check |
 
-Example: plan requires "Firewall rule export showing ingress/egress policies" but evidence is a Kyverno pod security report → Unfit Evidence.
+Example: plan requires "Firewall rule export showing ingress/egress policies" but evidence is a Kyverno pod security report -> Unfit Evidence.
 
 ## Cadence
 
@@ -139,13 +146,10 @@ The Gateway auto-persists this to the `evidence_assessments` table. One entry pe
 
 For plans classified as No Evidence, omit from assessments (no evidence_id to reference).
 
-## ClickHouse Tables
+## PostgreSQL Tables
 
-Database: `default`. Query via `run_select_query`. Use `DESCRIBE TABLE <name>` for column types.
-
-```
-evidence: evidence_id, target_id, target_name, target_type, target_env, engine_name, engine_version, rule_id, rule_name, eval_result, eval_message, policy_id, control_id, control_catalog_id, control_category, control_applicability, requirement_id, plan_id, confidence, compliance_status, risk_level, requirements, remediation_action, remediation_status, remediation_desc, exception_id, exception_active, enrichment_status, collected_at, ingested_at, attestation_ref
-policies: policy_id, title, version, oci_reference, content, imported_at, imported_by
-noncompliant_evidence: (same schema as evidence, pre-filtered to failing/non-compliant rows)
-evidence_assessments: evidence_id, policy_id, plan_id, classification, reason, assessed_at, assessed_by
-```
+| Table | Key Columns | Use |
+|:--|:--|:--|
+| `policies` | policy_id, title, content (YAML) | Parse for assessment plans |
+| `evidence` | evidence_id, target_id, policy_id, control_id, eval_result, engine_name, collected_at, confidence | Evidence rows |
+| `programs` | id, name, policy_ids | Programs with attached policies |

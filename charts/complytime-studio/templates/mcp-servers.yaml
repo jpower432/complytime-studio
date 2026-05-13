@@ -2,7 +2,7 @@
 #
 # MCP servers deployed via kagent MCPServer CRDs.
 # oras-mcp uses stdio — OBO handled via gateway proxy (/api/registry/*).
-# Platform servers (gemara, clickhouse) use stdio with static credentials.
+# Platform servers (gemara, postgres, clickhouse) use stdio with static credentials.
 {{- if .Values.mcpServers.gemara.enabled }}
 ---
 apiVersion: kagent.dev/v1alpha1
@@ -40,6 +40,41 @@ spec:
     args:
       - serve
     port: 3000
+{{- end }}
+{{- if .Values.postgres.enabled }}
+---
+# NOTE: kagent MCPServer env is map[string]string — no valueFrom/secretKeyRef.
+# When postgres.auth.existingSecret is used, values.postgres.auth.password must
+# still be set to the same credential for the MCP server.  This mirrors the
+# ClickHouse MCP pattern.  Track kagent enhancement for native Secret env support.
+#
+# NOTE: kagent MCPServer CRD does not expose resources/limits or probes.
+# Resource constraints must be configured at the kagent controller level.
+#
+# PRODUCTION: Set PGEDGE_DB_SSLMODE to "require" or "verify-full" when
+# connecting to a PostgreSQL instance with TLS enabled.
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: studio-postgres-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "studio.labels" . | nindent 4 }}
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: {{ .Values.postgres.mcp.image.repository }}:{{ .Values.postgres.mcp.image.tag }}
+    cmd: /app/init-server.sh
+    port: 3000
+    env:
+      PGEDGE_DB_HOST: "studio-postgres.{{ .Release.Namespace }}"
+      PGEDGE_DB_PORT: "5432"
+      PGEDGE_DB_NAME: {{ .Values.postgres.auth.database | quote }}
+      PGEDGE_DB_USER: {{ .Values.postgres.auth.user | quote }}
+      PGEDGE_DB_PASSWORD: {{ .Values.postgres.auth.password | quote }}
+      PGEDGE_DB_SSLMODE: "disable"
+      PGEDGE_DB_ALLOW_WRITES: "false"
 {{- end }}
 {{- if and .Values.clickhouse.enabled .Values.clickhouse.mcp }}
 ---

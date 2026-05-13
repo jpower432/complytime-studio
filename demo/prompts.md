@@ -5,7 +5,7 @@ Live demo using real AMPEL branch protection policy from [complytime-policies](h
 ## Setup
 
 ```bash
-GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=dev-seed-token ./demo/seed.sh
+GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=studio-dev-token ./demo/seed.sh
 ```
 
 ## Evidence Summary

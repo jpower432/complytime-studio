@@ -42,7 +42,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "claude-opus-4-6")
 PORT = int(os.environ.get("PORT", "8080"))
 
 GEMARA_MCP_URL = os.environ.get("GEMARA_MCP_URL", "")
-CLICKHOUSE_MCP_URL = os.environ.get("CLICKHOUSE_MCP_URL", "")
+POSTGRES_MCP_URL = os.environ.get("POSTGRES_MCP_URL", "")
 
 
 def load_skills() -> str:
@@ -128,7 +128,7 @@ async def _fetch_gemara_lexicon(url: str) -> str:
     return ""
 
 
-def _probe_mcp_sync(url: str, label: str, retries: int = 5, delay: float = 2.0) -> bool:
+def _probe_mcp_sync(url: str, label: str, retries: int = 15, delay: float = 4.0) -> bool:
     """Block until an MCP server responds. Runs at startup before the event loop."""
     import time
     import httpx
@@ -151,7 +151,7 @@ def _probe_mcp_sync(url: str, label: str, retries: int = 5, delay: float = 2.0) 
         except Exception as e:
             logger.warning("%s unreachable (attempt %d/%d): %s", label, attempt, retries, e)
         time.sleep(delay)
-    logger.error("%s not reachable after %d attempts — toolset registered but tools may be empty", label, retries)
+    logger.error("%s not reachable after %d attempts — skipping toolset registration", label, retries)
     return False
 
 
@@ -159,29 +159,31 @@ def build_tools() -> list:
     tools = []
 
     if GEMARA_MCP_URL:
-        reachable = _probe_mcp_sync(GEMARA_MCP_URL, "gemara-mcp")
-        tools.append(
-            McpToolset(
-                connection_params=StreamableHTTPConnectionParams(url=GEMARA_MCP_URL),
-                tool_filter=["validate_gemara_artifact", "migrate_gemara_artifact"],
+        if _probe_mcp_sync(GEMARA_MCP_URL, "gemara-mcp"):
+            tools.append(
+                McpToolset(
+                    connection_params=StreamableHTTPConnectionParams(url=GEMARA_MCP_URL),
+                    tool_filter=["validate_gemara_artifact", "migrate_gemara_artifact"],
+                )
             )
-        )
-        logger.info("gemara-mcp toolset registered (url=%s, reachable=%s)", GEMARA_MCP_URL, reachable)
+            logger.info("gemara-mcp toolset registered (url=%s)", GEMARA_MCP_URL)
+        else:
+            logger.error("gemara-mcp unreachable — tools will not be available")
 
-    if CLICKHOUSE_MCP_URL:
-        reachable = _probe_mcp_sync(CLICKHOUSE_MCP_URL, "clickhouse-mcp")
-        tools.append(
-            McpToolset(
-                connection_params=StreamableHTTPConnectionParams(
-                    url=CLICKHOUSE_MCP_URL
-                ),
-                tool_filter=["run_select_query", "list_databases", "list_tables"],
+    if POSTGRES_MCP_URL:
+        if _probe_mcp_sync(POSTGRES_MCP_URL, "postgres-mcp"):
+            tools.append(
+                McpToolset(
+                    connection_params=StreamableHTTPConnectionParams(url=POSTGRES_MCP_URL),
+                    tool_filter=["query_database", "get_schema_info"],
+                )
             )
-        )
-        logger.info("clickhouse-mcp toolset registered (url=%s, reachable=%s)", CLICKHOUSE_MCP_URL, reachable)
+            logger.info("postgres-mcp toolset registered (url=%s)", POSTGRES_MCP_URL)
+        else:
+            logger.error("postgres-mcp unreachable — query_database/get_schema_info will not be available")
 
     if not tools:
-        logger.warning("No MCP URLs configured — agent running without tools")
+        logger.warning("No MCP servers reachable — agent running without tools")
 
     return tools
 

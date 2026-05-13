@@ -10,6 +10,9 @@ import "net/http"
 const ContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
 // SecurityHeaders returns middleware that sets standard browser security headers.
+//
+// Deprecated: the gateway uses Echo's Secure middleware configured with
+// ContentSecurityPolicy. Retained for tests and internal tooling.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)

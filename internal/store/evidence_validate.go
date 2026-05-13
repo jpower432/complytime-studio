@@ -8,7 +8,7 @@ import (
 	"github.com/complytime/complytime-studio/internal/blob"
 )
 
-// ClickHouse Enum8 values for evidence columns (internal/clickhouse/client.go).
+// Allowed values for evidence columns (aligned with Gemara enum definitions).
 var (
 	validEvalResults = map[string]struct{}{
 		"Not Run": {}, "Passed": {}, "Failed": {}, "Needs Review": {},

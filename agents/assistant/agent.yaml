@@ -28,7 +28,7 @@ prompt: prompt.md
 # ---------------------------------------------------------------------------
 skills:
   # Internal skills (this repo)
-  - path: skills/studio-audit        # Classification criteria, coverage mapping, ClickHouse DDL reference
+  - path: skills/studio-audit        # Classification criteria, coverage mapping, data access reference
   - path: skills/posture-check        # Pre-audit readiness — cadence, provenance, method, evidence fitness
   # External skills
   - repo: https://github.com/rhaml-23/prompt.git
@@ -65,11 +65,10 @@ mcp:
     tools:
       - validate_gemara_artifact   # Validate artifact YAML against CUE schema
       - migrate_gemara_artifact    # Migrate v0 artifacts to v1 schema
-  - server: studio-clickhouse-mcp
+  - server: studio-postgres-mcp
     tools:
-      - run_select_query           # Execute read-only SQL against ClickHouse
-      - list_databases             # List available databases
-      - list_tables                # List tables in a database
+      - query_database              # Read-only SQL against PostgreSQL
+      - get_schema_info             # Introspect table schemas
 
 # ---------------------------------------------------------------------------
 # A2A — Agent-to-Agent protocol skills advertised on the agent card.

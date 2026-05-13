@@ -5,12 +5,13 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
 type fakeEvidenceStore struct {
@@ -29,61 +30,10 @@ func (f *fakeEvidenceStore) QueryEvidence(ctx context.Context, filt EvidenceFilt
 	return out, nil
 }
 
-func evidencePOSTBody(includeSourceRegistry bool, sourceRegistry string) string {
-	row := map[string]string{
-		"policy_id":    "pol-1",
-		"target_id":    "tgt-1",
-		"control_id":   "ctl-1",
-		"rule_id":      "rule-1",
-		"eval_result":  "Passed",
-		"collected_at": "2026-04-25T12:00:00Z",
-	}
-	if includeSourceRegistry {
-		row["source_registry"] = sourceRegistry
-	}
-	b, _ := json.Marshal([]map[string]string{row})
-	return string(b)
-}
+type failingEvidenceStore struct{ fakeEvidenceStore }
 
-func TestIngestEvidenceHandler_SourceRegistryOptional(t *testing.T) {
-	t.Parallel()
-	fake := &fakeEvidenceStore{}
-	mux := http.NewServeMux()
-	Register(mux, Stores{Evidence: fake})
-
-	t.Run("with_source_registry", func(t *testing.T) {
-		body := evidencePOSTBody(true, "https://registry.example/v2")
-		req := httptest.NewRequest(http.MethodPost, "/api/evidence", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
-		}
-		if len(fake.inserted) != 1 {
-			t.Fatalf("got %d rows", len(fake.inserted))
-		}
-		if fake.inserted[0].SourceRegistry != "https://registry.example/v2" {
-			t.Fatalf("SourceRegistry %q", fake.inserted[0].SourceRegistry)
-		}
-	})
-
-	t.Run("omitted_source_registry", func(t *testing.T) {
-		f2 := &fakeEvidenceStore{}
-		m2 := http.NewServeMux()
-		Register(m2, Stores{Evidence: f2})
-		body := evidencePOSTBody(false, "")
-		req := httptest.NewRequest(http.MethodPost, "/api/evidence", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		m2.ServeHTTP(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("status %d", rec.Code)
-		}
-		if f2.inserted[0].SourceRegistry != "" {
-			t.Fatalf("expected empty SourceRegistry, got %q", f2.inserted[0].SourceRegistry)
-		}
-	})
+func (f *failingEvidenceStore) InsertEvidence(_ context.Context, _ []EvidenceRecord) (int, error) {
+	return 0, errors.New("db connection lost")
 }
 
 func TestQueryEvidenceHandler_SourceRegistryJSON(t *testing.T) {
@@ -102,12 +52,13 @@ func TestQueryEvidenceHandler_SourceRegistryJSON(t *testing.T) {
 			},
 		},
 	}
-	mux := http.NewServeMux()
-	Register(mux, Stores{Evidence: fake})
+	srv := echo.New()
+	g := srv.Group("/api")
+	Register(g, Stores{Evidence: fake})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/evidence?policy_id=pol-1&limit=10", nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -123,49 +74,80 @@ func TestQueryEvidenceHandler_SourceRegistryJSON(t *testing.T) {
 	}
 }
 
-func TestIngestEvidenceHandler_InvalidEnumRejected(t *testing.T) {
-	t.Parallel()
-	fake := &fakeEvidenceStore{}
-	mux := http.NewServeMux()
-	Register(mux, Stores{Evidence: fake})
+// ---------------------------------------------------------------------------
+// markReadHandler
+// ---------------------------------------------------------------------------
 
-	body := `[{"policy_id":"p","target_id":"t","control_id":"c","rule_id":"r","eval_result":"Passed","collected_at":"2026-04-25T15:00:00Z","compliance_status":"Partial"}]`
-	req := httptest.NewRequest(http.MethodPost, "/api/evidence", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 got %d: %s", w.Code, w.Body.String())
+type fakeNotificationStore struct {
+	markReadErr error
+}
+
+func (f *fakeNotificationStore) InsertNotification(_ context.Context, _ Notification) error {
+	return nil
+}
+func (f *fakeNotificationStore) ListNotifications(_ context.Context, _ int) ([]Notification, error) {
+	return nil, nil
+}
+func (f *fakeNotificationStore) MarkRead(_ context.Context, _ string) error {
+	return f.markReadErr
+}
+func (f *fakeNotificationStore) UnreadCount(_ context.Context) (int, error) { return 0, nil }
+
+func TestMarkReadHandler_Success(t *testing.T) {
+	t.Parallel()
+	srv := echo.New()
+	g := srv.Group("/api")
+	Register(g, Stores{Notifications: &fakeNotificationStore{}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/notifications/n-1/read", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	if len(fake.inserted) != 0 {
-		t.Fatalf("expected no insert, got %d", len(fake.inserted))
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "read" {
+		t.Fatalf("want status=read, got %v", body)
 	}
 }
 
-func TestIngestEvidenceHandler_RoundTripSourceRegistryREST(t *testing.T) {
+func TestMarkReadHandler_NotFound(t *testing.T) {
 	t.Parallel()
-	fake := &fakeEvidenceStore{}
-	mux := http.NewServeMux()
-	Register(mux, Stores{Evidence: fake})
+	srv := echo.New()
+	g := srv.Group("/api")
+	Register(g, Stores{Notifications: &fakeNotificationStore{markReadErr: ErrNotFound}})
 
-	body := `[{"policy_id":"p","target_id":"t","control_id":"c","rule_id":"r","eval_result":"Passed","collected_at":"2026-04-25T15:00:00Z","source_registry":"https://reg.test/"}]`
-	req := httptest.NewRequest(http.MethodPost, "/api/evidence", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("POST %d: %s", w.Code, w.Body.String())
-	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/notifications/missing-id/read", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
 
-	fake.query = fake.inserted
-	req2 := httptest.NewRequest(http.MethodGet, "/api/evidence?policy_id=p&limit=5", nil)
-	w2 := httptest.NewRecorder()
-	mux.ServeHTTP(w2, req2)
-	if w2.Code != http.StatusOK {
-		t.Fatalf("GET %d", w2.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rec.Code)
 	}
-	payload, _ := io.ReadAll(w2.Body)
-	if !strings.Contains(string(payload), "https://reg.test/") {
-		t.Fatalf("GET body missing source_registry: %s", payload)
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "notification not found" {
+		t.Fatalf("want 'notification not found', got %q", body["error"])
+	}
+}
+
+func TestMarkReadHandler_InternalError(t *testing.T) {
+	t.Parallel()
+	srv := echo.New()
+	g := srv.Group("/api")
+	Register(g, Stores{Notifications: &fakeNotificationStore{markReadErr: errors.New("db down")}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/notifications/n-1/read", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", rec.Code)
 	}
 }

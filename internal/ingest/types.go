@@ -4,55 +4,56 @@ package ingest
 
 import "time"
 
-// EvidenceRow is a flattened row for the unified `evidence` ClickHouse table.
+// EvidenceRow is a flattened row for the unified `evidence` PostgreSQL table.
 // Co-locates evaluation and remediation data; remediation fields are nil
 // for evaluation-only records.
 type EvidenceRow struct {
-	EvidenceID string `ch:"evidence_id"`
+	EvidenceID string
 
-	TargetID   string  `ch:"target_id"`
-	TargetName *string `ch:"target_name"`
-	TargetType *string `ch:"target_type"`
-	TargetEnv  *string `ch:"target_env"`
+	TargetID   string
+	TargetName *string
+	TargetType *string
+	TargetEnv  *string
 
-	EngineName    *string `ch:"engine_name"`
-	EngineVersion *string `ch:"engine_version"`
-	RuleID        string  `ch:"rule_id"`
-	RuleName      *string `ch:"rule_name"`
-	RuleURI       *string `ch:"rule_uri"`
+	EngineName    *string
+	EngineVersion *string
+	RuleID        string
+	RuleName      *string
+	RuleURI       *string
 
-	EvalResult  string  `ch:"eval_result"`
-	EvalMessage *string `ch:"eval_message"`
+	EvalResult  string
+	EvalMessage *string
 
-	PolicyID             *string  `ch:"policy_id"`
-	ControlID            *string  `ch:"control_id"`
-	ControlCatalogID     *string  `ch:"control_catalog_id"`
-	ControlCategory      *string  `ch:"control_category"`
-	ControlApplicability []string `ch:"control_applicability"`
-	RequirementID        *string  `ch:"requirement_id"`
-	PlanID               *string  `ch:"plan_id"`
-	Confidence           *string  `ch:"confidence"`
-	StepsExecuted        *uint16  `ch:"steps_executed"`
-	ComplianceStatus     string   `ch:"compliance_status"`
-	RiskLevel            *string  `ch:"risk_level"`
-	Frameworks           []string `ch:"frameworks"`
-	Requirements         []string `ch:"requirements"`
+	PolicyID             *string
+	ControlID            *string
+	ControlCatalogID     *string
+	ControlCategory      *string
+	ControlApplicability []string
+	RequirementID        *string
+	PlanID               *string
+	Confidence           *string
+	StepsExecuted        *uint16
+	ComplianceStatus     string
+	RiskLevel            *string
+	Frameworks           []string
+	Requirements         []string
 
-	RemediationAction *string `ch:"remediation_action"`
-	RemediationStatus *string `ch:"remediation_status"`
-	RemediationDesc   *string `ch:"remediation_desc"`
-	ExceptionID       *string `ch:"exception_id"`
-	ExceptionActive   *bool   `ch:"exception_active"`
+	RemediationAction *string
+	RemediationStatus *string
+	RemediationDesc   *string
+	ExceptionID       *string
+	ExceptionActive   *bool
 
-	EnrichmentStatus string `ch:"enrichment_status"`
+	EnrichmentStatus string
 
-	AttestationRef *string `ch:"attestation_ref"`
-	SourceRegistry *string `ch:"source_registry"`
-	BlobRef        *string `ch:"blob_ref"`
+	AttestationRef *string
+	SourceRegistry *string
+	BlobRef        *string
 
-	Certified bool `ch:"certified"`
+	Certified bool
+	Owner     *string
 
-	CollectedAt time.Time `ch:"collected_at"`
+	CollectedAt time.Time
 }
 
 func strPtr(s string) *string {

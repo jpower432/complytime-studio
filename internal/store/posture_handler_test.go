@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/complytime/complytime-studio/internal/auth"
+	"github.com/labstack/echo/v4"
 )
 
 type fakePostureStore struct {
@@ -32,15 +33,6 @@ func (f *fakePostureStore) ListPosture(_ context.Context, start, end time.Time) 
 
 func (f *fakePostureStore) QueryPolicyPosture(_ context.Context, _ string) (uint64, uint64, uint64, error) {
 	return 0, 0, 0, nil
-}
-
-func testAuthSecretKey(t *testing.T) []byte {
-	t.Helper()
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i + 1)
-	}
-	return key
 }
 
 func TestListPostureHandler(t *testing.T) {
@@ -89,11 +81,12 @@ func TestListPostureHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/posture", listPostureHandler(tt.store))
+			e := echo.New()
+			g := e.Group("/api")
+			g.GET("/posture", listPostureHandler(tt.store))
 			req := httptest.NewRequest(http.MethodGet, "/api/posture", nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d, body: %q", rec.Code, tt.wantStatus, rec.Body.String())
@@ -127,16 +120,14 @@ func TestListPostureHandler_AuthMiddleware(t *testing.T) {
 	seeded := []PostureRow{{PolicyID: "p1", Title: "Policy One", TotalRows: 3}}
 	mock := &fakePostureStore{rows: seeded}
 
-	h, err := auth.NewHandler(auth.Config{}, testAuthSecretKey(t), auth.NewMemorySessionStore())
-	if err != nil {
-		t.Fatal(err)
-	}
 	const apiToken = "test-posture-api-token"
-	h.SetAPIToken(apiToken)
+	h := auth.NewHandler(apiToken)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/posture", listPostureHandler(mock))
-	stack := h.Middleware(mux)
+	mux := echo.New()
+	mux.Use(h.Middleware())
+	g := mux.Group("/api")
+	g.GET("/posture", listPostureHandler(mock))
+	stack := mux
 
 	tests := []struct {
 		name       string
@@ -191,15 +182,13 @@ func TestListPostureHandler_AuthMiddleware_wrongBearer(t *testing.T) {
 	t.Parallel()
 
 	mock := &fakePostureStore{rows: []PostureRow{{PolicyID: "x"}}}
-	h, err := auth.NewHandler(auth.Config{}, testAuthSecretKey(t), auth.NewMemorySessionStore())
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.SetAPIToken("correct-token")
+	h := auth.NewHandler("correct-token")
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/posture", listPostureHandler(mock))
-	stack := h.Middleware(mux)
+	mux := echo.New()
+	mux.Use(h.Middleware())
+	g := mux.Group("/api")
+	g.GET("/posture", listPostureHandler(mock))
+	stack := mux
 
 	req := httptest.NewRequest(http.MethodGet, "/api/posture", nil)
 	req.Header.Set("Authorization", "Bearer wrong-token")
@@ -265,12 +254,13 @@ func TestListPostureHandler_TimeFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := &fakePostureStore{rows: seeded}
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/posture", listPostureHandler(mock))
+			e := echo.New()
+			g := e.Group("/api")
+			g.GET("/posture", listPostureHandler(mock))
 
 			req := httptest.NewRequest(http.MethodGet, tt.query, nil)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d, body: %q", rec.Code, tt.wantStatus, rec.Body.String())

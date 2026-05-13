@@ -8,7 +8,7 @@
 `charts/complytime-studio/values.yaml` ships two dev-friendly defaults that become production liabilities:
 
 1. `auth.admins: []` — empty list means **all authenticated users are admins**.
-2. `auth.apiToken: "dev-seed-token"` — predictable token grants full API write as `api-token@internal`.
+2. `auth.apiToken: "studio-dev-token"` — predictable token grants full API write as `api-token@internal`.
 
 Both are fine for local development. Both are silent security holes in production if left unchanged.
 
@@ -21,7 +21,7 @@ Both are fine for local development. Both are silent security holes in productio
 | Condition | Action |
 |:--|:--|
 | `ADMIN_EMAILS` is empty | Log `slog.Warn("ADMIN_EMAILS is empty — all authenticated users have admin access")` on startup |
-| `STUDIO_API_TOKEN` equals `"dev-seed-token"` | Log `slog.Warn("STUDIO_API_TOKEN is the default dev value — rotate before production use")` on startup |
+| `STUDIO_API_TOKEN` equals `"studio-dev-token"` | Log `slog.Warn("STUDIO_API_TOKEN is the default dev value — rotate before production use")` on startup |
 
 ### Helm `NOTES.txt`
 

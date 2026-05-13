@@ -11,14 +11,28 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+const (
+	SubjectEvidence = "studio.evidence"
+	SubjectDraft    = "studio.draft-audit-log"
+)
+
 // SubjectPrefix is the NATS subject namespace for studio events.
-const SubjectPrefix = "studio.evidence"
+// Kept for backward compatibility with evidence subscribers.
+const SubjectPrefix = SubjectEvidence
 
 // EvidenceEvent is published after evidence is ingested for a policy.
 type EvidenceEvent struct {
 	PolicyID    string    `json:"policy_id"`
 	RecordCount int       `json:"record_count"`
 	Timestamp   time.Time `json:"timestamp"`
+}
+
+// DraftAuditLogEvent is published after a draft audit log is created.
+type DraftAuditLogEvent struct {
+	DraftID  string    `json:"draft_id"`
+	PolicyID string    `json:"policy_id"`
+	Summary  string    `json:"summary"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // Bus wraps a NATS connection for studio event publishing and subscribing.
@@ -70,6 +84,44 @@ func (b *Bus) PublishEvidence(policyID string, recordCount int) {
 	if err := b.conn.Publish(subject, data); err != nil {
 		slog.Warn("nats publish failed", "subject", subject, "error", err)
 	}
+}
+
+// PublishDraftAuditLog publishes a draft audit log event. Errors are logged,
+// never returned — callers must not block on NATS availability.
+func (b *Bus) PublishDraftAuditLog(draftID, policyID, summary string) {
+	if b == nil || b.conn == nil {
+		return
+	}
+	evt := DraftAuditLogEvent{
+		DraftID:   draftID,
+		PolicyID:  policyID,
+		Summary:   summary,
+		Timestamp: time.Now().UTC(),
+	}
+	data, err := json.Marshal(evt)
+	if err != nil {
+		slog.Warn("nats marshal failed", "error", err)
+		return
+	}
+	subject := SubjectDraft + "." + policyID
+	if err := b.conn.Publish(subject, data); err != nil {
+		slog.Warn("nats publish failed", "subject", subject, "error", err)
+	}
+}
+
+// SubscribeDraftAuditLog subscribes to draft audit log events (studio.draft-audit-log.>).
+func (b *Bus) SubscribeDraftAuditLog(handler func(DraftAuditLogEvent)) (*nats.Subscription, error) {
+	if b == nil || b.conn == nil {
+		return nil, nil
+	}
+	return b.conn.Subscribe(SubjectDraft+".>", func(msg *nats.Msg) {
+		var evt DraftAuditLogEvent
+		if err := json.Unmarshal(msg.Data, &evt); err != nil {
+			slog.Warn("nats unmarshal failed", "error", err)
+			return
+		}
+		handler(evt)
+	})
 }
 
 // SubscribeEvidence subscribes to all evidence events (studio.evidence.>).

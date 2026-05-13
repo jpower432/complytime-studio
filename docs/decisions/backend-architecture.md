@@ -1,28 +1,33 @@
 # Backend Architecture: Modulith Gateway
 
 **Status:** Accepted
-**Date:** 2026-04-18 (updated 2026-04-18)
+**Date:** 2026-04-18 (updated 2026-05-06)
 
 ## Context
 
-The gateway is a Go monolith serving six concerns: SPA, OAuth, A2A proxy, MCP proxy, store CRUD, and config. We evaluated whether decomposition improves development velocity, scalability, or fault isolation.
+The gateway is a Go monolith serving six concerns: SPA, OAuth2 Proxy header trust, A2A proxy, MCP proxy, store CRUD, and config. We evaluated whether decomposition improves development velocity, scalability, or fault isolation.
 
 ## Decision
 
 **Single modulith gateway with the A2A proxy embedded.**
 
 - The A2A reverse proxy runs inside the gateway process. It is architecturally isolated (`internal/agents/` imports only `internal/consts` and `internal/httputil`) but does not warrant a separate deployment at current scale.
-- Domain-specific store interfaces (`EvidenceStore`, `PolicyStore`, `AuditLogStore`, `MappingStore`) enable future extraction without code changes.
+- Domain-specific store interfaces (`EvidenceStore`, `PolicyStore`, `AuditLogStore`, `MappingStore`) backed by PostgreSQL enable future extraction without code changes.
 
 ## Architecture
 
 ```mermaid
 graph LR
-    Browser --> Gateway
-    Gateway -- "/api/policies, /api/evidence" --> CH[("ClickHouse")]
+    Browser --> OAuth2Proxy["OAuth2 Proxy (sidecar)"]
+    OAuth2Proxy --> Gateway
+    Gateway -- "/api/policies, /api/evidence" --> PG[("PostgreSQL")]
     Gateway -- "/api/a2a/{agent}" --> Agents["Agent Pods"]
     Gateway -- "/api/validate" --> MCP["MCP Servers"]
+    Gateway -- "events" --> NATS["NATS"]
+    PG -. "optional FDW" .-> CH[("ClickHouse")]
 ```
+
+PostgreSQL is the primary application database. ClickHouse is optional for scale-out analytics via foreign data wrapper (see ADR-0001).
 
 ## Future: A2A Proxy Extraction
 
@@ -46,5 +51,5 @@ The A2A proxy is the natural candidate for extraction when load or team boundari
 
 | Option | Reason |
 |:--|:--|
-| Extract evidence service | Shared ClickHouse schema negates isolation benefit |
+| Extract evidence service | Shared PostgreSQL schema negates isolation benefit |
 | Full decomposition (gateway, A2A, evidence, store) | Overkill at current scale. Auth propagation and debugging complexity not justified. |
