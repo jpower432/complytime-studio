@@ -19,20 +19,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: workbench/package.json
-          cache: npm
-          cache-dependency-path: workbench/package-lock.json
       - name: Vet
         run: go vet -tags dev ./...
       - name: Test
         run: go test -tags dev -v -race -cover ./...
-      - name: Build workbench
-        run: npm ci && npm run build
-        working-directory: workbench
       - name: Build gateway
         run: go build -o /dev/null ./cmd/gateway/
+      - name: Build studio-mcp
+        run: go build -o /dev/null ./cmd/studio-mcp/
 
   lint:
     name: Lint
@@ -46,35 +40,3 @@ jobs:
         with:
           version: v2.11.4
           args: --build-tags dev
-
-  workbench:
-    name: Workbench
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workbench
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: workbench/package.json
-          cache: npm
-          cache-dependency-path: workbench/package-lock.json
-      - run: npm ci
-      - name: Type check
-        run: npx tsc --noEmit
-      - name: Build
-        run: npm run build
-
-  helm:
-    name: Helm Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
-      - name: Lint
-        run: helm lint charts/complytime-studio/
-      - name: Template (default)
-        run: helm template studio charts/complytime-studio/
-      - name: Template (ClickHouse enabled)
-        run: helm template studio charts/complytime-studio/ --set clickhouse.enabled=true

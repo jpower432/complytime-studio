@@ -3,6 +3,8 @@
 **Status:** Superseded by simple-authz (admin/reviewer RBAC)
 **Date:** 2026-04-21
 
+> **Note (2026-05):** This ADR references ClickHouse and `charts/complytime-studio/` which no longer match current architecture. PostgreSQL is the primary store; the Helm chart is in `studio-deploy/charts/complytime/`. Retained for historical context.
+
 ## Context
 
 Studio authenticates users via Google OAuth (OIDC). The gateway extracts name, email, and avatar from the ID token and stores them in an encrypted session cookie. There is no concept of roles, permissions, or scoped access. Every authenticated user has full access to all policies, evidence, and agent capabilities.

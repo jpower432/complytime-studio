@@ -1,7 +1,7 @@
 # Backend Architecture: Modulith Gateway
 
-**Status:** Accepted
-**Date:** 2026-04-18 (updated 2026-05-06)
+**Status:** Superseded by [Data Platform + Workbench Split](data-platform-workbench-split.md)
+**Date:** 2026-04-18 (updated 2026-05-06, superseded 2026-05-13)
 
 ## Context
 
@@ -29,23 +29,9 @@ graph LR
 
 PostgreSQL is the primary application database. ClickHouse is optional for scale-out analytics via foreign data wrapper (see ADR-0001).
 
-## Future: A2A Proxy Extraction
+## Superseded
 
-The A2A proxy is the natural candidate for extraction when load or team boundaries justify it.
-
-**Trigger:** Measured contention between long-lived SSE streams (chat) and short-lived CRUD requests sharing the same Go process.
-
-**Seam:** `internal/agents/` has zero database coupling and zero session state. Extraction is a packaging change:
-
-1. Build `internal/agents` as a standalone binary
-2. Deploy as a separate Kubernetes Deployment
-3. Set `A2A_PROXY_URL` on the gateway to forward `/api/a2a/` traffic
-4. The gateway's `A2A_PROXY_URL` forwarding path already exists in `cmd/gateway/main.go`
-
-**Not done now because:**
-- Single-digit concurrent users, no measured contention
-- One deployment is simpler to operate, debug, and port-forward
-- The architectural seam is preserved in code — extraction doesn't require a rewrite
+The A2A proxy, agent directory, chat state, and MCP proxy concerns were extracted into the **Studio Workbench** (Python, Starlette) in the [complytime-agents](https://github.com/complytime/complytime-agents) repo. The gateway (`cmd/gateway`) is now a pure data platform — `internal/agents/`, `internal/proxy/`, `internal/publish/`, and `internal/registry/` were deleted. See [Data Platform + Workbench Split](data-platform-workbench-split.md).
 
 ## Rejected Alternatives
 

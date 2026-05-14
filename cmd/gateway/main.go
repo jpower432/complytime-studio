@@ -17,7 +17,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"github.com/complytime/complytime-studio/internal/agents"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
 	"github.com/complytime/complytime-studio/internal/certifier"
@@ -26,13 +25,7 @@ import (
 	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	pgstore "github.com/complytime/complytime-studio/internal/postgres"
-	"github.com/complytime/complytime-studio/internal/proxy"
-	"github.com/complytime/complytime-studio/internal/publish"
-	"github.com/complytime/complytime-studio/internal/registry"
 	"github.com/complytime/complytime-studio/internal/store"
-	"github.com/complytime/complytime-studio/internal/web"
-	"github.com/complytime/complytime-studio/workbench"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
@@ -81,28 +74,46 @@ func main() {
 	}
 
 	registryAddr := os.Getenv("REGISTRY_INSECURE")
-	if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, registryAddr); err != nil {
-		slog.Warn("catalog seed from registry failed", "error", err)
-	}
+	registryConfig := store.LoadRegistryConfig()
 
-	if err := store.PopulateMappingEntries(ctx, st); err != nil {
-		slog.Warn("mapping entries backfill failed", "error", err)
-	}
-	if err := store.PopulateControls(ctx, st, st); err != nil {
-		slog.Warn("controls backfill failed", "error", err)
-	}
-	if err := store.PopulateThreats(ctx, st, st); err != nil {
-		slog.Warn("threats backfill failed", "error", err)
-	}
-	if err := store.PopulateRisks(ctx, st, st); err != nil {
-		slog.Warn("risks backfill failed", "error", err)
-	}
-	if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
-		slog.Warn("effective controls backfill failed", "error", err)
-	}
-	if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
-		slog.Warn("policy criteria backfill failed", "error", err)
-	}
+	go func() {
+		const maxAttempts = 10
+		const delay = 15 * time.Second
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, st, registryAddr); err != nil {
+				slog.Warn("catalog seed from registry failed, will retry", "attempt", attempt, "error", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(delay):
+					continue
+				}
+			}
+			if err := store.PopulateMappingEntries(ctx, st); err != nil {
+				slog.Warn("mapping entries backfill failed", "error", err)
+			}
+			if err := store.PopulateControls(ctx, st, st); err != nil {
+				slog.Warn("controls backfill failed", "error", err)
+			}
+			if err := store.PopulateThreats(ctx, st, st); err != nil {
+				slog.Warn("threats backfill failed", "error", err)
+			}
+			if err := store.PopulateRisks(ctx, st, st); err != nil {
+				slog.Warn("risks backfill failed", "error", err)
+			}
+			if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+				slog.Warn("effective controls backfill failed", "error", err)
+			}
+			if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
+				slog.Warn("policy criteria backfill failed", "error", err)
+			}
+			slog.Info("registry seed populate complete", "attempt", attempt)
+			return
+		}
+		slog.Warn("registry seed exhausted retries", "attempts", 10)
+	}()
+
+	programStores := pgstore.NewProgramPG(pgClient.Pool())
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		slog.Error("NATS_URL is required — event bus drives the certification pipeline")
@@ -129,6 +140,7 @@ func main() {
 		DraftAuditLogs:      st,
 		Requirements:        st,
 		Controls:            st,
+		Guidance:            st,
 		Threats:             st,
 		Risks:               st,
 		Catalogs:            st,
@@ -138,6 +150,11 @@ func main() {
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,
+		Programs:            programStores,
+		Jobs:                programStores,
+		Inventory:           st,
+		Users:               pgClient,
+		Registry:            registryConfig,
 	}
 	slog.Info("store API registered", "routes", []string{
 		"/api/policies", "/api/evidence/ingest", "/api/audit-logs", "/api/mappings",
@@ -181,17 +198,10 @@ func main() {
 	authHandler := auth.NewHandler(apiToken)
 	authHandler.SetUserStore(pgClient)
 
-	chatStore := auth.NewMemoryChatStore()
-
 	if apiToken != "" {
 		slog.Info("api token auth enabled for seed/CI scripts")
 	}
 	slog.Info("auth: OAuth2 Proxy handles OIDC externally, gateway trusts X-Forwarded-* headers")
-
-	insecureRaw := os.Getenv("REGISTRY_INSECURE")
-	insecureList := splitComma(insecureRaw)
-
-	agentCards := agents.ParseDirectory(os.Getenv("AGENT_DIRECTORY"))
 
 	// --- Echo server setup ---
 	e := echo.New()
@@ -245,7 +255,7 @@ func main() {
 
 	authHandler.Register(e)
 	e.Use(authHandler.Middleware())
-	e.Use(writeProtect(auth.RequireAdmin(pgClient)))
+	e.Use(writeProtect(auth.RequireWrite(pgClient)))
 
 	e.GET("/healthz", func(c echo.Context) error {
 		if err := pgClient.Ping(c.Request().Context()); err != nil {
@@ -258,37 +268,11 @@ func main() {
 	apiGroup.Use(middleware.BodyLimit(fmt.Sprintf("%dM", consts.MaxRequestBody>>20)))
 	store.Register(apiGroup, stores)
 	authHandler.RegisterUserAPI(apiGroup)
-	authHandler.RegisterChatHistory(apiGroup, chatStore)
-	registerGemaraProxy(apiGroup, os.Getenv("GEMARA_MCP_URL"))
-
-	registry.Register(apiGroup, registry.Options{
-		MCPURL:             os.Getenv("ORAS_MCP_URL"),
-		InsecureRegistries: insecureList,
-	})
-	publish.Register(apiGroup, publish.Options{
-		TokenProvider:      authHandler,
-		InsecureRegistries: insecureList,
-	})
-	agents.RegisterDirectory(apiGroup, agentCards)
-	if a2aProxyURL := os.Getenv("A2A_PROXY_URL"); a2aProxyURL != "" {
-		agents.RegisterA2AForward(apiGroup, a2aProxyURL)
-	} else {
-		agents.RegisterA2AProxy(apiGroup, agents.Options{
-			Cards:          agentCards,
-			TokenProvider:  authHandler,
-			KagentA2AURL:   os.Getenv("KAGENT_A2A_URL"),
-			AgentNamespace: os.Getenv("KAGENT_AGENT_NAMESPACE"),
-		})
-		slog.Info("a2a proxy embedded in gateway (A2A_PROXY_URL not set)")
-	}
 	config.Register(apiGroup, config.Options{
 		Values: map[string]string{
-			"github_org":             httputil.EnvOr("GITHUB_ORG", ""),
-			"github_repo":            httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
-			"registry_insecure":      httputil.EnvOr("REGISTRY_INSECURE", ""),
-			"model_provider":         httputil.EnvOr("MODEL_PROVIDER", ""),
-			"model_name":             httputil.EnvOr("MODEL_NAME", ""),
-			"auto_persist_artifacts": httputil.EnvOr("AUTO_PERSIST_ARTIFACTS", "true"),
+			"github_org":        httputil.EnvOr("GITHUB_ORG", ""),
+			"github_repo":       httputil.EnvOr("GITHUB_REPO", "complytime-studio"),
+			"registry_insecure": httputil.EnvOr("REGISTRY_INSECURE", ""),
 		},
 	})
 
@@ -297,34 +281,18 @@ func main() {
 		if os.Getenv("OAUTH2_PROXY_ENABLED") == "false" {
 			authProvider = "none (dev mode)"
 		}
-		modelProvider := httputil.EnvOr("MODEL_PROVIDER", "not configured")
-		modelName := httputil.EnvOr("MODEL_NAME", "")
-		if modelName != "" {
-			modelProvider = modelProvider + " (" + modelName + ")"
-		}
 		dbStatus := "connected"
 		if err := pgClient.Ping(c.Request().Context()); err != nil {
 			dbStatus = "unreachable"
 		}
-		agentNames := []string{}
-		ns := os.Getenv("KAGENT_AGENT_NAMESPACE")
-		if ns != "" {
-			agentNames = append(agentNames, "kagent (ns: "+ns+")")
-		}
 		return c.JSON(http.StatusOK, map[string]any{
-			"version":        httputil.EnvOr("STUDIO_VERSION", "dev"),
-			"database":       "PostgreSQL — " + dbStatus,
-			"auth_provider":  authProvider,
-			"model_provider": modelProvider,
-			"agents":         agentNames,
+			"version":       httputil.EnvOr("STUDIO_VERSION", "dev"),
+			"database":      "PostgreSQL — " + dbStatus,
+			"auth_provider": authProvider,
 		})
 	})
 
-	slog.Info("api routes registered", "groups", []string{
-		"store", "users", "gemara-proxy", "registry", "publish", "agents", "config",
-	})
-
-	web.RegisterSPA(e, workbench.Assets)
+	slog.Info("api routes registered", "groups", []string{"store", "users", "config"})
 
 	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
 	addr := net.JoinHostPort(listenHost, port)
@@ -396,31 +364,6 @@ func main() {
 	}
 }
 
-func registerGemaraProxy(g *echo.Group, mcpURL string) {
-	unavail := func(c echo.Context) error {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "gemara-mcp unavailable"})
-	}
-	if mcpURL == "" {
-		g.POST("/validate", unavail)
-		g.POST("/migrate", unavail)
-		slog.Info("gemara-mcp proxy disabled", "reason", "GEMARA_MCP_URL not set")
-		return
-	}
-
-	transport := &mcp.StreamableClientTransport{Endpoint: mcpURL}
-	p, err := proxy.New(transport)
-	if err != nil {
-		slog.Warn("gemara-mcp proxy disabled", "error", err)
-		g.POST("/validate", unavail)
-		g.POST("/migrate", unavail)
-		return
-	}
-
-	g.POST("/validate", echo.WrapHandler(http.HandlerFunc(p.ValidateHandler())))
-	g.POST("/migrate", echo.WrapHandler(http.HandlerFunc(p.MigrateHandler())))
-	slog.Info("gemara-mcp proxy registered", "routes", []string{"/api/validate", "/api/migrate"})
-}
-
 func splitComma(raw string) []string {
 	if raw == "" {
 		return nil
@@ -449,8 +392,7 @@ func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 				return c.String(http.StatusNotFound, "not found")
 			}
 			if strings.HasPrefix(path, "/api/") && method != http.MethodGet {
-				if path == "/api/chat/history" || path == "/api/bootstrap" ||
-					strings.HasPrefix(path, "/api/a2a/") ||
+				if path == "/api/bootstrap" ||
 					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) {
 					return next(c)
 				}

@@ -13,6 +13,7 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/gemara"
+	"github.com/complytime/complytime-studio/internal/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,6 +36,11 @@ type MappingStore interface {
 	InsertMappingEntries(ctx context.Context, entries []gemara.MappingEntry) error
 	DeleteMappingEntries(ctx context.Context, sourceCatalogID, targetCatalogID string) error
 	CountMappingEntries(ctx context.Context, mappingID string) (int, error)
+}
+
+// GuidanceStore defines write operations for parsed guidance catalog entries.
+type GuidanceStore interface {
+	InsertGuidanceEntries(ctx context.Context, rows []gemara.GuidanceEntryRow) error
 }
 
 // ControlStore defines read/write operations for parsed control catalog entries.
@@ -128,6 +134,28 @@ type NotificationStore interface {
 	UnreadCount(ctx context.Context) (int, error)
 }
 
+// Program is a persisted compliance program (see internal/postgres/programs.go).
+type Program = postgres.Program
+
+// Job is an agent job run under a program.
+type Job = postgres.Job
+
+// ProgramStore defines CRUD for programs.
+type ProgramStore interface {
+	ListPrograms(ctx context.Context) ([]Program, error)
+	GetProgram(ctx context.Context, id string) (*Program, error)
+	CreateProgram(ctx context.Context, p Program) (*Program, error)
+	UpdateProgram(ctx context.Context, p Program) error
+	DeleteProgram(ctx context.Context, id string) error
+}
+
+// JobStore defines operations for jobs scoped to a program.
+type JobStore interface {
+	ListJobs(ctx context.Context, programID string) ([]Job, error)
+	CreateJob(ctx context.Context, j Job) (*Job, error)
+	UpdateJobStatus(ctx context.Context, id, status string) error
+}
+
 // Store provides typed access to PostgreSQL tables for policies,
 // mapping documents, evidence, and audit logs. Implements all
 // domain store interfaces.
@@ -151,6 +179,9 @@ var (
 	_ PostureStore            = (*Store)(nil)
 	_ NotificationStore       = (*Store)(nil)
 	_ CertificationStore      = (*Store)(nil)
+	_ GuidanceStore           = (*Store)(nil)
+	_ ProgramStore            = (*postgres.ProgramPG)(nil)
+	_ JobStore                = (*postgres.ProgramPG)(nil)
 )
 
 // New wraps a PostgreSQL connection pool.
@@ -169,13 +200,21 @@ type Policy struct {
 	ImportedBy   string    `json:"imported_by,omitempty"`
 }
 
-// InsertPolicy stores a policy artifact.
+// InsertPolicy stores a policy artifact (upsert on policy_id).
 func (s *Store) InsertPolicy(ctx context.Context, p Policy) error {
 	if p.PolicyID == "" {
 		p.PolicyID = uuid.New().String()
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by) VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (policy_id) DO UPDATE SET
+		   title         = EXCLUDED.title,
+		   version       = EXCLUDED.version,
+		   oci_reference = EXCLUDED.oci_reference,
+		   content       = EXCLUDED.content,
+		   imported_by   = EXCLUDED.imported_by,
+		   imported_at   = now()`,
 		p.PolicyID, p.Title, p.Version, p.OCIReference, p.Content, p.ImportedBy,
 	)
 	return err
@@ -467,6 +506,42 @@ func (s *Store) InsertControlThreats(ctx context.Context, rows []gemara.ControlT
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit control threats: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) InsertGuidanceEntries(ctx context.Context, rows []gemara.GuidanceEntryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin guidance entries tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO guidance_entries (catalog_id, guideline_id, title, objective, group_id, state, applicability)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (catalog_id, guideline_id) DO UPDATE SET
+		  title = EXCLUDED.title,
+		  objective = EXCLUDED.objective,
+		  group_id = EXCLUDED.group_id,
+		  state = EXCLUDED.state,
+		  applicability = EXCLUDED.applicability,
+		  imported_at = now()`
+	for _, r := range rows {
+		app := r.Applicability
+		if app == nil {
+			app = []string{}
+		}
+		if _, err := tx.Exec(ctx, q,
+			r.CatalogID, r.GuidelineID, r.Title, r.Objective, r.GroupID, r.State, app,
+		); err != nil {
+			return fmt.Errorf("insert guidance entry: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit guidance entries: %w", err)
 	}
 	return nil
 }
@@ -1087,7 +1162,13 @@ func (s *Store) InsertCertifications(ctx context.Context, rows []CertificationRo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const q = `INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason) VALUES ($1, $2, $3, $4, $5)`
+	const q = `INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason, certified_at)
+VALUES ($1, $2, $3, $4, $5, now())
+ON CONFLICT (evidence_id, certifier)
+DO UPDATE SET certifier_version = EXCLUDED.certifier_version,
+             result = EXCLUDED.result,
+             reason = EXCLUDED.reason,
+             certified_at = EXCLUDED.certified_at`
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, q,
 			r.EvidenceID, r.Certifier, r.CertifierVersion,
@@ -1911,3 +1992,10 @@ func (s *Store) ListRequirementEvidence(ctx context.Context, requirementID strin
 	}
 	return out, rows.Err()
 }
+
+// Program and job store errors (re-exported from postgres).
+var (
+	ErrProgramNotFound        = postgres.ErrProgramNotFound
+	ErrProgramVersionConflict = postgres.ErrProgramVersionConflict
+	ErrJobNotFound            = postgres.ErrJobNotFound
+)

@@ -6,7 +6,7 @@
 |:--|:--|:--|:--|
 | 0001 | [PostgreSQL as Primary Persistence Layer](postgres-with-extensions.md) | Accepted | 2026-05-01 |
 | 0002 | [Migrate Gateway to Echo Framework](echo-framework-migration.md) | Accepted | 2026-05-01 |
-| 0003 | [Modulith Gateway Architecture](backend-architecture.md) | Accepted | 2026-04-18 |
+| 0003 | [Modulith Gateway Architecture](backend-architecture.md) | Superseded by #0025 | 2026-04-18 |
 | 0004 | [Audit Dashboard Pivot](audit-dashboard-pivot.md) | Accepted | 2026-04-18 |
 | 0005 | [Agent Interaction Model — HITL Chatbot](agent-interaction-model.md) | Accepted | 2026-04-22 |
 | 0006 | [Internal Endpoint Isolation — Dual-Port Gateway](internal-endpoint-isolation.md) | Accepted | 2026-04-25 |
@@ -20,14 +20,23 @@
 | 0014 | [Evidence Staleness Model](evidence-staleness-model.md) | Accepted | 2026-04-26 |
 | 0015 | [Evidence Filter Bar](evidence-filter-bar.md) | Accepted | 2026-04-26 |
 | 0016 | [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
+| 0022 | [Studio SPA Extraction](studio-spa-extraction.md) | Accepted | 2026-05-12 |
+| 0023 | [studio-mcp Server](studio-mcp-server.md) | Accepted | 2026-05-12 |
+| 0024 | [Agent MCP Surface — studio-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
+| 0025 | [Data Platform + Workbench Split](data-platform-workbench-split.md) | Accepted | 2026-05-13 |
 
 ## Active Workarounds
 
 | # | Decision | Status | Date |
 |:--|:--|:--|:--|
-| 0017 | [Kagent Declarative Agent Gap Catalog](kagent-gap-catalog.md) | Active — tracks upstream | 2026-04-18 |
 | 0018 | [Gemara MCP Session Initialization Failures](gemara-mcp-session-failures.md) | Active workaround | 2026-04-18 |
-| 0019 | [ADK Empty Messages Workaround](adk-empty-messages-workaround.md) | Active workaround | 2026-04-19 |
+
+## Historical Workarounds (resolved by architecture change)
+
+| # | Decision | Status | Date |
+|:--|:--|:--|:--|
+| 0017 | [Kagent Declarative Agent Gap Catalog](kagent-gap-catalog.md) | Obsolete — agents now run in workbench, not via kagent | 2026-04-18 |
+| 0019 | [ADK Empty Messages Workaround](adk-empty-messages-workaround.md) | Obsolete — replaced by LangGraph | 2026-04-19 |
 
 ## Implemented
 
@@ -41,6 +50,7 @@ Condensed summaries. Full content retained in files for historical reference.
 
 | Decision | Status | Summary |
 |:--|:--|:--|
+| [Three-Component Architecture](three-component-architecture.md) | Superseded by #0025 | Original monorepo three-component split. Replaced by data-platform + workbench separation across repos. |
 | [ADK A2A Streaming](adk-a2a-streaming.md) | Resolved | Missing `AgentCapabilities(streaming=True)` and `InMemoryQueueManager`. Fixed. |
 | [Authorization Model: RACI-Scoped](authorization-model.md) | Superseded | Replaced by simple admin/reviewer RBAC. Full RACI-scoped multi-tenancy deferred. |
 | [Session Persistence](session-persistence-storage.md) | Accepted | In-memory session store keyed by user email. Moves to durable storage with auth sessions. |

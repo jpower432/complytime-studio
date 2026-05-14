@@ -22,7 +22,7 @@ GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=studio-dev-token ./demo/seed.
 
 > Show me the AMPEL branch protection policy and its controls.
 
-**Expected:** Assistant loads the policy from ClickHouse, lists BP-1 through BP-5 with titles and assessment requirements. Establishes context for the audience.
+**Expected:** Assistant loads the policy from PostgreSQL (via studio-mcp), lists BP-1 through BP-5 with titles and assessment requirements. Establishes context for the audience.
 
 ### Step 2: Inventory — "What repos are being scanned?"
 
@@ -62,4 +62,4 @@ GATEWAY_URL=http://localhost:8080 STUDIO_API_TOKEN=studio-dev-token ./demo/seed.
 
 **"No mapping documents"** — SOC 2 mapping import failed. Verify `mapping-soc2.json` was imported via the `/api/mappings/import` endpoint.
 
-**"Streaming not supported"** — Assistant pod needs `InMemoryQueueManager` and `AgentCapabilities(streaming=True)`. Check `agents/assistant/main.py`.
+**"Streaming not supported"** — Assistant pod needs `InMemoryQueueManager` and `AgentCapabilities(streaming=True)`. Check `main.py` in the [complytime-agents](https://github.com/complytime/complytime-agents) repo.

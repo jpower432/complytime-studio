@@ -15,6 +15,17 @@ Studio ingests evidence from scanning tools, maps it against compliance framewor
 | **Audit Preparation** | AI agents draft [Gemara AuditLog](https://gemara.openssf.org/) artifacts; humans review and promote to official records |
 | **Notifications** | Activity feed for evidence arrivals, posture changes, and draft audit logs awaiting review |
 
+## Repository Structure
+
+ComplyTime spans four repositories:
+
+| Repository | Role | Language |
+|:--|:--|:--|
+| **complytime-studio** (this repo) | Data Platform — evidence CRUD, posture, certifier pipeline, auth | Go |
+| [studio-ui](https://github.com/complytime/studio-ui) | Batteries-included SPA + Nginx reverse-proxy | TypeScript |
+| [complytime-agents](https://github.com/complytime/complytime-agents) | Studio Workbench + AI agents — A2A routing, chat, Gemara tools | Python |
+| [studio-deploy](https://github.com/complytime/studio-deploy) | Helm chart + Docker Compose for local/cluster deployment | YAML |
+
 ## Quick Start
 
 ### Prerequisites
@@ -26,22 +37,17 @@ Studio ingests evidence from scanning tools, maps it against compliance framewor
 | `kubectl` | Kubernetes CLI | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
 | `helm` | Chart management | [helm.sh](https://helm.sh/docs/intro/install/) |
 | `go` (>= 1.25) | Build the gateway | [go.dev](https://go.dev/dl/) |
-| `node` / `npm` | Build the workbench SPA | [nodejs.org](https://nodejs.org/) |
 
-### Deploy
+### Deploy (Kubernetes)
 
-```bash
-make cluster-up
-make deploy
-```
+See [studio-deploy](https://github.com/complytime/studio-deploy) for Helm chart and Docker Compose orchestration.
 
-### Access
+### Run gateway locally
 
 ```bash
-kubectl port-forward -n kagent svc/studio-gateway 8080:8080
+make gateway-build
+./bin/studio-gateway
 ```
-
-Open [http://localhost:8080](http://localhost:8080).
 
 ### Seed demo data
 
@@ -49,67 +55,50 @@ Open [http://localhost:8080](http://localhost:8080).
 make seed
 ```
 
-### Tear down
-
-```bash
-make cluster-down
-```
-
-### Local (Docker Compose)
-
-Runs the gateway, PostgreSQL, NATS, and MCP servers without Kubernetes. Agents are not available in this mode.
-
-```bash
-docker compose up
-```
-
 ## Architecture
 
 ```
-Browser (Preact SPA)
-  |
-  v
-Gateway (Go)  ──── PostgreSQL (all application data)
-  |
-  +--> NATS (required) ──── event-driven services (ingest, posture notifications, etc.)
-  |
-  | A2A
-  v
-AI Agents (kagent)  ──── MCP tools (gemara-mcp, oras-mcp)
+Browser → Nginx (studio-ui)
+            ├── /api/*        → Data Platform (Go gateway)
+            ├── /auth/*       → Data Platform
+            ├── /workbench/*  → Studio Workbench (Python)
+            │                      ├── A2A routing → LangGraph agents
+            │                      ├── Gemara validate/migrate (MCP)
+            │                      └── OCI publish/browse (MCP)
+            └── /*            → static SPA files
 ```
 
-**Gateway** serves the workbench SPA, REST APIs, and proxies agent communication. PostgreSQL stores programs, users, evidence, policies, audit logs, and all analytics data.
+**Data Platform** (this repo) is a headless data API: evidence CRUD, posture computation, certifier pipeline (NATS), content ingestion, auth. PostgreSQL stores all application data.
 
-**Agents** run as [kagent](https://github.com/kagent-dev/kagent) Declarative Agents in Kubernetes. They use MCP tools to validate and publish Gemara artifacts.
+**Studio Workbench** ([complytime-agents](https://github.com/complytime/complytime-agents)) serves agent-support endpoints: A2A routing, agent directory, chat state, Gemara validate/migrate, OCI publish/browse. Agents consume platform state through `studio-mcp` MCP resources.
 
-**Authentication** supports any OIDC-compliant provider (Keycloak, Okta, Azure AD, Google). Role assignment via JWT claims, bootstrap allowlist, or first-admin promotion.
+**Studio UI** ([studio-ui](https://github.com/complytime/studio-ui)) is a batteries-included Preact SPA. Nginx routes requests to the correct backend by path prefix.
 
-**Model providers** currently support Vertex AI (Anthropic, Gemini). The architecture is provider-agnostic — additional backends can be added through kagent's model configuration.
-
-For REST API reference, deployment configuration, and data flows, see [Architecture](docs/design/architecture.md).
+For full architecture detail, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Development
 
 | Target | Description |
 |:--|:--|
-| `make deploy` | Build, load to kind, helm install, rollout restart |
 | `make gateway-build` | Compile gateway to `bin/studio-gateway` |
-| `make gateway-image` | Build gateway container image (includes workbench) |
-| `make workbench-build` | Build workbench SPA |
+| `make gateway-image` | Build gateway container image |
+| `make studio-mcp-build` | Compile `studio-mcp` to `bin/studio-mcp` |
+| `make studio-mcp-image` | Build `studio-mcp` container image |
 | `make test` | Run Go tests |
 | `make lint` | Run golangci-lint |
 | `make seed` | Seed demo data |
-| `make cluster-up` | Create kind cluster with kagent |
-| `make cluster-down` | Delete kind cluster |
-| `make compose-up` | Docker Compose (gateway + PostgreSQL + NATS + MCP, no agents) |
+
+Deployment targets (`cluster-up`, `deploy`, `helm-*`) moved to [studio-deploy](https://github.com/complytime/studio-deploy).
 
 ## Documentation
 
 | Document | Purpose |
 |:--|:--|
-| [Architecture](docs/design/architecture.md) | System design, REST API, deployment, data flows |
+| [Architecture](docs/architecture.md) | Component boundaries, routing, communication |
+| [Service Level Requirements](docs/requirements/service-level-requirements.md) | SLRs, ownership, gap analysis |
 | [Agent Data Flows](docs/design/agent-data-flows.md) | Workbench-to-agent communication |
 | [Evidence Semconv](docs/design/evidence-semconv-alignment.md) | Evidence column mapping to OTel semantic conventions |
+| studio-mcp | MCP resources and tools for agents (see `cmd/studio-mcp/`) |
 | [Decisions](docs/decisions/) | Architecture Decision Records |
 
 ## License

@@ -1,48 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
-PORT ?= 8080
-KIND_CLUSTER ?= complytime-studio
 NAMESPACE ?= kagent
 GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
-ASSISTANT_IMAGE ?= studio-assistant
-ASSISTANT_TAG ?= local
+STUDIO_MCP_IMAGE ?= studio-mcp
+STUDIO_MCP_TAG ?= local
 CONTAINER_RUNTIME ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
-
-CLICKHOUSE ?= false
-NATS ?= true
-
-HELM_AUTH_FLAGS :=
-ifdef OIDC_CLIENT_ID
-HELM_AUTH_FLAGS += --set auth.oauth2Proxy.clientId=$(OIDC_CLIENT_ID)
-ifdef OIDC_ISSUER_URL
-HELM_AUTH_FLAGS += --set auth.oauth2Proxy.issuerUrl=$(OIDC_ISSUER_URL)
-endif
-ifdef OIDC_CALLBACK_URL
-HELM_AUTH_FLAGS += --set auth.oauth2Proxy.callbackUrl=$(OIDC_CALLBACK_URL)
-endif
-endif
-ifdef VERTEX_PROJECT_ID
-HELM_AUTH_FLAGS += --set model.vertexAI.projectID=$(VERTEX_PROJECT_ID)
-endif
-
-HELM_AGENT_FLAGS :=
-ifdef ASSISTANT_MODEL_PROVIDER
-HELM_AGENT_FLAGS += --set agents.assistant.model.provider=$(ASSISTANT_MODEL_PROVIDER)
-endif
-ifdef ASSISTANT_MODEL_NAME
-HELM_AGENT_FLAGS += --set agents.assistant.model.name=$(ASSISTANT_MODEL_NAME)
-endif
-
-HELM_FEATURE_FLAGS := --set clickhouse.enabled=$(CLICKHOUSE) --set nats.enabled=$(NATS) --set auth.oauth2Proxy.cookieSecure=false
+KIND_CLUSTER ?= complytime-studio
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
-	assistant-image \
-	compose-up sync-prompts seed \
-	cluster-up cluster-down studio-up studio-down studio-template \
-	workbench-build workbench-dev \
-	deploy oauth-secret \
+	studio-mcp-build studio-mcp-image \
+	compose-up seed \
+	cluster-up cluster-down \
+	oidc-secret \
 	demo demo-change demo-all
 
 test:
@@ -55,32 +26,27 @@ test-integration:
 lint:
 	golangci-lint run ./...
 
+lint-openapi:
+	go test ./internal/openapi/... -run TestSpecDrift -v -count=1
+
 clean:
 	rm -rf bin/
-
-sync-prompts:
-	@mkdir -p charts/complytime-studio/agents/assistant
-	@cp agents/assistant/prompt.md charts/complytime-studio/agents/assistant/prompt.md
-
-sync-skills:
-	@rsync -a --delete --exclude='.gitkeep' skills/ agents/assistant/skills/
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
 
-gateway-image: workbench-build
+studio-mcp-build:
+	go build -o bin/studio-mcp ./cmd/studio-mcp/
+
+studio-mcp-image:
+	docker build -f Dockerfile.studio-mcp -t $(STUDIO_MCP_IMAGE):$(STUDIO_MCP_TAG) .
+
+gateway-image:
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .
 
-assistant-image: sync-skills
-	docker build --no-cache -f agents/assistant/Dockerfile -t $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) agents/assistant/
-
 compose-up:
-	docker compose up --build
-
-workbench-build:
-	cd workbench && npm run build
-
-workbench-dev: workbench-build gateway-build
+	@echo "Docker Compose moved to studio-deploy. Run: cd ../studio-deploy && make up"
+	@exit 1
 
 cluster-up:
 	@./deploy/kind/setup.sh
@@ -88,36 +54,8 @@ cluster-up:
 cluster-down:
 	kind delete cluster --name complytime-studio
 
-HELM_MODEL_FLAGS :=
-ifdef MODEL_PROVIDER
-HELM_MODEL_FLAGS += --set model.provider=$(MODEL_PROVIDER)
-endif
-ifdef MODEL_NAME
-HELM_MODEL_FLAGS += --set model.name=$(MODEL_NAME)
-endif
-
-studio-up: sync-prompts
-	helm upgrade --install complytime-studio ./charts/complytime-studio \
-		--namespace $(NAMESPACE) \
-		--reset-values \
-		--set "gateway.image.repository=$(GATEWAY_IMAGE)" \
-		--set "gateway.image.tag=$(GATEWAY_TAG)" \
-		--set "assistant.image.repository=$(ASSISTANT_IMAGE)" \
-		--set "assistant.image.tag=$(ASSISTANT_TAG)" \
-		$(HELM_MODEL_FLAGS) \
-		$(HELM_AUTH_FLAGS) \
-		$(HELM_AGENT_FLAGS) \
-		$(HELM_FEATURE_FLAGS) \
-		--timeout 5m
-	@echo "Chart installed. Access: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
-
-studio-down:
-	helm uninstall complytime-studio --namespace $(NAMESPACE)
-
-studio-template: sync-prompts
-	helm template complytime-studio ./charts/complytime-studio \
-		--namespace $(NAMESPACE) \
-		$(HELM_FEATURE_FLAGS)
+# Helm targets moved to studio-deploy repo.
+# See: ../studio-deploy/Makefile (helm-template, helm-install, helm-upgrade)
 
 # Create the Kubernetes secret for OIDC credentials.
 # Usage: OIDC_CLIENT_SECRET=<secret> make oidc-secret
@@ -131,29 +69,8 @@ oidc-secret:
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "Secret studio-oauth-credentials written to namespace $(NAMESPACE)"
 
-# Full build → load → deploy → port-forward cycle for kind clusters.
-# Usage: make deploy
-# With OIDC: OIDC_CLIENT_ID=<id> OIDC_CLIENT_SECRET=<secret> OIDC_ISSUER_URL=<url> make deploy
-deploy: gateway-image assistant-image
-	kind load docker-image $(GATEWAY_IMAGE):$(GATEWAY_TAG) --name $(KIND_CLUSTER)
-	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
-		ctr --namespace=k8s.io images tag --force \
-		localhost/$(GATEWAY_IMAGE):$(GATEWAY_TAG) \
-		docker.io/library/$(GATEWAY_IMAGE):$(GATEWAY_TAG) 2>/dev/null || true
-	kind load docker-image $(ASSISTANT_IMAGE):$(ASSISTANT_TAG) --name $(KIND_CLUSTER)
-	@$(CONTAINER_RUNTIME) exec $(KIND_CLUSTER)-control-plane \
-		ctr --namespace=k8s.io images tag --force \
-		localhost/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) \
-		docker.io/library/$(ASSISTANT_IMAGE):$(ASSISTANT_TAG) 2>/dev/null || true
-	@if [ -n "$$OIDC_CLIENT_SECRET" ]; then \
-		$(MAKE) oidc-secret; \
-	fi
-	$(MAKE) studio-up
-	kubectl rollout restart deployment/studio-gateway -n $(NAMESPACE)
-	kubectl rollout status deployment/studio-gateway -n $(NAMESPACE) --timeout=240s
-	kubectl delete pods -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --ignore-not-found
-	kubectl wait --for=condition=ready pod -n $(NAMESPACE) -l app.kubernetes.io/name=studio-assistant --timeout=120s 2>/dev/null || true
-	@echo "Deployed. Run: kubectl port-forward -n $(NAMESPACE) svc/studio-gateway $(PORT):8080"
+# Full deploy cycle moved to studio-deploy repo.
+# Use: cd ../studio-deploy && make helm-install
 
 # Seed demo data into a running Studio instance.
 # Port-forwards directly to the gateway container (bypassing OAuth2 Proxy).
@@ -184,4 +101,3 @@ demo-change:
 # Output: demo/cypress/videos/*.mp4
 demo-all:
 	cd demo && npx cypress run --no-runner-ui --spec 'cypress/e2e/*.cy.js'
-

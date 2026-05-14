@@ -364,13 +364,15 @@ func TestTokenFromRequest_NoHeader(t *testing.T) {
 	}
 }
 
-func TestRequireAdmin_WithUserStore(t *testing.T) {
+func TestRequireWrite_WithUserStore(t *testing.T) {
 	h, us := testHandlerWithStore(t)
 	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
 	_ = us.UpsertUser(context.TODO(), "sub-viewer", "oauth2-proxy", "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-writer", "oauth2-proxy", "writer@co.com", "Writer", "")
+	_, _ = us.SetRole(context.TODO(), "writer@co.com", consts.RoleWriter)
 
-	guard := RequireAdmin(us)
+	guard := RequireWrite(us)
 
 	t.Run("admin passes", func(t *testing.T) {
 		e := echo.New()
@@ -380,7 +382,7 @@ func TestRequireAdmin_WithUserStore(t *testing.T) {
 			return c.NoContent(http.StatusOK)
 		})
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
 		req.Header.Set("X-Forwarded-Email", "admin@co.com")
 		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -396,8 +398,40 @@ func TestRequireAdmin_WithUserStore(t *testing.T) {
 			return c.NoContent(http.StatusOK)
 		})
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
 		req.Header.Set("X-Forwarded-Email", "viewer@co.com")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("writer passes import", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req.Header.Set("X-Forwarded-Email", "writer@co.com")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("writer blocked on users", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPatch, "/api/users/someone@co.com/role", nil)
+		req.Header.Set("X-Forwarded-Email", "writer@co.com")
 		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", rec.Code)
@@ -562,7 +596,7 @@ func TestAPIToken_WritePathScoped(t *testing.T) {
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
-	guard := RequireAdmin(us)
+	guard := RequireWrite(us)
 
 	t.Run("token allowed on ingest path", func(t *testing.T) {
 		e := echo.New()

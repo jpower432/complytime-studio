@@ -66,8 +66,8 @@ func (h *Handler) handleSetRole(c echo.Context) error {
 	if err := json.NewDecoder(c.Request().Body).Decode(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 	}
-	if body.Role != consts.RoleAdmin && body.Role != consts.RoleReviewer {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "role must be 'admin' or 'reviewer'"})
+	if body.Role != consts.RoleAdmin && body.Role != consts.RoleWriter && body.Role != consts.RoleReviewer {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid role"})
 	}
 
 	oldRole, err := h.users.SetRole(c.Request().Context(), targetEmail, body.Role)

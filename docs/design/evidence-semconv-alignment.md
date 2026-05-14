@@ -1,24 +1,26 @@
 # Evidence Semantic Convention Alignment
 
-**Interface contract** between `complytime-collector-components` (ClickHouse exporter config), `complyctl`/ProofWatch (attribute emission), and `complytime-studio` (table DDL and query APIs).
+**Interface contract** between `complytime-collector-components` (exporter config), `complyctl`/ProofWatch (attribute emission), and `complytime-studio` (table DDL and query APIs).
 
-Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio ClickHouse `evidence` table. The OTel Collector's ClickHouse exporter writes directly to the `evidence` table using this mapping. See [OTel-Native Ingestion](../decisions/otel-native-ingestion.md).
+Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio `evidence` table. PostgreSQL is the primary store; ClickHouse is optional via `pg_clickhouse` FDW (see `docs/decisions/postgres-with-extensions.md`). See [OTel-Native Ingestion](../decisions/otel-native-ingestion.md).
 
 ## OTel Collector / exporter alignment
 
-Studio does **not** ship OpenTelemetry Collector configuration. Each environment wires the ClickHouse exporter (see [complytime-collector-components](https://github.com/complytime/complytime-collector-components)) so **log attribute names match this document** and **column names match the Studio DDL** (`internal/clickhouse/client.go` and Helm `clickhouse-schema-configmap.yaml` init script).
+Studio does **not** ship OpenTelemetry Collector configuration. Each environment wires the exporter (see [complytime-collector-components](https://github.com/complytime/complytime-collector-components)) so **log attribute names match this document** and **column names match the Studio DDL** (`internal/postgres/migrations/` and Helm schema init).
 
-| OTel attribute (canonical) | ClickHouse column |
-|:---------------------------|:------------------|
+| OTel attribute (canonical) | DB column |
+|:---------------------------|:----------|
 | `compliance.source.registry` | `source_registry` |
 
 If the exporter uses a transform or field rename, apply it so the stored column remains `source_registry` (`Nullable(String)`). This file is the source of truth for the attribute name.
 
 ## Attribute-to-Column Mapping
 
+Types below use logical / OTel-aligned naming (e.g. `Enum8`, `DateTime64(3)`, `Nullable(String)`). Concrete PostgreSQL DDL types (`TEXT`, `TIMESTAMPTZ`, `TEXT[]`, etc.) live in `internal/postgres/migrations/`. When ClickHouse FDW is enabled, the exporter maps these to native ClickHouse types.
+
 ### Policy Engine Attributes (`registry.policy`)
 
-| Semconv Attribute | ClickHouse Column | Type | Requirement |
+| Semconv Attribute | DB Column | Type | Requirement |
 |:------------------|:------------------|:-----|:------------|
 | `policy.engine.name` | `engine_name` | Nullable(String) | recommended |
 | `policy.engine.version` | `engine_version` | Nullable(String) | recommended |
@@ -34,7 +36,7 @@ If the exporter uses a transform or field rename, apply it so the stored column 
 
 ### Compliance Assessment Attributes (`registry.compliance`)
 
-| Semconv Attribute | ClickHouse Column | Type | Requirement |
+| Semconv Attribute | DB Column | Type | Requirement |
 |:------------------|:------------------|:-----|:------------|
 | `compliance.control.id` | `control_id` | String DEFAULT '' | required |
 | `compliance.control.category` | `control_category` | Nullable(String) | recommended |
@@ -54,7 +56,7 @@ If the exporter uses a transform or field rename, apply it so the stored column 
 
 ### Attestation Provenance (`registry.compliance`)
 
-| Semconv Attribute | ClickHouse Column | Type | Requirement |
+| Semconv Attribute | DB Column | Type | Requirement |
 |:------------------|:------------------|:-----|:------------|
 | `compliance.attestation.ref` | `attestation_ref` | Nullable(String) | opt_in |
 | `compliance.source.registry` | `source_registry` | Nullable(String) | opt_in |
@@ -68,7 +70,7 @@ The `blob_ref` column stores an S3-compatible URI (e.g., `s3://bucket/key`) poin
 
 ### Identity / Timestamps
 
-| Source | ClickHouse Column | Type |
+| Source | DB Column | Type |
 |:-------|:------------------|:-----|
 | OTel LogRecord timestamp | `collected_at` | DateTime64(3) |
 | Insert time | `ingested_at` | DateTime64(3) DEFAULT now64(3) |
@@ -78,12 +80,12 @@ The `blob_ref` column stores an S3-compatible URI (e.g., `s3://bucket/key`) poin
 
 The current `beacon.evidence` entity is missing attributes required for Gemara audit-grade evidence. These extend the `registry.compliance` group without creating a separate namespace.
 
-| Proposed Attribute | Type | ClickHouse Column | Rationale |
+| Proposed Attribute | Type | DB Column | Rationale |
 |:-------------------|:-----|:------------------|:----------|
 | `compliance.policy.id` | string | `policy_id` (String DEFAULT '') | Links evidence to the Gemara L3 Policy driving the assessment. Required for the assistant to scope audit queries (`WHERE policy_id = ?`). |
 | `compliance.assessment.requirement.id` | string | `requirement_id` (String DEFAULT '') | Assessment granularity below the control level. Gemara EvaluationLogs produce one AssessmentLog per requirement — this is the atomic unit the AuditLog maps to. |
 | `compliance.assessment.plan.id` | string | `plan_id` | Ties an assessment to a specific plan within the Policy's `adherence.assessment-plans[]`. Required for cadence validation (did assessments occur at the expected frequency?). |
-| `compliance.assessment.confidence` | enum (Undetermined, Low, Medium, High) | `confidence` | Confidence level of the assessment result. Used by the gap-analyst to classify evidence strength and by cross-framework coverage analysis via MappingDocument strength scores. |
+| `compliance.assessment.confidence` | enum (Undetermined, Low, Medium, High) | `confidence` | Confidence level of the assessment result. Used by the assistant to classify evidence strength and by cross-framework coverage analysis via MappingDocument strength scores. |
 | `compliance.assessment.steps` | int | `steps_executed` | Number of evaluation steps executed during the assessment. Provides assessment depth context — a single-step check vs. a multi-step validation suite. |
 
 ### Populated By
