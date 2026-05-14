@@ -24,6 +24,7 @@
 | 0023 | [studio-mcp Server](studio-mcp-server.md) | Accepted | 2026-05-12 |
 | 0024 | [Agent MCP Surface — studio-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
 | 0025 | [Data Platform + Workbench Split](data-platform-workbench-split.md) | Accepted | 2026-05-13 |
+| 0026 | [ConnectRPC Internal API for studio-mcp](connectrpc-internal-api.md) | Accepted | 2026-05-13 |
 
 ## Active Workarounds
 

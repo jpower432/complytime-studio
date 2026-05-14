@@ -36,12 +36,6 @@ Requirements for the compliance data platform and agent workbench, derived from 
 | Evidence integrity — stored evidence is immutable and timestamped, providing chain of custody for auditors | Data Platform | Deferred | ADRs explicitly defer immutability to verifiable log infrastructure (Trillian). Current storage uses upsert semantics | [audit-provenance-deferred](../decisions/audit-provenance-deferred.md), [transparency-ledger](../decisions/transparency-ledger.md) |
 | Content ingestion — pull updated compliance content (rules, checks, catalogs) from OCI-compliant registries to scan against latest regulatory definitions | Data Platform | Exists | `PopulateCatalogsFromRegistry()` pulls at startup with retry. No periodic refresh | -- |
 
-## 5. Support and Escalation
-
-| Requirement | Owner | Gap Status | References |
-|:--|:--|:--|:--|
-| Co-engineering support SLA — defined escalation path with time threshold (15-20 minutes) to prevent blocked developers from spiraling | Process | Active | Escalation channel established. Not a code requirement | -- |
-
 ---
 
 ## Gap Summary
