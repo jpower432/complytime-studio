@@ -65,7 +65,6 @@ func (s *Store) ListInventory(ctx context.Context, f InventoryFilter) ([]Invento
 	if f.Environment != "" {
 		where = append(where, fmt.Sprintf(`COALESCE(e.target_env, '') = $%d`, n))
 		args = append(args, f.Environment)
-		n++
 	}
 
 	q := fmt.Sprintf(`
