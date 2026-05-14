@@ -30,14 +30,14 @@ jobs:
           - language: python
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: github/codeql-action/init@1521896cd211af95be3f02edf6f436e10b819c27 # v3.35.4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config.yml
       - if: matrix.build-mode == 'autobuild'
-        uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/autobuild@1521896cd211af95be3f02edf6f436e10b819c27 # v3.35.4
+      - uses: github/codeql-action/analyze@1521896cd211af95be3f02edf6f436e10b819c27 # v3.35.4
         with:
           category: /language:${{ matrix.language }}
