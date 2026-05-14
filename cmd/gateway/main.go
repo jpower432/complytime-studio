@@ -17,6 +17,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"github.com/complytime/complytime-studio/gen/studio/v1/studiov1connect"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
 	"github.com/complytime/complytime-studio/internal/certifier"
@@ -25,6 +26,7 @@ import (
 	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	pgstore "github.com/complytime/complytime-studio/internal/postgres"
+	"github.com/complytime/complytime-studio/internal/service"
 	"github.com/complytime/complytime-studio/internal/store"
 )
 
@@ -322,6 +324,10 @@ func main() {
 		return c.String(http.StatusOK, "ok")
 	})
 	store.RegisterInternal(internalE.Group(""), stores)
+
+	connectPath, connectHandler := studiov1connect.NewStudioServiceHandler(service.New(stores))
+	internalE.Any(connectPath+"*", echo.WrapHandler(connectHandler))
+	slog.Info("connectrpc service mounted on internal port", "path", connectPath)
 
 	internalSrv := &http.Server{
 		Addr:           internalAddr,

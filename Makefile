@@ -11,6 +11,7 @@ KIND_CLUSTER ?= complytime-studio
 .PHONY: test lint clean \
 	gateway-build gateway-image \
 	studio-mcp-build studio-mcp-image \
+	proto-gen \
 	compose-up seed \
 	cluster-up cluster-down \
 	oidc-secret \
@@ -31,6 +32,9 @@ lint-openapi:
 
 clean:
 	rm -rf bin/
+
+proto-gen: ## Regenerate ConnectRPC stubs from proto/studio/v1/studio.proto
+	buf generate
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/

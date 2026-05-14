@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package studio.v1;
+
+option go_package = "github.com/complytime/complytime-studio/gen/studio/v1;studiov1";
+
+import "google/protobuf/timestamp.proto";
+
+// StudioService exposes platform data to studio-mcp over the gateway's
+// internal port (:8081). This is the sole consumer — see ADR 0026.
+service StudioService {
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
+  rpc QueryEvidence(QueryEvidenceRequest) returns (QueryEvidenceResponse);
+  rpc IngestEvidence(IngestEvidenceRequest) returns (IngestEvidenceResponse);
+  rpc ListPosture(ListPostureRequest) returns (ListPostureResponse);
+  rpc ListCatalogs(ListCatalogsRequest) returns (ListCatalogsResponse);
+  rpc ListMappings(ListMappingsRequest) returns (ListMappingsResponse);
+  rpc ListAuditLogs(ListAuditLogsRequest) returns (ListAuditLogsResponse);
+  rpc CreateDraftAuditLog(CreateDraftAuditLogRequest) returns (CreateDraftAuditLogResponse);
+  rpc ListThreats(ListThreatsRequest) returns (ListThreatsResponse);
+  rpc ListRisks(ListRisksRequest) returns (ListRisksResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Policies
+// ---------------------------------------------------------------------------
+
+message Policy {
+  string policy_id = 1;
+  string title = 2;
+  string version = 3;
+  string oci_reference = 4;
+  string content = 5;
+  google.protobuf.Timestamp imported_at = 6;
+  string imported_by = 7;
+}
+
+message ListPoliciesRequest {}
+
+message ListPoliciesResponse {
+  repeated Policy policies = 1;
+}
+
+message GetPolicyRequest {
+  string policy_id = 1;
+}
+
+message GetPolicyResponse {
+  Policy policy = 1;
+  repeated MappingDocument mappings = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Mappings
+// ---------------------------------------------------------------------------
+
+message MappingDocument {
+  string mapping_id = 1;
+  string source_catalog_id = 2;
+  string target_catalog_id = 3;
+  string framework = 4;
+  string content = 5;
+  google.protobuf.Timestamp imported_at = 6;
+}
+
+message ListMappingsRequest {
+  string source_catalog_id = 1;
+}
+
+message ListMappingsResponse {
+  repeated MappingDocument mappings = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
+message EvidenceRecord {
+  string evidence_id = 1;
+  string policy_id = 2;
+  string target_id = 3;
+  string target_name = 4;
+  string target_type = 5;
+  string target_env = 6;
+  string engine_name = 7;
+  string engine_version = 8;
+  string rule_id = 9;
+  string rule_name = 10;
+  string rule_uri = 11;
+  string eval_result = 12;
+  string eval_message = 13;
+  string control_id = 14;
+  string control_catalog_id = 15;
+  string control_category = 16;
+  repeated string control_applicability = 17;
+  string requirement_id = 18;
+  string plan_id = 19;
+  string confidence = 20;
+  int32 steps_executed = 21;
+  string compliance_status = 22;
+  string risk_level = 23;
+  repeated string frameworks = 24;
+  repeated string requirements = 25;
+  string remediation_action = 26;
+  string remediation_status = 27;
+  string remediation_desc = 28;
+  string exception_id = 29;
+  optional bool exception_active = 30;
+  string enrichment_status = 31;
+  string attestation_ref = 32;
+  string source_registry = 33;
+  string blob_ref = 34;
+  bool certified = 35;
+  string owner = 36;
+  google.protobuf.Timestamp collected_at = 37;
+  string classification = 38;
+}
+
+message QueryEvidenceRequest {
+  repeated string policy_ids = 1;
+  string control_id = 2;
+  string target_name = 3;
+  string target_type = 4;
+  string target_env = 5;
+  string engine_version = 6;
+  string owner = 7;
+  google.protobuf.Timestamp start = 8;
+  google.protobuf.Timestamp end = 9;
+  int32 limit = 10;
+  int32 offset = 11;
+}
+
+message QueryEvidenceResponse {
+  repeated EvidenceRecord records = 1;
+}
+
+message IngestEvidenceRequest {
+  string yaml_content = 1;
+}
+
+message IngestEvidenceResponse {
+  int32 inserted = 1;
+  string policy_id = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Posture
+// ---------------------------------------------------------------------------
+
+message PostureRow {
+  string policy_id = 1;
+  string title = 2;
+  string version = 3;
+  uint64 total_rows = 4;
+  uint64 passed_rows = 5;
+  uint64 failed_rows = 6;
+  uint64 other_rows = 7;
+  string latest_at = 8;
+  uint64 target_count = 9;
+  uint64 control_count = 10;
+  string latest_evidence = 11;
+  string owner = 12;
+}
+
+message ListPostureRequest {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+}
+
+message ListPostureResponse {
+  repeated PostureRow rows = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Catalogs
+// ---------------------------------------------------------------------------
+
+message Catalog {
+  string catalog_id = 1;
+  string catalog_type = 2;
+  string title = 3;
+  string content = 4;
+  string policy_id = 5;
+  google.protobuf.Timestamp imported_at = 6;
+}
+
+message ListCatalogsRequest {}
+
+message ListCatalogsResponse {
+  repeated Catalog catalogs = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Audit Logs
+// ---------------------------------------------------------------------------
+
+message AuditLog {
+  string audit_id = 1;
+  string policy_id = 2;
+  google.protobuf.Timestamp audit_start = 3;
+  google.protobuf.Timestamp audit_end = 4;
+  string framework = 5;
+  google.protobuf.Timestamp created_at = 6;
+  string created_by = 7;
+  string content = 8;
+  string summary = 9;
+  string model = 10;
+  string prompt_version = 11;
+}
+
+message ListAuditLogsRequest {
+  string policy_id = 1;
+  google.protobuf.Timestamp start = 2;
+  google.protobuf.Timestamp end = 3;
+  int32 limit = 4;
+}
+
+message ListAuditLogsResponse {
+  repeated AuditLog audit_logs = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Draft Audit Logs
+// ---------------------------------------------------------------------------
+
+message DraftAuditLog {
+  string draft_id = 1;
+  string policy_id = 2;
+  google.protobuf.Timestamp audit_start = 3;
+  google.protobuf.Timestamp audit_end = 4;
+  string framework = 5;
+  google.protobuf.Timestamp created_at = 6;
+  string status = 7;
+  string content = 8;
+  string summary = 9;
+  string agent_reasoning = 10;
+  string model = 11;
+  string prompt_version = 12;
+}
+
+message CreateDraftAuditLogRequest {
+  string policy_id = 1;
+  string content = 2;
+  string summary = 3;
+  string agent_reasoning = 4;
+  string model = 5;
+  string prompt_version = 6;
+}
+
+message CreateDraftAuditLogResponse {
+  string draft_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Threats
+// ---------------------------------------------------------------------------
+
+message ThreatRow {
+  string catalog_id = 1;
+  string threat_id = 2;
+  string title = 3;
+  string description = 4;
+  string group_id = 5;
+  string policy_id = 6;
+}
+
+message ListThreatsRequest {
+  string catalog_id = 1;
+  string policy_id = 2;
+  int32 limit = 3;
+}
+
+message ListThreatsResponse {
+  repeated ThreatRow threats = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Risks
+// ---------------------------------------------------------------------------
+
+message RiskRow {
+  string catalog_id = 1;
+  string risk_id = 2;
+  string title = 3;
+  string description = 4;
+  string severity = 5;
+  string group_id = 6;
+  string impact = 7;
+  string policy_id = 8;
+}
+
+message ListRisksRequest {
+  string catalog_id = 1;
+  string policy_id = 2;
+  int32 limit = 3;
+}
+
+message ListRisksResponse {
+  repeated RiskRow risks = 1;
+}
