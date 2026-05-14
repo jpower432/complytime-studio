@@ -25,10 +25,6 @@ jobs:
             build-mode: none
           - language: go
             build-mode: autobuild
-          - language: javascript-typescript
-            build-mode: none
-          - language: python
-            build-mode: none
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: github/codeql-action/init@1521896cd211af95be3f02edf6f436e10b819c27 # v3.35.4

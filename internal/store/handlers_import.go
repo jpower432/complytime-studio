@@ -12,7 +12,6 @@ import (
 
 	gemara "github.com/gemaraproj/go-gemara"
 	gemarabundle "github.com/gemaraproj/go-gemara/bundle"
-	sdk "github.com/gemaraproj/go-gemara"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
@@ -126,7 +125,7 @@ func storeArtifactFile(ctx context.Context, s Stores, f gemarabundle.File) (ociI
 }
 
 func storePolicyFromContent(ctx context.Context, ps PolicyStore, ctrlS ControlStore, content string) (ociImportedArtifact, error) {
-	var pol sdk.Policy
+	var pol gemara.Policy
 	if err := gemarapkg.UnmarshalYAML([]byte(content), &pol); err != nil {
 		return ociImportedArtifact{}, err
 	}
@@ -159,7 +158,7 @@ func storePolicyFromContent(ctx context.Context, ps PolicyStore, ctrlS ControlSt
 }
 
 func storeMappingFromContent(ctx context.Context, ms MappingStore, content string) (ociImportedArtifact, error) {
-	var doc sdk.MappingDocument
+	var doc gemara.MappingDocument
 	if err := gemarapkg.UnmarshalYAML([]byte(content), &doc); err != nil {
 		return ociImportedArtifact{}, err
 	}
@@ -257,7 +256,7 @@ func importPolicyFromArtifactBody(
 	ctrlS ControlStore,
 	content string,
 ) error {
-	var pol sdk.Policy
+	var pol gemara.Policy
 	trim := strings.TrimSpace(content)
 	var err error
 	if strings.HasPrefix(trim, "{") {
@@ -299,7 +298,7 @@ func importPolicyFromArtifactBody(
 }
 
 func importMappingFromArtifactBody(c echo.Context, ms MappingStore, content string) error {
-	var doc sdk.MappingDocument
+	var doc gemara.MappingDocument
 	trim := strings.TrimSpace(content)
 	var err error
 	if strings.HasPrefix(trim, "{") {
