@@ -31,7 +31,6 @@ tags:
   - name: Posture
   - name: Requirements
   - name: ThreatsRisks
-  - name: Notifications
   - name: Users
   - name: Config
 
@@ -447,6 +446,63 @@ paths:
                 $ref: '#/components/schemas/ErrorsListResponse'
         '502':
           description: Blob upload failed
+
+  /api/evidence/ingest/async:
+    post:
+      tags: [Evidence]
+      operationId: ingestEvidenceAsync
+      summary: Async ingest — returns 202 with job_id for polling
+      description: >-
+        Accepts the same Gemara YAML as the sync endpoint but returns
+        immediately with a job_id. The artifact is processed asynchronously
+        via NATS. Poll GET /api/evidence/ingest/jobs/{job_id} for status.
+        In-memory tracking only — job state is lost on gateway restart.
+      requestBody:
+        required: true
+        content:
+          application/x-yaml:
+            schema:
+              type: string
+      responses:
+        '202':
+          description: Accepted — ingest queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    example: pending
+        '400':
+          description: Empty body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorsListResponse'
+
+  /api/evidence/ingest/jobs/{job_id}:
+    get:
+      tags: [Evidence]
+      operationId: getIngestJobStatus
+      summary: Poll async ingest job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestJobStatus'
+        '404':
+          description: Job not found (expired or never existed)
 
   /api/certifications:
     get:
@@ -1507,6 +1563,28 @@ components:
           type: string
         source_registry:
           type: string
+
+    IngestJobStatus:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        inserted:
+          type: integer
+          minimum: 0
+        policy_id:
+          type: string
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     CertificationRow:
       type: object

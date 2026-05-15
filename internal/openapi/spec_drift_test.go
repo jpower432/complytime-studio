@@ -116,6 +116,8 @@ func buildRouter(t *testing.T) *echo.Echo {
 		Jobs:                &nopJobStore{},
 		Inventory:           &nopInventoryStore{},
 		Users:               &nopUserStore{},
+		IngestTracker:       store.NewIngestTracker(),
+		IngestPublisher:     &nopIngestPublisher{},
 	}
 	store.Register(apiGroup, s)
 
@@ -377,6 +379,10 @@ type nopEventPublisher struct{}
 
 func (*nopEventPublisher) PublishEvidence(string, int)                 {}
 func (*nopEventPublisher) PublishDraftAuditLog(string, string, string) {}
+
+type nopIngestPublisher struct{}
+
+func (*nopIngestPublisher) PublishIngestRaw(string, []byte) error { return nil }
 
 type nopHealthChecker struct{}
 

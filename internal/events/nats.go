@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	SubjectEvidence = "studio.evidence"
-	SubjectDraft    = "studio.draft-audit-log"
+	SubjectEvidence  = "studio.evidence"
+	SubjectDraft     = "studio.draft-audit-log"
+	SubjectIngestRaw = "studio.ingest.raw"
 )
 
 // SubjectPrefix is the NATS subject namespace for studio events.
@@ -107,6 +108,49 @@ func (b *Bus) PublishDraftAuditLog(draftID, policyID, summary string) {
 	if err := b.conn.Publish(subject, data); err != nil {
 		slog.Warn("nats publish failed", "subject", subject, "error", err)
 	}
+}
+
+// IngestRawEvent carries a raw Gemara artifact for async processing.
+type IngestRawEvent struct {
+	JobID     string    `json:"job_id"`
+	YAML      []byte    `json:"yaml"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// PublishIngestRaw publishes a raw artifact for async ingest. Returns an
+// error so the HTTP handler can fail the job immediately on NATS issues.
+func (b *Bus) PublishIngestRaw(jobID string, yaml []byte) error {
+	if b == nil || b.conn == nil {
+		return fmt.Errorf("nats not connected")
+	}
+	evt := IngestRawEvent{
+		JobID:     jobID,
+		YAML:      yaml,
+		Timestamp: time.Now().UTC(),
+	}
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal ingest event: %w", err)
+	}
+	if err := b.conn.Publish(SubjectIngestRaw, data); err != nil {
+		return fmt.Errorf("nats publish %s: %w", SubjectIngestRaw, err)
+	}
+	return nil
+}
+
+// SubscribeIngestRaw subscribes to raw ingest events for async processing.
+func (b *Bus) SubscribeIngestRaw(handler func(IngestRawEvent)) (*nats.Subscription, error) {
+	if b == nil || b.conn == nil {
+		return nil, nil
+	}
+	return b.conn.Subscribe(SubjectIngestRaw, func(msg *nats.Msg) {
+		var evt IngestRawEvent
+		if err := json.Unmarshal(msg.Data, &evt); err != nil {
+			slog.Warn("nats unmarshal failed", "error", err)
+			return
+		}
+		handler(evt)
+	})
 }
 
 // SubscribeEvidence subscribes to all evidence events (studio.evidence.>).

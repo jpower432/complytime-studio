@@ -124,6 +124,7 @@ func main() {
 	slog.Info("nats ready")
 
 	var pub store.EventPublisher = bus
+	ingestTracker := store.NewIngestTracker()
 
 	stores := store.Stores{
 		Policies:            st,
@@ -148,9 +149,11 @@ func main() {
 		Inventory:           st,
 		Users:               pgClient,
 		Registry:            registryConfig,
+		IngestTracker:       ingestTracker,
+		IngestPublisher:     bus,
 	}
 	slog.Info("store API registered", "routes", []string{
-		"/api/policies", "/api/evidence/ingest", "/api/audit-logs", "/api/mappings",
+		"/api/policies", "/api/evidence/ingest", "/api/evidence/ingest/async", "/api/audit-logs", "/api/mappings",
 	})
 
 	pipeline := buildCertifierPipeline()
@@ -167,6 +170,15 @@ func main() {
 	}
 	defer func() { _ = sub.Unsubscribe() }()
 	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
+
+	ingestWorker := store.IngestWorker(ctx, st, pub, ingestTracker)
+	ingestSub, ingestSubErr := bus.SubscribeIngestRaw(ingestWorker)
+	if ingestSubErr != nil {
+		slog.Error("nats ingest subscribe failed", "error", ingestSubErr)
+		os.Exit(1)
+	}
+	defer func() { _ = ingestSub.Unsubscribe() }()
+	slog.Info("nats async ingest subscription active", "subject", events.SubjectIngestRaw)
 
 	authHandler := auth.NewHandler()
 	authHandler.SetUserStore(pgClient)

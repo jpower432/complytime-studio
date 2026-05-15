@@ -12,6 +12,8 @@ import (
 
 	gemara "github.com/gemaraproj/go-gemara"
 	"github.com/goccy/go-yaml"
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 
 	"github.com/complytime/complytime-studio/internal/consts"
 	"github.com/complytime/complytime-studio/internal/httputil"
@@ -76,6 +78,62 @@ func derefUint16(p *uint16) int {
 		return 0
 	}
 	return int(*p)
+}
+
+// IngestRawPublisher publishes raw YAML for async processing via NATS.
+type IngestRawPublisher interface {
+	PublishIngestRaw(jobID string, yaml []byte) error
+}
+
+// IngestAsyncHandler returns an http.HandlerFunc that accepts raw Gemara
+// YAML, assigns a job ID, publishes it to NATS for async processing, and
+// returns 202 Accepted with the job ID for polling.
+func IngestAsyncHandler(pub IngestRawPublisher, tracker *IngestTracker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, consts.MaxRequestBody))
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		if len(body) == 0 {
+			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"errors": []string{"request body is empty — expected Gemara YAML"},
+			})
+			return
+		}
+
+		jobID := generateJobID()
+		tracker.Create(jobID)
+
+		if err := pub.PublishIngestRaw(jobID, body); err != nil {
+			tracker.Fail(jobID, fmt.Sprintf("publish failed: %v", err))
+			slog.Error("async ingest publish failed", "job_id", jobID, "error", err)
+			httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"errors": []string{"event bus unavailable — use sync endpoint as fallback"},
+			})
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": jobID,
+			"status": "pending",
+		})
+	}
+}
+
+// IngestJobStatusHandler returns an echo handler for polling async ingest jobs.
+func IngestJobStatusHandler(tracker *IngestTracker) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		jobID := c.Param("job_id")
+		if jobID == "" {
+			return jsonError(c, http.StatusBadRequest, "missing job_id")
+		}
+		status := tracker.Get(jobID)
+		if status == nil {
+			return jsonError(c, http.StatusNotFound, "job not found")
+		}
+		return c.JSON(http.StatusOK, status)
+	}
 }
 
 // IngestGemaraHandler returns an http.HandlerFunc that accepts raw Gemara
@@ -197,6 +255,10 @@ type bytesFetcher struct {
 
 func (b *bytesFetcher) Fetch(_ context.Context, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(b.data)), nil
+}
+
+func generateJobID() string {
+	return uuid.New().String()
 }
 
 // derivePolicyID extracts a policy reference from mapping-references.

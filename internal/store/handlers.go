@@ -64,6 +64,8 @@ type Stores struct {
 	Inventory           InventoryStore
 	Users               identity.UserStore
 	Registry            *RegistryConfig
+	IngestTracker       *IngestTracker
+	IngestPublisher     IngestRawPublisher
 }
 
 // Register mounts all public store API endpoints on g (typically e.Group("/api")).
@@ -74,6 +76,10 @@ func Register(g *echo.Group, s Stores) {
 	registerImportRoute(g, s)
 	g.GET("/evidence", queryEvidenceHandler(s.Evidence))
 	g.POST("/evidence/ingest", echo.WrapHandler(IngestGemaraHandler(s.Evidence, s.EventPublisher)))
+	if s.IngestTracker != nil && s.IngestPublisher != nil {
+		g.POST("/evidence/ingest/async", echo.WrapHandler(IngestAsyncHandler(s.IngestPublisher, s.IngestTracker)))
+		g.GET("/evidence/ingest/jobs/:job_id", IngestJobStatusHandler(s.IngestTracker))
+	}
 	registerInventoryRoutes(g, s)
 	if s.Certifications != nil {
 		g.GET("/certifications", queryCertificationsHandler(s.Certifications))
