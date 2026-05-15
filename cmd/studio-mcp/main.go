@@ -137,15 +137,6 @@ func addJSONResource(s *mcp.Server, gw *gatewayClient, uri, name, desc, path str
 	})
 }
 
-type IngestEvidenceInput struct {
-	YAMLContent string `json:"yaml_content" jsonschema:"Gemara EvaluationLog or EnforcementLog YAML content"`
-}
-
-type IngestEvidenceOutput struct {
-	Inserted int    `json:"inserted"`
-	PolicyID string `json:"policy_id"`
-}
-
 type SaveDraftAuditLogInput struct {
 	PolicyID       string `json:"policy_id" jsonschema:"Policy ID the audit covers"`
 	Content        string `json:"content" jsonschema:"Full audit log content (YAML or markdown)"`
@@ -170,20 +161,18 @@ type QueryEvidenceOutput struct {
 
 func registerTools(s *mcp.Server, gw *gatewayClient) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ingest_evidence",
-		Description: "Ingest Gemara EvaluationLog or EnforcementLog YAML into the data platform",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input IngestEvidenceInput) (*mcp.CallToolResult, IngestEvidenceOutput, error) {
-		body, err := gw.post(ctx, "/api/evidence/ingest", map[string]string{
-			"yaml_content": input.YAMLContent,
-		})
+		Name:        "query_evidence",
+		Description: "Query evidence records filtered by policy, control, target, or time range",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input QueryEvidenceInput) (*mcp.CallToolResult, QueryEvidenceOutput, error) {
+		path := "/api/evidence"
+		if input.PolicyID != "" {
+			path += "?policy_id=" + input.PolicyID
+		}
+		data, err := gw.get(ctx, path)
 		if err != nil {
-			return nil, IngestEvidenceOutput{}, fmt.Errorf("ingest_evidence: %w", err)
+			return nil, QueryEvidenceOutput{}, fmt.Errorf("query_evidence: %w", err)
 		}
-		var out IngestEvidenceOutput
-		if err := json.Unmarshal(body, &out); err != nil {
-			return nil, IngestEvidenceOutput{}, fmt.Errorf("parse response: %w", err)
-		}
-		return nil, out, nil
+		return nil, QueryEvidenceOutput{JSON: string(data)}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -206,21 +195,6 @@ func registerTools(s *mcp.Server, gw *gatewayClient) {
 			return nil, SaveDraftAuditLogOutput{}, fmt.Errorf("parse response: %w", err)
 		}
 		return nil, out, nil
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "query_evidence",
-		Description: "Query evidence records filtered by policy, control, target, or time range",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input QueryEvidenceInput) (*mcp.CallToolResult, QueryEvidenceOutput, error) {
-		path := "/api/evidence"
-		if input.PolicyID != "" {
-			path += "?policy_id=" + input.PolicyID
-		}
-		data, err := gw.get(ctx, path)
-		if err != nil {
-			return nil, QueryEvidenceOutput{}, fmt.Errorf("query_evidence: %w", err)
-		}
-		return nil, QueryEvidenceOutput{JSON: string(data)}, nil
 	})
 }
 

@@ -30,10 +30,10 @@ When `PromoteDraftAuditLog` is called, the system SHALL read `reviewer_edits` fr
 - **THEN** the promoted audit log content is identical to the original agent content
 
 ### Requirement: Schema includes reviewer_edits column
-The `draft_audit_logs` table SHALL include a `reviewer_edits String DEFAULT '{}'` column. Existing rows SHALL default to empty JSON object.
+The `draft_audit_logs` table in PostgreSQL SHALL include a `reviewer_edits JSONB DEFAULT '{}'` column. Existing rows SHALL default to empty JSON object.
 
 #### Scenario: Column exists after schema init
-- **WHEN** the ClickHouse schema is initialized
+- **WHEN** the PostgreSQL schema is initialized
 - **THEN** the `draft_audit_logs` table has a `reviewer_edits` column with default `'{}'`
 
 ### Requirement: GET draft returns reviewer_edits
