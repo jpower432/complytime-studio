@@ -131,7 +131,7 @@ Authentication and data persistence changed significantly in 2026-05.
 - Architecture: `docs/design/architecture.md`
 - ADR: `docs/decisions/postgres-with-extensions.md`
 
-**Agent implications:** Agents communicate with the gateway via the internal port (8081). They do not pass through OAuth2 Proxy. Agent-to-gateway auth is network-enforced via NetworkPolicy, not token-based.
+**Agent implications:** Agents communicate with the gateway via studio-mcp, which uses the REST API on port 8080. In production, agent traffic flows through OAuth2 Proxy like all other clients.
 
 ---
 

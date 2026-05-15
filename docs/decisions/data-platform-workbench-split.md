@@ -21,7 +21,7 @@ The SPA extraction (ADR #0022) moved the UI out. This decision completes the sep
 
 Split the gateway into two deployable services:
 
-1. **Data Platform** (`complytime-studio`) — Go gateway serving `/api/*`. Owns PostgreSQL-backed CRUD, the certifier pipeline (NATS), posture computation, content ingestion from registries, and user auth.
+1. **Data Platform** (`complytime-studio`) — Go gateway serving `/api/*`. Owns PostgreSQL-backed CRUD, the certifier pipeline (in-process via NATS), posture reads, content ingestion from registries, and user auth.
 
 2. **Studio Workbench** (`complytime-agents`) — Python server (Starlette) serving `/workbench/*`. Owns A2A routing to LangGraph agents, agent directory, chat state, Gemara validate/migrate (direct MCP), OCI publish and registry browse (direct MCP).
 

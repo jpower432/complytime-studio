@@ -13,7 +13,7 @@ Studio ingests evidence from scanning tools, maps it against compliance framewor
 | **Evidence Ingestion** | Ingest evidence from scanning tools via REST API — each record maps to a control and requirement |
 | **Requirement Coverage** | View control-by-control coverage with evidence counts, classifications, and drill-down |
 | **Audit Preparation** | AI agents draft [Gemara AuditLog](https://gemara.openssf.org/) artifacts; humans review and promote to official records |
-| **Notifications** | Activity feed for evidence arrivals, posture changes, and draft audit logs awaiting review |
+| **Draft Audit Logs** | AI agents produce drafts; humans review and promote to official records |
 
 ## Repository Structure
 

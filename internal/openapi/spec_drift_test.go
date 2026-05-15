@@ -85,7 +85,7 @@ func buildRouter(t *testing.T) *echo.Echo {
 	t.Helper()
 	e := echo.New()
 
-	authHandler := auth.NewHandler("")
+	authHandler := auth.NewHandler()
 	authHandler.Register(e)
 
 	e.GET("/healthz", func(c echo.Context) error {
@@ -108,7 +108,7 @@ func buildRouter(t *testing.T) *echo.Echo {
 		Catalogs:            &nopCatalogStore{},
 		EvidenceAssessments: &nopEvidenceAssessmentStore{},
 		Posture:             &nopPostureStore{},
-		Notifications:       &nopNotificationStore{},
+
 		Certifications:      &nopCertificationStore{},
 		EventPublisher:      &nopEventPublisher{},
 		HealthChecker:       &nopHealthChecker{},
@@ -357,17 +357,6 @@ func (*nopPostureStore) ListPosture(context.Context, time.Time, time.Time) ([]st
 func (*nopPostureStore) QueryPolicyPosture(context.Context, string) (uint64, uint64, uint64, error) {
 	panic("nop")
 }
-
-type nopNotificationStore struct{}
-
-func (*nopNotificationStore) InsertNotification(context.Context, store.Notification) error {
-	panic("nop")
-}
-func (*nopNotificationStore) ListNotifications(context.Context, int) ([]store.Notification, error) {
-	panic("nop")
-}
-func (*nopNotificationStore) MarkRead(context.Context, string) error    { panic("nop") }
-func (*nopNotificationStore) UnreadCount(context.Context) (int, error)  { panic("nop") }
 
 type nopCertificationStore struct{}
 

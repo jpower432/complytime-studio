@@ -56,7 +56,6 @@ type Stores struct {
 	Catalogs            CatalogStore
 	EvidenceAssessments EvidenceAssessmentStore
 	Posture             PostureStore
-	Notifications       NotificationStore
 	Certifications      CertificationStore
 	EventPublisher      EventPublisher
 	HealthChecker       HealthChecker
@@ -94,6 +93,7 @@ func Register(g *echo.Group, s Stores) {
 		g.GET("/draft-audit-logs", listDraftAuditLogsHandler(s.DraftAuditLogs))
 		g.GET("/draft-audit-logs/:id", getDraftAuditLogHandler(s.DraftAuditLogs))
 		g.PATCH("/draft-audit-logs/:id", updateDraftEditsHandler(s.DraftAuditLogs))
+		g.POST("/draft-audit-logs", createDraftAuditLogHandler(s.DraftAuditLogs, s.EventPublisher))
 		g.POST("/audit-logs/promote", promoteAuditLogHandler(s.DraftAuditLogs))
 	}
 	if s.Threats != nil {
@@ -105,34 +105,11 @@ func Register(g *echo.Group, s Stores) {
 		g.GET("/risks/severity", riskSeverityHandler(s.Risks))
 		g.GET("/risk-threats", listRiskThreatsHandler(s.Risks))
 	}
-	if s.Notifications != nil {
-		g.GET("/notifications", listNotificationsHandler(s.Notifications))
-		g.GET("/notifications/unread-count", unreadCountHandler(s.Notifications))
-		g.PATCH("/notifications/:id/read", markReadHandler(s.Notifications))
-		g.POST("/notifications", createNotificationHandler(s.Notifications))
-	}
 	if s.Programs != nil {
 		registerProgramRoutes(g, s)
 	}
 }
 
-// RegisterInternal mounts agent-only endpoints. Pass root = e.Group("") so
-// GET /healthz and POST /internal/draft-audit-logs match the prior ServeMux layout.
-// See docs/decisions/internal-endpoint-isolation.md.
-func RegisterInternal(root *echo.Group, s Stores) {
-	root.GET("/healthz", func(c echo.Context) error {
-		if s.HealthChecker != nil {
-			if err := s.HealthChecker.Ping(c.Request().Context()); err != nil {
-				return c.String(http.StatusServiceUnavailable, "postgres unreachable")
-			}
-		}
-		return c.String(http.StatusOK, "ok")
-	})
-	if s.DraftAuditLogs != nil {
-		ig := root.Group("/internal")
-		ig.POST("/draft-audit-logs", createDraftAuditLogHandler(s.DraftAuditLogs, s.EventPublisher))
-	}
-}
 
 func listPoliciesHandler(s PolicyStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -471,8 +448,7 @@ func listRequirementEvidenceHandler(s RequirementStore) echo.HandlerFunc {
 	}
 }
 
-// createDraftAuditLogHandler handles POST /internal/draft-audit-logs.
-// No auth required — cluster-internal only, restricted by NetworkPolicy.
+// createDraftAuditLogHandler handles POST /api/draft-audit-logs.
 func createDraftAuditLogHandler(s DraftAuditLogStore, pub EventPublisher) echo.HandlerFunc {
 	type createReq struct {
 		PolicyID       string `json:"policy_id"`
@@ -801,67 +777,3 @@ func riskSeverityHandler(s RiskStore) echo.HandlerFunc {
 	}
 }
 
-func listNotificationsHandler(s NotificationStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		limit := consts.ClampLimit(0)
-		if v := c.QueryParam("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				limit = consts.ClampLimit(n)
-			}
-		}
-		notifs, err := s.ListNotifications(c.Request().Context(), limit)
-		if err != nil {
-			slog.Error("list notifications failed", "error", err)
-			return jsonError(c, http.StatusInternalServerError, "query failed")
-		}
-		if notifs == nil {
-			notifs = []Notification{}
-		}
-		return c.JSON(http.StatusOK, notifs)
-	}
-}
-
-func unreadCountHandler(s NotificationStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		count, err := s.UnreadCount(c.Request().Context())
-		if err != nil {
-			slog.Error("unread count failed", "error", err)
-			return jsonError(c, http.StatusInternalServerError, "query failed")
-		}
-		return c.JSON(http.StatusOK, map[string]int{"count": count})
-	}
-}
-
-func markReadHandler(s NotificationStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		id := c.Param("id")
-		if id == "" {
-			return jsonError(c, http.StatusBadRequest, "missing notification id")
-		}
-		if err := s.MarkRead(c.Request().Context(), id); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return jsonError(c, http.StatusNotFound, "notification not found")
-			}
-			slog.Error("mark read failed", "error", err, "id", id)
-			return jsonError(c, http.StatusInternalServerError, "update failed")
-		}
-		return c.JSON(http.StatusOK, map[string]string{"status": "read"})
-	}
-}
-
-func createNotificationHandler(s NotificationStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		var n Notification
-		if err := c.Bind(&n); err != nil {
-			return jsonError(c, http.StatusBadRequest, "invalid json")
-		}
-		if n.NotificationID == "" || n.Type == "" || n.PolicyID == "" {
-			return jsonError(c, http.StatusBadRequest, "notification_id, type, and policy_id are required")
-		}
-		if err := s.InsertNotification(c.Request().Context(), n); err != nil {
-			slog.Error("create notification failed", "error", err)
-			return jsonError(c, http.StatusInternalServerError, "insert failed")
-		}
-		return c.JSON(http.StatusCreated, map[string]string{"status": "created"})
-	}
-}

@@ -27,17 +27,6 @@ func TestNilBus_SubscribeEvidence_NoPanic(t *testing.T) {
 	}
 }
 
-func TestNilBus_SubscribeDraftAuditLog_NoPanic(t *testing.T) {
-	var b *Bus
-	sub, err := b.SubscribeDraftAuditLog(func(_ DraftAuditLogEvent) {})
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if sub != nil {
-		t.Fatalf("expected nil subscription, got %v", sub)
-	}
-}
-
 func TestNilBus_Close_NoPanic(t *testing.T) {
 	var b *Bus
 	b.Close()

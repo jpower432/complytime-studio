@@ -3,7 +3,6 @@ module github.com/complytime/complytime-studio
 go 1.25.8
 
 require (
-	connectrpc.com/connect v1.19.2
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/gemaraproj/go-gemara v0.4.0
 	github.com/getkin/kin-openapi v0.138.0
@@ -14,7 +13,6 @@ require (
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/nats-io/nats.go v1.51.0
-	google.golang.org/protobuf v1.36.11
 	oras.land/oras-go/v2 v2.6.0
 )
 

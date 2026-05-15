@@ -8,7 +8,7 @@ ComplyTime ships as four repositories: **Data Platform** (API), **Studio Workben
 
 | Boundary | Role | Primary tech | Repository |
 |:--|:--|:--|:--|
-| **Data Platform** | Headless data API: evidence CRUD, certifier pipeline, posture computation, content ingestion, auth | Go gateway (`cmd/gateway`), PostgreSQL, NATS | [complytime-studio](https://github.com/complytime/complytime-studio) |
+| **Data Platform** | Headless data API: evidence CRUD, certifier pipeline (in-process), posture reads, content ingestion, auth | Go gateway (`cmd/gateway`), PostgreSQL, NATS | [complytime-studio](https://github.com/complytime/complytime-studio) |
 | **Studio Workbench** | Agent support: A2A routing, agent directory, chat state, Gemara validation, OCI publish/browse | Python (Starlette), LangGraph, MCP clients | [complytime-agents](https://github.com/complytime/complytime-agents) |
 | **Studio UI** | Batteries-included analyst UI: posture, evidence, audit views, agent chat shell | Preact SPA, Nginx reverse-proxy | [studio-ui](https://github.com/complytime/studio-ui) |
 | **Studio Deploy** | Helm chart and Docker Compose for local/cluster deployment | Helm, Docker Compose | [studio-deploy](https://github.com/complytime/studio-deploy) |
@@ -61,15 +61,14 @@ The data platform serves only data CRUD and background pipelines:
 
 - Evidence ingestion and query
 - Certifications query
-- Posture computation and query
+- Posture reads
 - Policies, catalogs, mappings CRUD
 - Requirements matrix
 - Audit logs and drafts
 - Threats, risks (catalog-derived)
-- Notifications (event-driven)
 - Users, roles, auth
 - Content ingestion from OCI registries
-- Certifier pipeline (NATS-driven)
+- Certifier pipeline (in-process goroutine, NATS-triggered)
 
 ## Workbench API Surface
 

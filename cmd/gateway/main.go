@@ -17,7 +17,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"github.com/complytime/complytime-studio/gen/studio/v1/studiov1connect"
 	"github.com/complytime/complytime-studio/internal/auth"
 	"github.com/complytime/complytime-studio/internal/blob"
 	"github.com/complytime/complytime-studio/internal/certifier"
@@ -26,7 +25,6 @@ import (
 	"github.com/complytime/complytime-studio/internal/events"
 	"github.com/complytime/complytime-studio/internal/httputil"
 	pgstore "github.com/complytime/complytime-studio/internal/postgres"
-	"github.com/complytime/complytime-studio/internal/service"
 	"github.com/complytime/complytime-studio/internal/store"
 )
 
@@ -55,10 +53,6 @@ func main() {
 	}
 	slog.Info("postgres ready")
 	st := store.New(pgClient.Pool())
-
-	// healthz and system-info are registered on Echo directly (below, after e is created).
-
-	internalPort := httputil.EnvOr("INTERNAL_PORT", consts.DefaultInternalPort)
 
 	var blobStore blob.BlobStore
 	if cfg, ok := blob.ConfigFromEnv(); ok {
@@ -131,8 +125,6 @@ func main() {
 
 	var pub store.EventPublisher = bus
 
-	var notifStore store.NotificationStore = st
-
 	stores := store.Stores{
 		Policies:            st,
 		Mappings:            st,
@@ -148,7 +140,6 @@ func main() {
 		Catalogs:            st,
 		EvidenceAssessments: st,
 		Posture:             st,
-		Notifications:       notifStore,
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,
@@ -162,18 +153,12 @@ func main() {
 		"/api/policies", "/api/evidence/ingest", "/api/audit-logs", "/api/mappings",
 	})
 
-	adapter := &notificationAdapter{store: notifStore}
-	rateCache := events.NewRateCache()
-	postureHandler := events.PostureCheckHandler(ctx, st, adapter, rateCache)
-	postureDebouncer := events.NewDebouncer(consts.EventDebounceDuration, postureHandler)
-
 	pipeline := buildCertifierPipeline()
 	certAdapter := &certificationAdapter{store: st}
 	certHandler := events.CertificationHandler(ctx, pipeline, certAdapter, certAdapter)
 	certDebouncer := events.NewDebouncer(consts.EventDebounceDuration, certHandler)
 
 	sub, subErr := bus.SubscribeEvidence(func(evt events.EvidenceEvent) {
-		postureDebouncer.Push(evt)
 		certDebouncer.Push(evt)
 	})
 	if subErr != nil {
@@ -183,29 +168,11 @@ func main() {
 	defer func() { _ = sub.Unsubscribe() }()
 	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
 
-	draftSub, draftSubErr := bus.SubscribeDraftAuditLog(func(evt events.DraftAuditLogEvent) {
-		payload := fmt.Sprintf(`{"draft_id":%q,"summary":%q}`, evt.DraftID, evt.Summary)
-		if err := adapter.InsertNotification(ctx, "draft_audit_log", evt.PolicyID, payload); err != nil {
-			slog.Warn("draft notification insert failed", "draft_id", evt.DraftID, "error", err)
-		}
-	})
-	if draftSubErr != nil {
-		slog.Error("nats draft subscribe failed", "error", draftSubErr)
-		os.Exit(1)
-	}
-	defer func() { _ = draftSub.Unsubscribe() }()
-	slog.Info("nats draft-audit-log subscription active", "subject", events.SubjectDraft+".>")
-
-	apiToken := auth.APITokenFromEnv()
-	authHandler := auth.NewHandler(apiToken)
+	authHandler := auth.NewHandler()
 	authHandler.SetUserStore(pgClient)
 
-	if apiToken != "" {
-		slog.Info("api token auth enabled for seed/CI scripts")
-	}
 	slog.Info("auth: OAuth2 Proxy handles OIDC externally, gateway trusts X-Forwarded-* headers")
 
-	// --- Echo server setup ---
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -296,67 +263,15 @@ func main() {
 
 	slog.Info("api routes registered", "groups", []string{"store", "users", "config"})
 
-	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
-	addr := net.JoinHostPort(listenHost, port)
-	internalAddr := net.JoinHostPort("0.0.0.0", internalPort)
-
-	internalE := echo.New()
-	internalE.HideBanner = true
-	internalE.HidePort = true
-	internalE.HTTPErrorHandler = func(err error, c echo.Context) {
-		if c.Response().Committed {
-			return
-		}
-		he, ok := err.(*echo.HTTPError)
-		if ok {
-			msg := fmt.Sprintf("%v", he.Message)
-			_ = c.JSON(he.Code, map[string]string{"error": msg})
-		} else {
-			slog.Error("internal handler error", "error", err, "path", c.Request().URL.Path)
-			_ = c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
-		}
-	}
-	internalE.Use(middleware.BodyLimit(fmt.Sprintf("%dM", consts.MaxInternalRequestBody>>20)))
-	internalE.GET("/healthz", func(c echo.Context) error {
-		if err := pgClient.Ping(c.Request().Context()); err != nil {
-			return c.String(http.StatusServiceUnavailable, "postgres unreachable")
-		}
-		return c.String(http.StatusOK, "ok")
-	})
-	store.RegisterInternal(internalE.Group(""), stores)
-
-	connectPath, connectHandler := studiov1connect.NewStudioServiceHandler(service.New(stores))
-	internalE.Any(connectPath+"*", echo.WrapHandler(connectHandler))
-	slog.Info("connectrpc service mounted on internal port", "path", connectPath)
-
-	internalSrv := &http.Server{
-		Addr:           internalAddr,
-		Handler:        internalE,
-		ReadTimeout:    consts.ServerReadTimeout,
-		WriteTimeout:   consts.ServerWriteTimeout,
-		IdleTimeout:    consts.ServerIdleTimeout,
-		MaxHeaderBytes: 1 << 20,
-	}
-
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = e.Shutdown(shutdownCtx)
-		_ = internalSrv.Shutdown(shutdownCtx)
 	}()
 
-	if os.Getenv("NETWORKPOLICY_ENFORCED") == "" {
-		slog.Warn("NETWORKPOLICY_ENFORCED is unset — internal port has no auth; ensure a NetworkPolicy restricts access in production",
-			"internal_addr", internalAddr)
-	}
-	go func() {
-		slog.Info("internal listener starting", "addr", internalAddr)
-		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("internal http server failed", "error", err)
-			os.Exit(1)
-		}
-	}()
+	listenHost := httputil.EnvOr("LISTEN_HOST", "0.0.0.0")
+	addr := net.JoinHostPort(listenHost, port)
 
 	e.Server.ReadTimeout = consts.ServerReadTimeout
 	e.Server.WriteTimeout = consts.ServerWriteTimeout
@@ -385,8 +300,7 @@ func splitComma(raw string) []string {
 }
 
 // writeProtect gates POST/PUT/PATCH/DELETE on /api/* through adminGuard.
-// GET and non-API requests pass through. /internal/* is rejected on the
-// public port. See docs/decisions/internal-endpoint-isolation.md.
+// GET and non-API requests pass through.
 func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		guarded := adminGuard(next)
@@ -394,12 +308,8 @@ func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 			path := c.Request().URL.Path
 			method := c.Request().Method
 
-			if strings.HasPrefix(path, "/internal/") {
-				return c.String(http.StatusNotFound, "not found")
-			}
 			if strings.HasPrefix(path, "/api/") && method != http.MethodGet {
-				if path == "/api/bootstrap" ||
-					(method == http.MethodPatch && strings.HasPrefix(path, "/api/notifications/") && strings.HasSuffix(path, "/read")) {
+				if path == "/api/bootstrap" {
 					return next(c)
 				}
 				return guarded(c)
@@ -409,23 +319,7 @@ func writeProtect(adminGuard echo.MiddlewareFunc) echo.MiddlewareFunc {
 	}
 }
 
-// notificationAdapter adapts store.NotificationStore to events.NotificationWriter.
-type notificationAdapter struct {
-	store store.NotificationStore
-}
-
-func (a *notificationAdapter) InsertNotification(
-	ctx context.Context, notifType, policyID, payload string,
-) error {
-	return a.store.InsertNotification(ctx, store.Notification{
-		Type:     notifType,
-		PolicyID: policyID,
-		Payload:  payload,
-	})
-}
-
-// buildCertifierPipeline constructs the day-one certifier pipeline from
-// environment configuration.
+// buildCertifierPipeline constructs the certifier pipeline from environment.
 func buildCertifierPipeline() *certifier.Pipeline {
 	knownRegistries := make(map[string]bool)
 	for _, r := range splitComma(os.Getenv("KNOWN_REGISTRIES")) {
@@ -442,8 +336,8 @@ func buildCertifierPipeline() *certifier.Pipeline {
 	)
 }
 
-// certificationAdapter bridges store.Store to the events.CertificationQuerier
-// and events.CertificationWriter interfaces.
+// certificationAdapter bridges store.Store to events.CertificationQuerier
+// and events.CertificationWriter.
 type certificationAdapter struct {
 	store interface {
 		QueryRecentEvidence(
@@ -500,4 +394,3 @@ func (a *certificationAdapter) UpdateEvidenceCertified(
 ) error {
 	return a.store.UpdateEvidenceCertified(ctx, evidenceID, certified)
 }
-

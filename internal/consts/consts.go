@@ -8,11 +8,6 @@ const (
 	// MaxRequestBody is the maximum allowed HTTP request body size (8 MiB).
 	MaxRequestBody int64 = 8 << 20
 
-	// MaxInternalRequestBody is the body limit for the internal (agent-only)
-	// listener. AuditLog drafts include full YAML with evidence and can
-	// exceed the public API limit.
-	MaxInternalRequestBody int64 = 64 << 20
-
 	// HTTPClientTimeout is the default timeout for outbound HTTP clients.
 	HTTPClientTimeout = 15 * time.Second
 
@@ -45,14 +40,6 @@ const (
 	// MaxQueryLimit is the maximum allowed limit for list endpoints.
 	// Requests exceeding this are silently clamped.
 	MaxQueryLimit = 1000
-
-	// DefaultInternalPort is the default port for the internal (agent-only)
-	// HTTP listener. Override via INTERNAL_PORT env var.
-	DefaultInternalPort = "8081"
-
-	// DefaultDevAPIToken is the well-known dev seed token shipped in
-	// values.yaml. The gateway warns at startup if this value is still in use.
-	DefaultDevAPIToken = "dev-seed-token"
 
 	// RoleAdmin is the admin role value stored in the users table.
 	RoleAdmin = "admin"

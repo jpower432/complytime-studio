@@ -9,7 +9,7 @@
 | 0003 | [Modulith Gateway Architecture](backend-architecture.md) | Superseded by #0025 | 2026-04-18 |
 | 0004 | [Audit Dashboard Pivot](audit-dashboard-pivot.md) | Accepted | 2026-04-18 |
 | 0005 | [Agent Interaction Model — HITL Chatbot](agent-interaction-model.md) | Accepted | 2026-04-22 |
-| 0006 | [Internal Endpoint Isolation — Dual-Port Gateway](internal-endpoint-isolation.md) | Accepted | 2026-04-25 |
+| 0006 | [Internal Endpoint Isolation — Dual-Port Gateway](internal-endpoint-isolation.md) | Superseded | 2026-04-25 |
 | 0007 | [Default Admin & Token Hardening](default-admin-token-hardening.md) | Accepted | 2026-04-25 |
 | 0008 | [Query Limit Cap](query-limit-cap.md) | Accepted | 2026-04-25 |
 | 0009 | [Gemara-Native Security Development Lifecycle](gemara-native-sdlc.md) | Accepted | 2026-04-25 |
@@ -24,7 +24,8 @@
 | 0023 | [studio-mcp Server](studio-mcp-server.md) | Accepted | 2026-05-12 |
 | 0024 | [Agent MCP Surface — studio-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
 | 0025 | [Data Platform + Workbench Split](data-platform-workbench-split.md) | Accepted | 2026-05-13 |
-| 0026 | [ConnectRPC Internal API for studio-mcp](connectrpc-internal-api.md) | Accepted | 2026-05-13 |
+| 0026 | [ConnectRPC Internal API for studio-mcp](connectrpc-internal-api.md) | Superseded | 2026-05-13 |
+| 0027 | [JWT Bearer Authentication for Headless API Access](jwt-bearer-headless-auth.md) | Accepted | 2026-05-13 |
 
 ## Active Workarounds
 

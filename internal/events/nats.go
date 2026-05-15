@@ -109,23 +109,8 @@ func (b *Bus) PublishDraftAuditLog(draftID, policyID, summary string) {
 	}
 }
 
-// SubscribeDraftAuditLog subscribes to draft audit log events (studio.draft-audit-log.>).
-func (b *Bus) SubscribeDraftAuditLog(handler func(DraftAuditLogEvent)) (*nats.Subscription, error) {
-	if b == nil || b.conn == nil {
-		return nil, nil
-	}
-	return b.conn.Subscribe(SubjectDraft+".>", func(msg *nats.Msg) {
-		var evt DraftAuditLogEvent
-		if err := json.Unmarshal(msg.Data, &evt); err != nil {
-			slog.Warn("nats unmarshal failed", "error", err)
-			return
-		}
-		handler(evt)
-	})
-}
-
 // SubscribeEvidence subscribes to all evidence events (studio.evidence.>).
-// The handler receives decoded events. Returns the subscription for lifecycle management.
+// The gateway uses this for the in-process certifier pipeline.
 func (b *Bus) SubscribeEvidence(handler func(EvidenceEvent)) (*nats.Subscription, error) {
 	if b == nil || b.conn == nil {
 		return nil, nil

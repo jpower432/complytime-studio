@@ -597,6 +597,42 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DraftAuditLog'
+    post:
+      tags: [DraftAuditLogs]
+      operationId: createDraftAuditLog
+      summary: Create a draft audit log
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy_id, content, summary]
+              properties:
+                policy_id:
+                  type: string
+                content:
+                  type: string
+                summary:
+                  type: string
+                agent_reasoning:
+                  type: string
+                model:
+                  type: string
+                prompt_version:
+                  type: string
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  draft_id:
+                    type: string
 
   /api/draft-audit-logs/{id}:
     get:
@@ -909,83 +945,6 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RiskThreatRow'
-
-  /api/notifications:
-    get:
-      tags: [Notifications]
-      operationId: listNotifications
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: List of notifications
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Notification'
-    post:
-      tags: [Notifications]
-      operationId: createNotification
-      summary: Create a notification
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Notification'
-      responses:
-        '201':
-          description: Notification created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: created
-        '400':
-          description: Invalid JSON or missing required fields
-
-  /api/notifications/unread-count:
-    get:
-      tags: [Notifications]
-      operationId: notificationsUnreadCount
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  count:
-                    type: integer
-
-  /api/notifications/{id}/read:
-    patch:
-      tags: [Notifications]
-      operationId: markNotificationRead
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: read
 
   /api/users:
     get:
@@ -1548,23 +1507,6 @@ components:
           type: string
         source_registry:
           type: string
-
-    Notification:
-      type: object
-      properties:
-        notification_id:
-          type: string
-        type:
-          type: string
-        policy_id:
-          type: string
-        payload:
-          type: string
-        read:
-          type: boolean
-        created_at:
-          type: string
-          format: date-time
 
     CertificationRow:
       type: object

@@ -16,12 +16,11 @@ import (
 // Session represents the authenticated user identity injected into request
 // context. Populated from X-Forwarded-* headers set by OAuth2 Proxy.
 type Session struct {
-	Login          string   `json:"l"`
-	Name           string   `json:"n"`
-	AvatarURL      string   `json:"a"`
-	Email          string   `json:"e"`
-	Groups         []string `json:"g,omitempty"`
-	ServiceAccount bool     `json:"-"`
+	Login     string   `json:"l"`
+	Name      string   `json:"n"`
+	AvatarURL string   `json:"a"`
+	Email     string   `json:"e"`
+	Groups    []string `json:"g,omitempty"`
 }
 
 // UserInfo is the public-facing user info returned by /auth/me.
@@ -47,14 +46,13 @@ func SessionFrom(ctx context.Context) (*Session, bool) {
 // is established by OAuth2 Proxy via X-Forwarded-* headers. The handler
 // trusts these headers, upserts users on first-seen, and enforces RBAC.
 type Handler struct {
-	apiToken string
-	users    UserStore
+	users UserStore
 }
 
 // NewHandler creates an auth handler. OAuth2 Proxy handles OIDC externally;
 // the handler only reads proxy-injected headers and manages the user store.
-func NewHandler(apiToken string) *Handler {
-	return &Handler{apiToken: apiToken}
+func NewHandler() *Handler {
+	return &Handler{}
 }
 
 // StripUntrustedProxyHeaders returns middleware that removes X-Forwarded-*
@@ -118,28 +116,13 @@ a:hover{background:#3b8ea5;color:#fff}
 
 // Middleware reads X-Forwarded-* headers from OAuth2 Proxy and injects a
 // Session into the request context. Falls through to anonymous for non-API
-// paths. Supports STUDIO_API_TOKEN bypass for CI/scripts.
+// paths.
 func (h *Handler) Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			r := c.Request()
 			if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
 				return next(c)
-			}
-
-			if h.apiToken != "" {
-				if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); bearer == h.apiToken {
-					sess := &Session{
-						Email:          "api-token@internal",
-						Name:           "API Token",
-						ServiceAccount: true,
-					}
-					ctx := context.WithValue(r.Context(), sessionKey, sess)
-					ctx = httputil.WithIdentity(ctx, "api-token@internal")
-					c.SetRequest(r.WithContext(ctx))
-					authRequestTotal.Add("api_token", 1)
-					return next(c)
-				}
 			}
 
 			email := r.Header.Get("X-Forwarded-Email")
@@ -172,51 +155,19 @@ func (h *Handler) Middleware() echo.MiddlewareFunc {
 	}
 }
 
-// serviceAccountAllowedPaths are the only write paths that STUDIO_API_TOKEN
-// can access. All other mutating /api/* routes require a human session with
-// sufficient role. This limits the blast radius of a leaked token to
-// seed/ingest operations.
-var serviceAccountAllowedPaths = []string{
-	"/api/evidence/ingest",
-	"/api/import",
-}
-
-var serviceAccountAllowedMethodPaths = []struct {
-	method string
-	prefix string
-}{
-	{"POST", "/api/programs"},
-	{"PUT", "/api/programs/"},
-}
-
 func writerAdminOnlyPath(path string) bool {
 	return strings.HasPrefix(path, "/api/users") ||
 		strings.HasPrefix(path, "/api/role-changes")
 }
 
 // RequireWrite returns middleware that rejects mutating requests without
-// sufficient role. Service accounts are restricted to serviceAccountAllowedPaths.
+// sufficient role.
 func RequireWrite(users UserStore) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sess, ok := SessionFrom(c.Request().Context())
 			if !ok {
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
-			}
-		if sess.ServiceAccount {
-			path := c.Request().URL.Path
-			method := c.Request().Method
-			for _, allowed := range serviceAccountAllowedPaths {
-				if strings.HasPrefix(path, allowed) {
-					return next(c)
-				}
-			}
-			for _, mp := range serviceAccountAllowedMethodPaths {
-				if method == mp.method && strings.HasPrefix(path, mp.prefix) {
-					return next(c)
-				}
-			}
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "api token not authorized for this endpoint"})
 			}
 			if users == nil {
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "admin role required"})
@@ -347,10 +298,6 @@ func splitGroups(raw string) []string {
 func RejectUnlessWriterOrAdmin(c echo.Context, users UserStore) bool {
 	sess, ok := SessionFrom(c.Request().Context())
 	if !ok {
-		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
-		return true
-	}
-	if sess.ServiceAccount {
 		_ = c.JSON(http.StatusForbidden, map[string]string{"error": "writer or admin role required"})
 		return true
 	}

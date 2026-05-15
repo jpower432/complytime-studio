@@ -52,7 +52,7 @@ The [Gemara schema](https://gemara.openssf.org/) is the shared contract across a
 The workflow below traces a single audit cycle from evidence arrival to auditor deliverable.
 
 ```
-Evidence arrives → Posture check → Notification → Review → Audit → Export
+Evidence arrives → Certification → Review → Audit → Export
 ```
 
 ### 1. Setup (one-time)
@@ -78,18 +78,15 @@ Inserts into PostgreSQL and publishes a NATS event per policy.
 
 NATS event → Debouncer (30s window, coalesces per policy) → PostureCheckHandler:
 
-1. Query current pass rate for the policy
-2. Compare to last-known rate
-3. If delta detected → insert a `posture_change` notification
-4. Notification appears in the audit liaison's Inbox with the delta (e.g., "95% → 82%")
+1. Query current pass rate for the policy via `GET /api/posture`
+2. Review posture trends to identify changes
 
 ### 4. Triage (audit liaison)
 
 The liaison opens Studio and sees:
 
 - **Posture** — cards per policy with a stacked pass/fail/other bar, freshness indicator, time presets (7d / 30d / 90d / All) for evidence collection range, optional summary strip, target/control count, RACI owner, risk severity
-- **Inbox badge** — red dot when unread notifications exist
-- **Inbox** — combined feed of posture change notifications and draft audit logs
+- **Draft Audit Logs** — view and review agent-produced drafts
 
 **View Details** on a card opens the policy drill-down with tabs for Requirements, Evidence, and History (the card is not a full click target).
 

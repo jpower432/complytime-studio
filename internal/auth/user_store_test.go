@@ -139,7 +139,7 @@ func (m *memoryUserStore) BootstrapAdmin(_ context.Context, email string) (strin
 func testHandlerWithStore(t *testing.T) (*Handler, *memoryUserStore) {
 	t.Helper()
 	us := newMemoryUserStore()
-	h := NewHandler("")
+	h := NewHandler()
 	h.SetUserStore(us)
 	return h, us
 }
@@ -231,31 +231,24 @@ func TestMiddleware_SkipsAPIConfig(t *testing.T) {
 	}
 }
 
-func TestMiddleware_APIToken(t *testing.T) {
-	h := NewHandler("test-api-token-123")
+func TestMiddleware_NoStaticToken(t *testing.T) {
+	h := NewHandler()
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
 	e := echo.New()
 	e.Use(h.Middleware())
 	e.GET("/api/test", func(c echo.Context) error {
-		sess, ok := SessionFrom(c.Request().Context())
-		if !ok {
-			return c.String(http.StatusUnauthorized, "no session")
-		}
-		if !sess.ServiceAccount {
-			return c.String(http.StatusForbidden, "not service account")
-		}
 		return c.NoContent(http.StatusOK)
 	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-	req.Header.Set("Authorization", "Bearer test-api-token-123")
+	req.Header.Set("Authorization", "Bearer some-token")
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (bearer tokens no longer accepted by gateway)", rec.Code)
 	}
 }
 
@@ -344,7 +337,7 @@ func TestMiddleware_RoleSeedSkipsIfAdminExists(t *testing.T) {
 }
 
 func TestTokenFromRequest_XForwardedAccessToken(t *testing.T) {
-	h := NewHandler("")
+	h := NewHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
 	req.Header.Set("X-Forwarded-Access-Token", "ya29.access-token-123")
 
@@ -355,7 +348,7 @@ func TestTokenFromRequest_XForwardedAccessToken(t *testing.T) {
 }
 
 func TestTokenFromRequest_NoHeader(t *testing.T) {
-	h := NewHandler("")
+	h := NewHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
 
 	_, ok := h.TokenFromRequest(req)
@@ -590,51 +583,10 @@ func TestSplitGroups(t *testing.T) {
 	}
 }
 
-func TestAPIToken_WritePathScoped(t *testing.T) {
-	const token = "test-scoped-token"
-	h := NewHandler(token)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	guard := RequireWrite(us)
-
-	t.Run("token allowed on ingest path", func(t *testing.T) {
-		e := echo.New()
-		e.Use(h.Middleware())
-		e.Use(guard)
-		e.POST("/api/evidence/ingest", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/evidence/ingest", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (token should be allowed on ingest)", rec.Code)
-		}
-	})
-
-	t.Run("token blocked on admin-only path", func(t *testing.T) {
-		e := echo.New()
-		e.Use(h.Middleware())
-		e.Use(guard)
-		e.DELETE("/api/programs/123", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/api/programs/123", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403 (token should be blocked on admin paths)", rec.Code)
-		}
-	})
-}
-
 func TestStripUntrustedProxyHeaders(t *testing.T) {
 	t.Run("strips headers without matching secret", func(t *testing.T) {
 		strip := StripUntrustedProxyHeaders("shared-secret-123")
-		h := NewHandler("")
+		h := NewHandler()
 		us := newMemoryUserStore()
 		h.SetUserStore(us)
 
@@ -657,7 +609,7 @@ func TestStripUntrustedProxyHeaders(t *testing.T) {
 
 	t.Run("passes headers with matching secret", func(t *testing.T) {
 		strip := StripUntrustedProxyHeaders("shared-secret-123")
-		h := NewHandler("")
+		h := NewHandler()
 		us := newMemoryUserStore()
 		h.SetUserStore(us)
 
@@ -681,7 +633,7 @@ func TestStripUntrustedProxyHeaders(t *testing.T) {
 
 	t.Run("no-op when secret is empty (dev mode)", func(t *testing.T) {
 		strip := StripUntrustedProxyHeaders("")
-		h := NewHandler("")
+		h := NewHandler()
 		us := newMemoryUserStore()
 		h.SetUserStore(us)
 

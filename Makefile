@@ -11,7 +11,7 @@ KIND_CLUSTER ?= complytime-studio
 .PHONY: test lint clean \
 	gateway-build gateway-image \
 	studio-mcp-build studio-mcp-image \
-	proto-gen \
+
 	compose-up seed \
 	cluster-up cluster-down \
 	oidc-secret \
@@ -32,9 +32,6 @@ lint-openapi:
 
 clean:
 	rm -rf bin/
-
-proto-gen: ## Regenerate ConnectRPC stubs from proto/studio/v1/studio.proto
-	buf generate
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
@@ -77,15 +74,14 @@ oidc-secret:
 # Use: cd ../studio-deploy && make helm-install
 
 # Seed demo data into a running Studio instance.
-# Port-forwards directly to the gateway container (bypassing OAuth2 Proxy).
-# Token is auto-extracted from the generated secret unless STUDIO_API_TOKEN is set.
+# Port-forwards to the gateway container (bypassing OAuth2 Proxy).
+# Identity is injected via X-Forwarded-Email header.
 SEED_PORT ?= 9090
-STUDIO_API_TOKEN ?= $(shell kubectl get secret studio-cookie-secret -n $(NAMESPACE) -o jsonpath='{.data.api-token}' 2>/dev/null | base64 -d)
 seed:
 	@echo "Port-forwarding to gateway pod (bypassing OAuth2 Proxy)..."
 	@kubectl port-forward -n $(NAMESPACE) deployment/studio-gateway $(SEED_PORT):8080 &
 	@sleep 2
-	@GATEWAY_URL=http://localhost:$(SEED_PORT) STUDIO_API_TOKEN=$(STUDIO_API_TOKEN) ./demo/seed.sh; \
+	@GATEWAY_URL=http://localhost:$(SEED_PORT) ./demo/seed.sh; \
 		EXIT_CODE=$$?; \
 		kill %1 2>/dev/null; \
 		exit $$EXIT_CODE

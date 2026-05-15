@@ -5,17 +5,14 @@
 # Not derived from real assessments. Do not use in production.
 #
 # Seed demo data into a running ComplyTime Studio instance.
-# Usage: GATEWAY_URL=http://localhost:9090 STUDIO_API_TOKEN=studio-dev-token ./demo/seed.sh
+# Usage: GATEWAY_URL=http://localhost:9090 ./demo/seed.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:9090}"
-STUDIO_API_TOKEN="${STUDIO_API_TOKEN:-}"
+SEED_IDENTITY="${SEED_IDENTITY:-seed@complytime.dev}"
 
-AUTH_HEADER=()
-if [[ -n "${STUDIO_API_TOKEN}" ]]; then
-  AUTH_HEADER=(-H "Authorization: Bearer ${STUDIO_API_TOKEN}")
-fi
+AUTH_HEADER=(-H "X-Forwarded-Email: ${SEED_IDENTITY}")
 
 info()  { echo "==> $*"; }
 check() { echo "  ✓ $*"; }

@@ -126,14 +126,6 @@ type DraftAuditLogStore interface {
 	PromoteDraftAuditLog(ctx context.Context, draftID string, reviewedBy string) error
 }
 
-// NotificationStore defines operations for inbox notifications.
-type NotificationStore interface {
-	InsertNotification(ctx context.Context, n Notification) error
-	ListNotifications(ctx context.Context, limit int) ([]Notification, error)
-	MarkRead(ctx context.Context, notificationID string) error
-	UnreadCount(ctx context.Context) (int, error)
-}
-
 // Program is a persisted compliance program (see internal/postgres/programs.go).
 type Program = postgres.Program
 
@@ -177,7 +169,7 @@ var (
 	_ DraftAuditLogStore      = (*Store)(nil)
 	_ RequirementStore        = (*Store)(nil)
 	_ PostureStore            = (*Store)(nil)
-	_ NotificationStore       = (*Store)(nil)
+
 	_ CertificationStore      = (*Store)(nil)
 	_ GuidanceStore           = (*Store)(nil)
 	_ ProgramStore            = (*postgres.ProgramPG)(nil)
@@ -1337,9 +1329,6 @@ type EvidenceAssessment struct {
 	AssessedBy     string    `json:"assessed_by"`
 }
 
-// ErrNotFound is returned by MarkRead when the notification ID does not exist.
-var ErrNotFound = errors.New("not found")
-
 // ErrRequirementNotFound is returned by ListRequirementEvidence when the
 // requirement ID is not known for the policy (no matching catalog row and no
 // evidence rows scoped to that ID).
@@ -1699,75 +1688,6 @@ func (s *Store) QueryPolicyPosture(ctx context.Context, policyID string) (total,
 	return total, passed, failed, nil
 }
 
-// Notification represents an inbox notification stored in PostgreSQL.
-type Notification struct {
-	NotificationID string    `json:"notification_id"`
-	Type           string    `json:"type"`
-	PolicyID       string    `json:"policy_id"`
-	Payload        string    `json:"payload"`
-	Read           bool      `json:"read"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-// InsertNotification persists a new notification.
-func (s *Store) InsertNotification(ctx context.Context, n Notification) error {
-	if n.NotificationID == "" {
-		n.NotificationID = uuid.New().String()
-	}
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO notifications (notification_id, type, policy_id, payload) VALUES ($1, $2, $3, $4)`,
-		n.NotificationID, n.Type, n.PolicyID, n.Payload,
-	)
-	return err
-}
-
-// ListNotifications returns recent notifications ordered newest-first.
-func (s *Store) ListNotifications(ctx context.Context, limit int) ([]Notification, error) {
-	limit = consts.ClampLimit(limit)
-	rows, err := s.pool.Query(ctx,
-		`SELECT notification_id, type, policy_id, payload::TEXT, read, created_at
-			FROM notifications
-			ORDER BY created_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list notifications: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Notification
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.NotificationID, &n.Type, &n.PolicyID, &n.Payload, &n.Read, &n.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan notification: %w", err)
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
-}
-
-// MarkRead marks a notification as read. Returns ErrNotFound when the
-// notification ID does not exist.
-func (s *Store) MarkRead(ctx context.Context, notificationID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE notifications SET read = true WHERE notification_id = $1`, notificationID)
-	if err != nil {
-		return fmt.Errorf("mark read: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// UnreadCount returns the number of unread notifications.
-func (s *Store) UnreadCount(ctx context.Context) (int, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM notifications WHERE NOT read`)
-	var count int64
-	if err := row.Scan(&count); err != nil {
-		return 0, fmt.Errorf("unread count: %w", err)
-	}
-	return int(count), nil
-}
 
 // RequirementFilter holds query parameters for requirement matrix and evidence APIs.
 type RequirementFilter struct {

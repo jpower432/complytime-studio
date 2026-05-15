@@ -120,8 +120,7 @@ func TestListPostureHandler_AuthMiddleware(t *testing.T) {
 	seeded := []PostureRow{{PolicyID: "p1", Title: "Policy One", TotalRows: 3}}
 	mock := &fakePostureStore{rows: seeded}
 
-	const apiToken = "test-posture-api-token"
-	h := auth.NewHandler(apiToken)
+	h := auth.NewHandler()
 
 	mux := echo.New()
 	mux.Use(h.Middleware())
@@ -143,9 +142,9 @@ func TestListPostureHandler_AuthMiddleware(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "bearer API token returns posture JSON",
+			name: "X-Forwarded-Email returns posture JSON",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("Authorization", "Bearer "+apiToken)
+				r.Header.Set("X-Forwarded-Email", "test@example.com")
 			},
 			wantStatus: http.StatusOK,
 			decodeBody: true,
@@ -182,7 +181,7 @@ func TestListPostureHandler_AuthMiddleware_wrongBearer(t *testing.T) {
 	t.Parallel()
 
 	mock := &fakePostureStore{rows: []PostureRow{{PolicyID: "x"}}}
-	h := auth.NewHandler("correct-token")
+	h := auth.NewHandler()
 
 	mux := echo.New()
 	mux.Use(h.Middleware())

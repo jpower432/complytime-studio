@@ -2,7 +2,7 @@
 
 # ADR 0026: ConnectRPC Internal API for studio-mcp
 
-**Status:** Accepted
+**Status:** Superseded — studio-mcp migrated to REST; ConnectRPC and internal port removed.
 **Date:** 2026-05-13
 
 ## Context

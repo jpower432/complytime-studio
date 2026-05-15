@@ -26,10 +26,6 @@ flowchart TB
     Echo["Echo — middleware, auth, /api/*, /auth/*, /healthz"]
   end
 
-  subgraph Internal["Internal listener :8081 — Echo only"]
-    IntEcho["POST /internal/draft-audit-logs · GET /healthz — no auth"]
-  end
-
   PG[("PostgreSQL — required")]
   NATS[("NATS — required")]
   Blob[("S3-compatible blob — optional")]
@@ -51,7 +47,6 @@ flowchart TB
   Echo --> PG
   Echo --> NATS
   Echo -->|"BLOB_*"| Blob
-  IntEcho --> PG
   WB --> GemaraMCP
   WB --> StudioMCP
   WB --> OrasMCP
@@ -59,7 +54,7 @@ flowchart TB
   Assistant --> StudioMCP
   Assistant --> OrasMCP
   PG -.->|"pg_clickhouse when configured"| CH
-  NATS -->|"posture + certification + draft notifications"| Echo
+  NATS -->|"certification pipeline"| Echo
 ```
 
 ---
@@ -68,13 +63,13 @@ flowchart TB
 
 ### Gateway (`cmd/gateway`)
 
-**BLUF:** Echo serves **only** `/api/*`, `/auth/*`, and `/healthz` on `PORT` (default **8080**). A second **internal** Echo server on `INTERNAL_PORT` (default **8081**) serves cluster-only paths with **no authentication**—lock it with `NetworkPolicy` (`NETWORKPOLICY_ENFORCED` documents that expectation). No embedded SPA, no A2A proxy, no agent directory, no chat store, no validate/migrate proxy, no registry/publish HTTP API for OCI (those live in workbench).
+**BLUF:** Echo serves **only** `/api/*`, `/auth/*`, and `/healthz` on `PORT` (default **8080**). Single port, single listener. No embedded SPA, no A2A proxy, no agent directory, no chat store, no validate/migrate proxy, no registry/publish HTTP API for OCI (those live in workbench).
 
 | Concern | Implementation |
 |:--|:--|
 | HTTP | **Echo only**—no `http.ServeMux`, no mux catch-all |
 | Data | `internal/store` + `internal/postgres`—single pool; `EnsureSchema` at startup |
-| Events | `internal/events`—NATS; debounced posture check, certification pipeline on evidence subjects; draft-audit-log → notification rows |
+| Events | `internal/events`—NATS; debounced certification pipeline on evidence subjects |
 | Blobs | `internal/blob`—MinIO-compatible client when `BLOB_*` set |
 | Catalog seed | Goroutine retries `PopulateCatalogsFromRegistry` (HTTP OCI layer fetch into `catalogs` when `REGISTRY_INSECURE`/registry env permits); structured backfills; OCI **bundle** unpack for imports uses `go-gemara/bundle` in store handlers—not MCP |
 | Auth | `internal/auth`—OAuth2 Proxy `X-Forwarded-*` headers; `auth.RequireWrite` with narrow bypasses (below) |
@@ -90,18 +85,18 @@ flowchart TB
 
 OAuth2 Proxy owns `/oauth2/start`, `/oauth2/callback`, `/oauth2/sign_out`. The gateway exposes `/auth/me`.
 
-Non-GET `/api/*` passes through `writeProtect` → `auth.RequireWrite`, with **only** these bypasses: **`POST /api/bootstrap`** and **`PATCH /api/notifications/{id}/read`** (path must end with `/read`).
+Non-GET `/api/*` passes through `writeProtect` → `auth.RequireWrite`, with **only** this bypass: **`POST /api/bootstrap`**.
 
 ### PostgreSQL
 
-**Single application database** for policies, evidence, programs, jobs, users, audit logs, draft audit logs, notifications, certifications, mappings, catalogs, controls, guidance, threats, risks, posture aggregates, inventory, and related tables. No ClickHouse fallback for gateway data paths.
+**Single application database** for policies, evidence, programs, jobs, users, audit logs, draft audit logs, certifications, mappings, catalogs, controls, guidance, threats, risks, posture aggregates, inventory, and related tables. No ClickHouse fallback for gateway data paths.
 
 ### NATS
 
 | Subject pattern | Use |
 |:--|:--|
-| `studio.evidence.<policy_id>` | After ingest—debounced **posture check** and **certification pipeline** |
-| `studio.draft-audit-log.<policy_id>` | **Notification** rows in Postgres when a draft audit log is created |
+| `studio.evidence.<policy_id>` | After ingest—debounced **certification pipeline** |
+| `studio.draft-audit-log.<policy_id>` | Published on draft creation (no active subscribers) |
 
 ### ClickHouse (optional)
 
@@ -135,13 +130,8 @@ sequenceDiagram
   C->>G: POST /api/evidence/ingest
   G->>PG: insert evidence
   G->>N: publish studio.evidence.policy_id
-  N->>G: subscriber — posture + certification
-  G->>PG: posture updates, certifications, evidence flags
-
-  Note over G,N: Draft audit log (internal or app path)
-  G->>N: publish studio.draft-audit-log.policy_id
-  N->>G: subscriber inserts notification
-  G->>PG: notifications row
+  N->>G: subscriber — certification pipeline
+  G->>PG: certifications, evidence.certified flag
 ```
 
 ---
@@ -175,8 +165,7 @@ Registration: `internal/store/handlers.go`, `internal/auth/user_handlers.go`, `i
 | POST | `/api/audit-logs/promote` | Promote draft |
 | GET | `/api/requirements`, `/api/requirements/{id}/evidence` | Matrix + drill-down |
 | GET | `/api/posture`, `/api/risks/severity`, … | Posture, risks, threats |
-| GET | `/api/notifications` (+ unread, mark-read, create) | Inbox |
-| POST | `/internal/draft-audit-logs` | **Internal port only** |
+| POST | `/api/draft-audit-logs` | Create draft |
 | GET | `/auth/me` | Identity from OAuth2 Proxy headers + user table |
 
 ---
@@ -189,12 +178,10 @@ Registration: `internal/store/handlers.go`, `internal/auth/user_handlers.go`, `i
 |:--|:--|:--|
 | `POSTGRES_URL` | **Yes** | Application database |
 | `NATS_URL` | **Yes** | Event bus |
-| `PORT` / `INTERNAL_PORT` | No | 8080 / 8081 defaults |
+| `PORT` | No | 8080 default |
 | `BLOB_*` | No | Object storage |
 | `CORS_ORIGINS` | No | Comma-separated allowed origins |
-| `STUDIO_API_TOKEN` | No | Static bearer for scripts/CI (scoped mutating paths in code) |
 | `PROXY_SECRET` | Prod recommended | Shared secret with OAuth2 Proxy for `X-Forwarded-*` trust |
-| `NETWORKPOLICY_ENFORCED` | Prod | Acknowledges internal port locked down |
 | `REGISTRY_INSECURE` / registry credential env | No | Catalog seed + policy import registry access (see `internal/store/registry_config.go`) |
 
 `GEMARA_MCP_URL` and `ORAS_MCP_URL` are **workbench** concerns, not gateway env vars.
@@ -220,9 +207,8 @@ Chart source: **`studio-deploy`** (`charts/complytime/`).
 
 | Kind | Name (pattern) | Notes |
 |:--|:--|:--|
-| Deployment | studio-gateway | **8080** public, **8081** internal |
+| Deployment | studio-gateway | **8080** |
 | Service | studio-gateway | ClusterIP → 8080 |
-| Service | studio-gateway-internal | ClusterIP → 8081; NetworkPolicy-scoped |
 | StatefulSet | studio-postgres | When `postgres.enabled` |
 | Deployment | studio-nats | When `nats.enabled` |
 | StatefulSet | studio-clickhouse | Only when `clickhouse.enabled` |
@@ -236,7 +222,7 @@ MCP servers (gemara, oras, studio) run as workloads the **workbench** uses, not 
 
 ## Routing: public Echo
 
-All HTTP routing on both listeners is **Echo**: middleware stack (recovery, request ID, security headers, optional CORS, Postgres degraded mode, auth, `writeProtect` → `RequireWrite`), then route groups. `/internal/*` on the public port returns **404** by design.
+All HTTP routing is on a single **Echo** listener: middleware stack (recovery, request ID, security headers, optional CORS, Postgres degraded mode, auth, `writeProtect` → `RequireWrite`), then route groups.
 
 ---
 

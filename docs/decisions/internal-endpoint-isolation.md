@@ -1,6 +1,6 @@
 # Internal Endpoint Isolation: Dual-Port Gateway
 
-**Status:** Accepted
+**Status:** Superseded — internal port removed; draft audit log endpoint moved to public API; studio-mcp uses REST on :8080.
 **Date:** 2026-04-25
 
 ## Context
