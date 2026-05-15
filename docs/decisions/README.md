@@ -29,6 +29,7 @@
 | 0028 | [Async Evidence Ingest: Accept-the-Loss Durability](async-ingest-durability.md) | Accepted | 2026-05-13 |
 | 0029 | [Notifications Belong Outside the Gateway](notifications-outside-gateway.md) | Accepted | 2026-05-14 |
 | 0030 | [Recommendation Engine Deferred to Workbench](recommendation-engine-deferred.md) | Deferred | 2026-05-14 |
+| 0031 | [Three-Protocol Serving Layer](serving-layer-protocols.md) | Accepted | 2026-05-15 |
 
 ## Active Workarounds
 

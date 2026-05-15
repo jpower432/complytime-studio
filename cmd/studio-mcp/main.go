@@ -9,7 +9,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,7 +32,7 @@ func main() {
 	gw := &gatewayClient{baseURL: gatewayURL, identity: identity}
 
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: "studio-mcp", Version: "v0.2.0"},
+		&mcp.Implementation{Name: "studio-mcp", Version: "v0.3.0"},
 		nil,
 	)
 
@@ -99,25 +101,21 @@ func registerResources(s *mcp.Server, gw *gatewayClient) {
 	addJSONResource(s, gw, "studio://catalogs", "catalogs", "List all imported catalogs", "/api/catalogs")
 	addJSONResource(s, gw, "studio://posture", "posture", "List compliance posture aggregates", "/api/posture")
 	addJSONResource(s, gw, "studio://audit-logs", "audit-logs", "List audit logs", "/api/audit-logs")
+	addJSONResource(s, gw, "studio://draft-audit-logs", "draft-audit-logs", "List draft audit logs pending review", "/api/draft-audit-logs")
 	addJSONResource(s, gw, "studio://threats", "threats", "List threat catalog entries", "/api/threats")
 	addJSONResource(s, gw, "studio://risks", "risks", "List risk catalog entries", "/api/risks")
-	addJSONResource(s, gw, "studio://mappings", "mappings", "List cross-framework mapping documents", "/api/mappings")
+	addJSONResource(s, gw, "studio://certifications", "certifications", "List evidence certification results", "/api/certifications")
+	addJSONResource(s, gw, "studio://requirements", "requirements", "List assessment requirements", "/api/requirements")
+	addJSONResource(s, gw, "studio://control-threats", "control-threats", "List control-to-threat mappings", "/api/control-threats")
+	addJSONResource(s, gw, "studio://risk-threats", "risk-threats", "List risk-to-threat mappings", "/api/risk-threats")
+	addJSONResource(s, gw, "studio://inventory", "inventory", "List imported artifact inventory", "/api/inventory")
+	addJSONResource(s, gw, "studio://programs", "programs", "List compliance programs", "/api/programs")
 
-	s.AddResourceTemplate(&mcp.ResourceTemplate{
-		URITemplate: "studio://policies/{policy_id}",
-		Name:        "policy",
-		Description: "Get a single policy with mappings",
-		MIMEType:    "application/json",
-	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		policyID := extractParam(req.Params.URI, "studio://policies/")
-		data, err := gw.get(ctx, "/api/policies/"+policyID)
-		if err != nil {
-			return nil, err
-		}
-		return &mcp.ReadResourceResult{
-			Contents: []*mcp.ResourceContents{textResource(req.Params.URI, data)},
-		}, nil
-	})
+	addResourceTemplate(s, gw, "studio://policies/{policy_id}", "policy", "Get a single policy with mappings", "studio://policies/", "/api/policies/")
+	addResourceTemplate(s, gw, "studio://audit-logs/{audit_log_id}", "audit-log", "Get a single audit log", "studio://audit-logs/", "/api/audit-logs/")
+	addResourceTemplate(s, gw, "studio://draft-audit-logs/{draft_id}", "draft-audit-log", "Get a single draft audit log", "studio://draft-audit-logs/", "/api/draft-audit-logs/")
+	addResourceTemplate(s, gw, "studio://programs/{program_id}", "program", "Get a single compliance program", "studio://programs/", "/api/programs/")
+	addResourceTemplate(s, gw, "studio://requirements/{requirement_id}/evidence", "requirement-evidence", "Get evidence for a specific requirement", "studio://requirements/", "/api/requirements/")
 }
 
 func addJSONResource(s *mcp.Server, gw *gatewayClient, uri, name, desc, path string) {
@@ -128,6 +126,24 @@ func addJSONResource(s *mcp.Server, gw *gatewayClient, uri, name, desc, path str
 		MIMEType:    "application/json",
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		data, err := gw.get(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{textResource(req.Params.URI, data)},
+		}, nil
+	})
+}
+
+func addResourceTemplate(s *mcp.Server, gw *gatewayClient, uriTemplate, name, desc, uriPrefix, apiPrefix string) {
+	s.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: uriTemplate,
+		Name:        name,
+		Description: desc,
+		MIMEType:    "application/json",
+	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		param := extractParam(req.Params.URI, uriPrefix)
+		data, err := gw.get(ctx, apiPrefix+param)
 		if err != nil {
 			return nil, err
 		}
@@ -151,8 +167,14 @@ type SaveDraftAuditLogOutput struct {
 }
 
 type QueryEvidenceInput struct {
-	PolicyID string `json:"policy_id" jsonschema:"Filter by policy ID"`
-	Limit    int    `json:"limit" jsonschema:"Max results to return"`
+	PolicyID   string `json:"policy_id" jsonschema:"Filter by policy ID"`
+	ControlID  string `json:"control_id" jsonschema:"Filter by control ID"`
+	TargetType string `json:"target_type" jsonschema:"Filter by target type"`
+	TargetID   string `json:"target_id" jsonschema:"Filter by target ID"`
+	Start      string `json:"start" jsonschema:"Start of time range (RFC3339)"`
+	End        string `json:"end" jsonschema:"End of time range (RFC3339)"`
+	Limit      int    `json:"limit" jsonschema:"Max results to return"`
+	Offset     int    `json:"offset" jsonschema:"Offset for pagination"`
 }
 
 type QueryEvidenceOutput struct {
@@ -164,9 +186,34 @@ func registerTools(s *mcp.Server, gw *gatewayClient) {
 		Name:        "query_evidence",
 		Description: "Query evidence records filtered by policy, control, target, or time range",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input QueryEvidenceInput) (*mcp.CallToolResult, QueryEvidenceOutput, error) {
-		path := "/api/evidence"
+		params := url.Values{}
 		if input.PolicyID != "" {
-			path += "?policy_id=" + input.PolicyID
+			params.Set("policy_id", input.PolicyID)
+		}
+		if input.ControlID != "" {
+			params.Set("control_id", input.ControlID)
+		}
+		if input.TargetType != "" {
+			params.Set("target_type", input.TargetType)
+		}
+		if input.TargetID != "" {
+			params.Set("target_id", input.TargetID)
+		}
+		if input.Start != "" {
+			params.Set("start", input.Start)
+		}
+		if input.End != "" {
+			params.Set("end", input.End)
+		}
+		if input.Limit > 0 {
+			params.Set("limit", strconv.Itoa(input.Limit))
+		}
+		if input.Offset > 0 {
+			params.Set("offset", strconv.Itoa(input.Offset))
+		}
+		path := "/api/evidence"
+		if len(params) > 0 {
+			path += "?" + params.Encode()
 		}
 		data, err := gw.get(ctx, path)
 		if err != nil {
