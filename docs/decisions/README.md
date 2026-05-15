@@ -27,6 +27,8 @@
 | 0026 | [ConnectRPC Internal API for studio-mcp](connectrpc-internal-api.md) | Superseded | 2026-05-13 |
 | 0027 | [JWT Bearer Authentication for Headless API Access](jwt-bearer-headless-auth.md) | Accepted | 2026-05-13 |
 | 0028 | [Async Evidence Ingest: Accept-the-Loss Durability](async-ingest-durability.md) | Accepted | 2026-05-13 |
+| 0029 | [Notifications Belong Outside the Gateway](notifications-outside-gateway.md) | Accepted | 2026-05-14 |
+| 0030 | [Recommendation Engine Deferred to Workbench](recommendation-engine-deferred.md) | Deferred | 2026-05-14 |
 
 ## Active Workarounds
 
