@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -32,7 +31,7 @@ func main() {
 	gw := &gatewayClient{baseURL: gatewayURL, identity: identity}
 
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: "studio-mcp", Version: "v0.3.0"},
+		&mcp.Implementation{Name: "complytime-mcp", Version: "v0.4.0"},
 		nil,
 	)
 
@@ -70,52 +69,24 @@ func (g *gatewayClient) get(ctx context.Context, path string) ([]byte, error) {
 	return body, nil
 }
 
-func (g *gatewayClient) post(ctx context.Context, path string, payload any) ([]byte, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+path, strings.NewReader(string(data)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Forwarded-Email", g.identity)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("POST %s: %d %s", path, resp.StatusCode, string(body))
-	}
-	return body, nil
-}
-
 func registerResources(s *mcp.Server, gw *gatewayClient) {
-	addJSONResource(s, gw, "studio://policies", "policies", "List all imported policies", "/api/policies")
-	addJSONResource(s, gw, "studio://catalogs", "catalogs", "List all imported catalogs", "/api/catalogs")
-	addJSONResource(s, gw, "studio://posture", "posture", "List compliance posture aggregates", "/api/posture")
-	addJSONResource(s, gw, "studio://audit-logs", "audit-logs", "List audit logs", "/api/audit-logs")
-	addJSONResource(s, gw, "studio://draft-audit-logs", "draft-audit-logs", "List draft audit logs pending review", "/api/draft-audit-logs")
-	addJSONResource(s, gw, "studio://threats", "threats", "List threat catalog entries", "/api/threats")
-	addJSONResource(s, gw, "studio://risks", "risks", "List risk catalog entries", "/api/risks")
-	addJSONResource(s, gw, "studio://certifications", "certifications", "List evidence certification results", "/api/certifications")
-	addJSONResource(s, gw, "studio://requirements", "requirements", "List assessment requirements", "/api/requirements")
-	addJSONResource(s, gw, "studio://control-threats", "control-threats", "List control-to-threat mappings", "/api/control-threats")
-	addJSONResource(s, gw, "studio://risk-threats", "risk-threats", "List risk-to-threat mappings", "/api/risk-threats")
-	addJSONResource(s, gw, "studio://inventory", "inventory", "List imported artifact inventory", "/api/inventory")
-	addJSONResource(s, gw, "studio://programs", "programs", "List compliance programs", "/api/programs")
+	addJSONResource(s, gw, "complytime://policies", "policies", "List all imported policies", "/api/policies")
+	addJSONResource(s, gw, "complytime://catalogs", "catalogs", "List all imported catalogs", "/api/catalogs")
+	addJSONResource(s, gw, "complytime://posture", "posture", "List compliance posture aggregates", "/api/posture")
+	addJSONResource(s, gw, "complytime://audit-logs", "audit-logs", "List audit logs", "/api/audit-logs")
+	addJSONResource(s, gw, "complytime://draft-audit-logs", "draft-audit-logs", "List draft audit logs pending review", "/api/draft-audit-logs")
+	addJSONResource(s, gw, "complytime://threats", "threats", "List threat catalog entries", "/api/threats")
+	addJSONResource(s, gw, "complytime://risks", "risks", "List risk catalog entries", "/api/risks")
+	addJSONResource(s, gw, "complytime://certifications", "certifications", "List evidence certification results", "/api/certifications")
+	addJSONResource(s, gw, "complytime://requirements", "requirements", "List assessment requirements", "/api/requirements")
+	addJSONResource(s, gw, "complytime://control-threats", "control-threats", "List control-to-threat mappings", "/api/control-threats")
+	addJSONResource(s, gw, "complytime://risk-threats", "risk-threats", "List risk-to-threat mappings", "/api/risk-threats")
+	addJSONResource(s, gw, "complytime://inventory", "inventory", "List imported artifact inventory", "/api/inventory")
 
-	addResourceTemplate(s, gw, "studio://policies/{policy_id}", "policy", "Get a single policy with mappings", "studio://policies/", "/api/policies/")
-	addResourceTemplate(s, gw, "studio://audit-logs/{audit_log_id}", "audit-log", "Get a single audit log", "studio://audit-logs/", "/api/audit-logs/")
-	addResourceTemplate(s, gw, "studio://draft-audit-logs/{draft_id}", "draft-audit-log", "Get a single draft audit log", "studio://draft-audit-logs/", "/api/draft-audit-logs/")
-	addResourceTemplate(s, gw, "studio://programs/{program_id}", "program", "Get a single compliance program", "studio://programs/", "/api/programs/")
-	addResourceTemplate(s, gw, "studio://requirements/{requirement_id}/evidence", "requirement-evidence", "Get evidence for a specific requirement", "studio://requirements/", "/api/requirements/")
+	addResourceTemplate(s, gw, "complytime://policies/{policy_id}", "policy", "Get a single policy with mappings", "complytime://policies/", "/api/policies/")
+	addResourceTemplate(s, gw, "complytime://audit-logs/{audit_log_id}", "audit-log", "Get a single audit log", "complytime://audit-logs/", "/api/audit-logs/")
+	addResourceTemplate(s, gw, "complytime://draft-audit-logs/{draft_id}", "draft-audit-log", "Get a single draft audit log", "complytime://draft-audit-logs/", "/api/draft-audit-logs/")
+	addResourceTemplate(s, gw, "complytime://requirements/{requirement_id}/evidence", "requirement-evidence", "Get evidence for a specific requirement", "complytime://requirements/", "/api/requirements/")
 }
 
 func addJSONResource(s *mcp.Server, gw *gatewayClient, uri, name, desc, path string) {
@@ -151,19 +122,6 @@ func addResourceTemplate(s *mcp.Server, gw *gatewayClient, uriTemplate, name, de
 			Contents: []*mcp.ResourceContents{textResource(req.Params.URI, data)},
 		}, nil
 	})
-}
-
-type SaveDraftAuditLogInput struct {
-	PolicyID       string `json:"policy_id" jsonschema:"Policy ID the audit covers"`
-	Content        string `json:"content" jsonschema:"Full audit log content (YAML or markdown)"`
-	Summary        string `json:"summary" jsonschema:"One-line summary of the audit"`
-	AgentReasoning string `json:"agent_reasoning" jsonschema:"Agent reasoning trace"`
-	Model          string `json:"model" jsonschema:"Model that produced the draft"`
-	PromptVersion  string `json:"prompt_version" jsonschema:"Prompt version used"`
-}
-
-type SaveDraftAuditLogOutput struct {
-	DraftID string `json:"draft_id"`
 }
 
 type QueryEvidenceInput struct {
@@ -220,28 +178,6 @@ func registerTools(s *mcp.Server, gw *gatewayClient) {
 			return nil, QueryEvidenceOutput{}, fmt.Errorf("query_evidence: %w", err)
 		}
 		return nil, QueryEvidenceOutput{JSON: string(data)}, nil
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "save_draft_audit_log",
-		Description: "Save an agent-produced draft audit log for human review",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SaveDraftAuditLogInput) (*mcp.CallToolResult, SaveDraftAuditLogOutput, error) {
-		body, err := gw.post(ctx, "/api/draft-audit-logs", map[string]string{
-			"policy_id":       input.PolicyID,
-			"content":         input.Content,
-			"summary":         input.Summary,
-			"agent_reasoning": input.AgentReasoning,
-			"model":           input.Model,
-			"prompt_version":  input.PromptVersion,
-		})
-		if err != nil {
-			return nil, SaveDraftAuditLogOutput{}, fmt.Errorf("save_draft_audit_log: %w", err)
-		}
-		var out SaveDraftAuditLogOutput
-		if err := json.Unmarshal(body, &out); err != nil {
-			return nil, SaveDraftAuditLogOutput{}, fmt.Errorf("parse response: %w", err)
-		}
-		return nil, out, nil
 	})
 }
 

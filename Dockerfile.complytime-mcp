@@ -7,10 +7,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o /studio-mcp ./cmd/studio-mcp/
+RUN CGO_ENABLED=0 go build -o /complytime-mcp ./cmd/complytime-mcp/
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=builder /studio-mcp /studio-mcp
+COPY --from=builder /complytime-mcp /complytime-mcp
 
-ENTRYPOINT ["/studio-mcp"]
+ENTRYPOINT ["/complytime-mcp"]

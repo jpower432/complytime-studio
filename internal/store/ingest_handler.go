@@ -109,7 +109,7 @@ func IngestAsyncHandler(pub IngestRawPublisher, tracker *IngestTracker) http.Han
 			tracker.Fail(jobID, fmt.Sprintf("publish failed: %v", err))
 			slog.Error("async ingest publish failed", "job_id", jobID, "error", err)
 			httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"errors": []string{"event bus unavailable — use sync endpoint as fallback"},
+				"errors": []string{"event bus unavailable — try again later"},
 			})
 			return
 		}
@@ -133,82 +133,6 @@ func IngestJobStatusHandler(tracker *IngestTracker) echo.HandlerFunc {
 			return jsonError(c, http.StatusNotFound, "job not found")
 		}
 		return c.JSON(http.StatusOK, status)
-	}
-}
-
-// IngestGemaraHandler returns an http.HandlerFunc that accepts raw Gemara
-// artifact YAML (EvaluationLog or EnforcementLog), flattens it into evidence
-// rows, and inserts them into the store.
-func IngestGemaraHandler(s EvidenceStore, pub EventPublisher) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, consts.MaxRequestBody))
-		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-		if len(body) == 0 {
-			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{
-				"errors": []string{"request body is empty — expected Gemara YAML"},
-			})
-			return
-		}
-
-		artifactType, err := detectArtifactType(body)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{
-				"errors": []string{fmt.Sprintf("invalid artifact: %v", err)},
-			})
-			return
-		}
-
-		var rows []ingest.EvidenceRow
-		var policyID string
-
-		switch artifactType {
-		case gemara.EvaluationLogArtifact:
-			rows, policyID, err = flattenEvaluation(r.Context(), body)
-		case gemara.EnforcementLogArtifact:
-			rows, policyID, err = flattenEnforcement(r.Context(), body)
-		default:
-			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{
-				"errors": []string{fmt.Sprintf(
-					"unsupported artifact type %q — expected EvaluationLog or EnforcementLog",
-					artifactType,
-				)},
-			})
-			return
-		}
-	if err != nil {
-		slog.Error("artifact flatten failed", "type", artifactType, "error", err)
-		httputil.WriteJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"errors": []string{"failed to process artifact — check server logs for details"},
-		})
-		return
-	}
-
-		records := toEvidenceRecords(rows)
-		count, err := s.InsertEvidence(r.Context(), records)
-		if err != nil {
-			slog.Error("ingest insert failed", "error", err)
-			http.Error(w, "insert failed", http.StatusInternalServerError)
-			return
-		}
-
-		if pub != nil && count > 0 && policyID != "" {
-			pub.PublishEvidence(policyID, count)
-		}
-
-		slog.Info("gemara artifact ingested",
-			"type", artifactType,
-			"policy_id", policyID,
-			"rows", count,
-		)
-
-		httputil.WriteJSON(w, http.StatusCreated, map[string]any{
-			"inserted":  count,
-			"type":      artifactType.String(),
-			"policy_id": policyID,
-		})
 	}
 }
 

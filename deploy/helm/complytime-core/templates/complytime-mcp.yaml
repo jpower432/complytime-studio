@@ -1,0 +1,49 @@
+{{- if .Values.mcpServer.enabled }}
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-complytime-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "core.labels" . | nindent 4 }}
+    app.kubernetes.io/name: complytime-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: complytime-mcp
+  template:
+    metadata:
+      labels:
+        {{- include "core.labels" . | nindent 8 }}
+        app.kubernetes.io/name: complytime-mcp
+    spec:
+      containers:
+        - name: complytime-mcp
+          image: "{{ .Values.mcpServer.image.repository }}:{{ .Values.mcpServer.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATEWAY_URL
+              value: "http://core-gateway:8080"
+          resources:
+            {{- toYaml .Values.mcpServer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-complytime-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "core.labels" . | nindent 4 }}
+    app.kubernetes.io/name: complytime-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: complytime-mcp
+  ports:
+    - name: mcp
+      port: 3000
+      targetPort: 3000
+      protocol: TCP
+{{- end }}

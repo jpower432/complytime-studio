@@ -18,13 +18,13 @@ info()  { echo "==> $*"; }
 check() { echo "  ✓ $*"; }
 warn()  { echo "  ! $*"; }
 
-post_file() {
-  local endpoint="$1" file="$2" label="$3"
+ingest_file() {
+  local file="$1" label="$2" ct="${3:-application/x-yaml}"
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "${GATEWAY_URL}${endpoint}" \
-    -H "Content-Type: application/json" \
+    -X POST "${GATEWAY_URL}/api/ingest" \
+    -H "Content-Type: ${ct}" \
     "${AUTH_HEADER[@]}" \
-    -d @"${file}")
+    --data-binary @"${file}")
   if [[ "$HTTP_CODE" =~ ^2 ]]; then
     check "${label} (${HTTP_CODE})"
   else
@@ -36,26 +36,16 @@ info "Seeding demo data into ${GATEWAY_URL}"
 
 # ── Policies ──
 info "Importing policies..."
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy.json" "ampel-branch-protection"
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy-kube-security.json" "kube-security-baseline"
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy-supply-chain.json" "supply-chain-attestation"
+ingest_file "${SCRIPT_DIR}/policy.json" "ampel-branch-protection" "application/json"
+ingest_file "${SCRIPT_DIR}/policy-kube-security.json" "kube-security-baseline" "application/json"
+ingest_file "${SCRIPT_DIR}/policy-supply-chain.json" "supply-chain-attestation" "application/json"
 
 # ── Evidence (Gemara EvaluationLog artifacts) ──
 info "Ingesting evidence..."
 for artifact in "${SCRIPT_DIR}"/eval-*.yaml; do
   [ -f "${artifact}" ] || continue
   name="$(basename "${artifact}")"
-  HTTP_CODE=$(curl -s -o /tmp/seed_ingest_resp -w "%{http_code}" \
-    -X POST "${GATEWAY_URL}/api/evidence/ingest" \
-    -H "Content-Type: application/x-yaml" \
-    "${AUTH_HEADER[@]}" \
-    --data-binary @"${artifact}")
-  if [[ "$HTTP_CODE" =~ ^2 ]]; then
-    inserted=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('inserted','?'))" < /tmp/seed_ingest_resp 2>/dev/null || echo "?")
-    check "${name}: ${inserted} rows (${HTTP_CODE})"
-  else
-    warn "${name} returned ${HTTP_CODE}"
-  fi
+  ingest_file "${artifact}" "${name}"
 done
 
 # ── Verification ──

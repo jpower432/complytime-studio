@@ -38,7 +38,7 @@ func TestZeroValueBus_Close_NoPanic(t *testing.T) {
 }
 
 func TestEvidenceSubjectNaming(t *testing.T) {
-	want := "studio.evidence"
+	want := "core.evidence"
 	if SubjectEvidence != want {
 		t.Fatalf("SubjectEvidence = %q, want %q", SubjectEvidence, want)
 	}
@@ -48,7 +48,7 @@ func TestEvidenceSubjectNaming(t *testing.T) {
 }
 
 func TestDraftSubjectNaming(t *testing.T) {
-	want := "studio.draft-audit-log"
+	want := "core.draft"
 	if SubjectDraft != want {
 		t.Fatalf("SubjectDraft = %q, want %q", SubjectDraft, want)
 	}

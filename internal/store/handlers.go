@@ -74,12 +74,9 @@ func Register(g *echo.Group, s Stores) {
 	g.GET("/policies", listPoliciesHandler(s.Policies))
 	g.GET("/policies/:id", getPolicyHandler(s.Policies, s.Mappings))
 	registerImportRoute(g, s)
+	g.POST("/ingest", echo.WrapHandler(IngestAsyncHandler(s.IngestPublisher, s.IngestTracker)))
+	g.GET("/ingest/jobs/:job_id", IngestJobStatusHandler(s.IngestTracker))
 	g.GET("/evidence", queryEvidenceHandler(s.Evidence))
-	g.POST("/evidence/ingest", echo.WrapHandler(IngestGemaraHandler(s.Evidence, s.EventPublisher)))
-	if s.IngestTracker != nil && s.IngestPublisher != nil {
-		g.POST("/evidence/ingest/async", echo.WrapHandler(IngestAsyncHandler(s.IngestPublisher, s.IngestTracker)))
-		g.GET("/evidence/ingest/jobs/:job_id", IngestJobStatusHandler(s.IngestTracker))
-	}
 	registerInventoryRoutes(g, s)
 	if s.Certifications != nil {
 		g.GET("/certifications", queryCertificationsHandler(s.Certifications))
@@ -115,7 +112,6 @@ func Register(g *echo.Group, s Stores) {
 		registerProgramRoutes(g, s)
 	}
 }
-
 
 func listPoliciesHandler(s PolicyStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -782,4 +778,3 @@ func riskSeverityHandler(s RiskStore) echo.HandlerFunc {
 		return c.JSON(http.StatusOK, rows)
 	}
 }
-

@@ -69,47 +69,30 @@ func main() {
 		slog.Info("blob storage configured", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
 	}
 
-	registryAddr := os.Getenv("REGISTRY_INSECURE")
 	registryConfig := store.LoadRegistryConfig()
 
 	go func() {
-		const maxAttempts = 10
-		const delay = 15 * time.Second
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			if err := store.PopulateCatalogsFromRegistry(ctx, st, st, st, st, st, registryAddr); err != nil {
-				slog.Warn("catalog seed from registry failed, will retry", "attempt", attempt, "error", err)
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(delay):
-					continue
-				}
-			}
-			if err := store.PopulateMappingEntries(ctx, st); err != nil {
-				slog.Warn("mapping entries backfill failed", "error", err)
-			}
-			if err := store.PopulateControls(ctx, st, st); err != nil {
-				slog.Warn("controls backfill failed", "error", err)
-			}
-			if err := store.PopulateThreats(ctx, st, st); err != nil {
-				slog.Warn("threats backfill failed", "error", err)
-			}
-			if err := store.PopulateRisks(ctx, st, st); err != nil {
-				slog.Warn("risks backfill failed", "error", err)
-			}
-			if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
-				slog.Warn("effective controls backfill failed", "error", err)
-			}
-			if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
-				slog.Warn("policy criteria backfill failed", "error", err)
-			}
-			slog.Info("registry seed populate complete", "attempt", attempt)
-			return
+		if err := store.PopulateMappingEntries(ctx, st); err != nil {
+			slog.Warn("mapping entries backfill failed", "error", err)
 		}
-		slog.Warn("registry seed exhausted retries", "attempts", 10)
+		if err := store.PopulateControls(ctx, st, st); err != nil {
+			slog.Warn("controls backfill failed", "error", err)
+		}
+		if err := store.PopulateThreats(ctx, st, st); err != nil {
+			slog.Warn("threats backfill failed", "error", err)
+		}
+		if err := store.PopulateRisks(ctx, st, st); err != nil {
+			slog.Warn("risks backfill failed", "error", err)
+		}
+		if err := store.PopulateEffectiveControls(ctx, st, st, st); err != nil {
+			slog.Warn("effective controls backfill failed", "error", err)
+		}
+		if err := store.PopulatePolicyCriteria(ctx, st, st); err != nil {
+			slog.Warn("policy criteria backfill failed", "error", err)
+		}
+		slog.Info("startup backfill complete")
 	}()
 
-	programStores := pgstore.NewProgramPG(pgClient.Pool())
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		slog.Error("NATS_URL is required — event bus drives the certification pipeline")
@@ -144,8 +127,8 @@ func main() {
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,
-		Programs:            programStores,
-		Jobs:                programStores,
+		Programs:            nil,
+		Jobs:                nil,
 		Inventory:           st,
 		Users:               pgClient,
 		Registry:            registryConfig,
@@ -153,7 +136,11 @@ func main() {
 		IngestPublisher:     bus,
 	}
 	slog.Info("store API registered", "routes", []string{
-		"/api/policies", "/api/evidence/ingest", "/api/evidence/ingest/async", "/api/audit-logs", "/api/mappings",
+		"/api/policies",
+		"/api/ingest",
+		"/api/ingest/jobs/:job_id",
+		"/api/audit-logs",
+		"/api/mappings",
 	})
 
 	pipeline := buildCertifierPipeline()
@@ -171,7 +158,7 @@ func main() {
 	defer func() { _ = sub.Unsubscribe() }()
 	slog.Info("nats evidence subscription active", "subject", events.SubjectEvidence+".>")
 
-	ingestWorker := store.IngestWorker(ctx, st, pub, ingestTracker)
+	ingestWorker := store.IngestWorker(ctx, stores, pub, ingestTracker)
 	ingestSub, ingestSubErr := bus.SubscribeIngestRaw(ingestWorker)
 	if ingestSubErr != nil {
 		slog.Error("nats ingest subscribe failed", "error", ingestSubErr)

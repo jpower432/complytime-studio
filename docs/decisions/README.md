@@ -30,6 +30,9 @@
 | 0029 | [Notifications Belong Outside the Gateway](notifications-outside-gateway.md) | Accepted | 2026-05-14 |
 | 0030 | [Recommendation Engine Deferred to Workbench](recommendation-engine-deferred.md) | Deferred | 2026-05-14 |
 | 0031 | [Three-Protocol Serving Layer](serving-layer-protocols.md) | Accepted | 2026-05-15 |
+| 0032 | [Architecture Extraction — Core + Studio](architecture-extraction.md) | Accepted | 2026-05-15 |
+| 0033 | [Evidence Quality Boundary](evidence-quality-boundary.md) | Accepted | 2026-05-15 |
+| 0034 | [Unified Ingest Pipeline](unified-ingest-pipeline.md) | Accepted | 2026-05-16 |
 
 ## Active Workarounds
 

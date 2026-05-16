@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	SubjectEvidence  = "studio.evidence"
-	SubjectDraft     = "studio.draft-audit-log"
-	SubjectIngestRaw = "studio.ingest.raw"
+	SubjectEvidence  = "core.evidence"
+	SubjectDraft     = "core.draft"
+	SubjectIngestRaw = "core.ingest"
 )
 
 // SubjectPrefix is the NATS subject namespace for studio events.
@@ -30,9 +30,9 @@ type EvidenceEvent struct {
 
 // DraftAuditLogEvent is published after a draft audit log is created.
 type DraftAuditLogEvent struct {
-	DraftID  string    `json:"draft_id"`
-	PolicyID string    `json:"policy_id"`
-	Summary  string    `json:"summary"`
+	DraftID   string    `json:"draft_id"`
+	PolicyID  string    `json:"policy_id"`
+	Summary   string    `json:"summary"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -153,7 +153,7 @@ func (b *Bus) SubscribeIngestRaw(handler func(IngestRawEvent)) (*nats.Subscripti
 	})
 }
 
-// SubscribeEvidence subscribes to all evidence events (studio.evidence.>).
+// SubscribeEvidence subscribes to all evidence events (core.evidence.>).
 // The gateway uses this for the in-process certifier pipeline.
 func (b *Bus) SubscribeEvidence(handler func(EvidenceEvent)) (*nats.Subscription, error) {
 	if b == nil || b.conn == nil {

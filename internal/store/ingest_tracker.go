@@ -13,13 +13,15 @@ const defaultJobTTL = 30 * time.Minute
 // IngestJobStatus tracks the lifecycle of an async ingest request.
 // Stored in-memory only -- lost on restart (accepted trade-off for POC).
 type IngestJobStatus struct {
-	JobID     string    `json:"job_id"`
-	Status    string    `json:"status"`
-	Inserted  int       `json:"inserted,omitempty"`
-	PolicyID  string    `json:"policy_id,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	JobID        string    `json:"job_id"`
+	Status       string    `json:"status"`
+	Inserted     int       `json:"inserted,omitempty"`
+	PolicyID     string    `json:"policy_id,omitempty"`
+	ArtifactID   string    `json:"artifact_id,omitempty"`
+	ArtifactType string    `json:"artifact_type,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // IngestTracker provides in-memory job status tracking for async ingest.
@@ -86,6 +88,17 @@ func (t *IngestTracker) Complete(jobID string, inserted int, policyID string) {
 		j.Status = "completed"
 		j.Inserted = inserted
 		j.PolicyID = policyID
+		j.UpdatedAt = time.Now().UTC()
+	}
+	t.mu.Unlock()
+}
+
+func (t *IngestTracker) CompleteArtifact(jobID, artifactID, artifactType string) {
+	t.mu.Lock()
+	if j, ok := t.jobs[jobID]; ok {
+		j.Status = "completed"
+		j.ArtifactID = artifactID
+		j.ArtifactType = artifactType
 		j.UpdatedAt = time.Now().UTC()
 	}
 	t.mu.Unlock()
