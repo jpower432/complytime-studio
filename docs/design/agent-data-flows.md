@@ -10,14 +10,14 @@ sequenceDiagram
     participant N as Nginx (studio-ui)
     participant W as Workbench (Starlette :8090)
     participant A as Studio Assistant (LangGraph)
-    participant SM as studio-mcp
+    participant SM as complytime-mcp
     participant GM as gemara-mcp
     participant OM as oras-mcp
 
     B->>N: POST /workbench/a2a/studio-assistant
     N->>W: route /workbench/*
     W->>A: A2A routing (co-located)
-    A->>SM: studio:// resources (evidence, policies, …)
+    A->>SM: complytime:// resources (evidence, policies, …)
     SM-->>A: JSON results
     A->>GM: validate_gemara_artifact / migrate_gemara_artifact
     GM-->>A: validation result
@@ -55,7 +55,7 @@ sequenceDiagram
 |:--|:--|:--|
 | Browser → data API | Nginx → OAuth2 Proxy (gateway sidecar) → Gateway | Session-bound user context |
 | Browser → workbench | Nginx → Workbench :8090 | Chat, A2A, SSE served here |
-| Workbench / agent → platform | Internal → Gateway (REST APIs); parallel → studio-mcp | In-cluster; no OAuth2 Proxy on agent→gateway calls |
+| Workbench / agent → platform | Internal → Gateway (REST APIs); parallel → complytime-mcp | In-cluster; no OAuth2 Proxy on agent→gateway calls |
 
 When OAuth is disabled, external API auth behavior follows deployment config; MCP servers use static credentials from Secrets where applicable.
 
@@ -64,18 +64,18 @@ When OAuth is disabled, external API auth behavior follows deployment config; MC
 1. User opens chat in Workbench UI, sends prompt
 2. Workbench handles `POST /workbench/a2a/studio-assistant` (e.g. JSON-RPC `message/send`)
 3. Co-located LangGraph assistant runs in-process to Workbench (not a separate Agent pod via gateway)
-4. Assistant reads platform data via studio-mcp typed resources
+4. Assistant reads platform data via complytime-mcp typed resources
 5. Assistant validates / migrates YAML via gemara-mcp; publishes bundles via oras-mcp when needed
 6. SSE streams from Workbench to browser
 7. Chat UI renders markdown with YAML / mermaid blocks
-8. Assistant persists drafts and evidence via studio-mcp tools (`save_draft_audit_log`, `ingest_evidence`)
+8. Assistant persists drafts and evidence via complytime-mcp tools (`save_draft_audit_log`, `ingest_evidence`)
 9. User sees save / sync affordances per Workbench UX (no gateway artifact interceptor)
 
 ## Agent Response Rendering
 
 Responses stream as SSE with markdown payloads. The chat UI renders via `renderMarkdown()`. YAML code blocks appear as formatted code in the thread.
 
-**Artifact persistence:** The assistant persists AuditLog (and related) YAML through studio-mcp (`save_draft_audit_log`), not through the gateway. Validation uses gemara-mcp before or after persistence per agent workflow. OCI publish uses oras-mcp. Manual “save” actions in the UI remain idempotent where content-addressed keys apply.
+**Artifact persistence:** The assistant persists AuditLog (and related) YAML through complytime-mcp (`save_draft_audit_log`), not through the gateway. Validation uses gemara-mcp before or after persistence per agent workflow. OCI publish uses oras-mcp. Manual “save” actions in the UI remain idempotent where content-addressed keys apply.
 
 ## Assistant Capabilities
 
@@ -91,22 +91,22 @@ The studio assistant is a single **LangGraph** agent (not ADK) focused on audit 
 
 | MCP Server | Tools / Resources | Purpose |
 |:--|:--|:--|
-| studio-mcp | `studio://policies`, `studio://evidence`, `studio://posture`, `studio://audit-logs`, `studio://mappings`, `studio://catalogs`, `studio://threats`, `studio://risks` | Read platform data via typed resources |
-| studio-mcp | `ingest_evidence`, `save_draft_audit_log` | Write evidence rows, persist draft AuditLog YAML |
+| complytime-mcp | `complytime://policies`, `complytime://evidence`, `complytime://posture`, `complytime://audit-logs`, `complytime://mappings`, `complytime://catalogs`, `complytime://threats`, `complytime://risks` | Read platform data via typed resources |
+| complytime-mcp | `ingest_evidence`, `save_draft_audit_log` | Write evidence rows, persist draft AuditLog YAML |
 | gemara-mcp | `validate_gemara_artifact`, `migrate_gemara_artifact` | Validate output, access schema/lexicon resources |
 | oras-mcp | registry tools (publish, list, fetch, …) | OCI publish / browse |
 
 ## Evidence Access Patterns
 
-The assistant reads platform data via studio-mcp typed resources (not raw SQL):
+The assistant reads platform data via complytime-mcp typed resources (not raw SQL):
 
 | Resource URI | Purpose |
 |:--|:--|
-| `studio://evidence?policy_id={id}&limit=100` | Evidence records for a policy (paginated) |
-| `studio://policies/{id}` | Load policy content |
-| `studio://mappings?source_catalog={catalog}` | Load cross-framework crosswalks |
-| `studio://posture?policy_id={id}` | Posture aggregates for audit scope |
-| `studio://catalogs` | Catalog index for control lookups |
+| `complytime://evidence?policy_id={id}&limit=100` | Evidence records for a policy (paginated) |
+| `complytime://policies/{id}` | Load policy content |
+| `complytime://mappings?source_catalog={catalog}` | Load cross-framework crosswalks |
+| `complytime://posture?policy_id={id}` | Posture aggregates for audit scope |
+| `complytime://catalogs` | Catalog index for control lookups |
 
 ## Cross-Framework Coverage
 

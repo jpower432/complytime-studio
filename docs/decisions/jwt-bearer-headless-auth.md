@@ -28,8 +28,7 @@ with per-identity RBAC. The static token fails this:
   services.
 - **No user linkage** — bypasses the users table and RBAC entirely.
 
-The agent path (studio-mcp → ConnectRPC on `:8081`) is unaffected —
-it uses network trust via NetworkPolicy (ADR 0006).
+Agents reach the gateway via `complytime-mcp` (REST facade on `:8080`), so they stay on the primary listener — separate from the browser session cookie auth path this ADR extends.
 
 ## Decision
 
@@ -106,7 +105,7 @@ granularity, no RBAC linkage — is solved by JWT bearer tokens.
 | Production (proxy enabled) | JWT bearer via OAuth2 Proxy |
 | Local dev (proxy disabled) | `X-Forwarded-*` header injection |
 | CI seed (proxy disabled) | `X-Forwarded-Email` header (port-forward bypasses proxy) |
-| CI seed (proxy enabled) | JWT bearer or port-forward to internal port (:8081, no auth) |
+| CI seed (proxy enabled) | JWT bearer |
 
 The gateway auth middleware no longer contains any static token
 comparison, service account session type, or hardcoded write-scope
@@ -150,7 +149,7 @@ and audit trail.
   misconfiguration
 
 **Neutral:**
-- No impact on agent path (studio-mcp uses ConnectRPC on `:8081`)
+- No impact on agent path (complytime-mcp uses REST on `:8080`)
 - No impact on studio-ui (browser sessions unchanged)
 - `STUDIO_API_TOKEN` fully removed from gateway, Helm chart, and
   seed scripts

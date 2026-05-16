@@ -29,7 +29,7 @@ The gateway REST API (`/api/*`) remains the authoritative contract. OpenAPI-docu
 
 ### MCP (expanded)
 
-`studio-mcp` is a gateway facade — it proxies to REST via HTTP, it does not connect to Postgres directly. This preserves a single auth/validation layer.
+`complytime-mcp` is a gateway facade — it proxies to REST via HTTP, it does not connect to Postgres directly. This preserves a single auth/validation layer.
 
 **Resources (13 static + 5 templates):**
 - Static: policies, catalogs, posture, audit-logs, draft-audit-logs, threats, risks, certifications, requirements, control-threats, risk-threats, inventory, programs
@@ -53,4 +53,4 @@ Intended for dashboard tools that speak native Postgres wire protocol. The reade
 - Dashboard clients get native SQL without a translation layer.
 - MCP surface must be updated when new REST read endpoints are added.
 - The `studio_reader` password must be rotated separately from the primary `studio` user.
-- `studio-mcp` stays thin — no Postgres client, no independent query logic.
+- `complytime-mcp` stays thin — no Postgres client, no independent query logic.

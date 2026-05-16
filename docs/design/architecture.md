@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Overview
 
-ComplyTime Studio spans three deployable surfaces: the **gateway** (this repo, Go) is a **data platform API** only; the **Studio Workbench** ([complytime-agents](https://github.com/complytime/complytime-agents), Python / Starlette) owns A2A, agent directory, chat, Gemara validate/migrate, and OCI publish/browse; the **Studio UI** ([studio-ui](https://github.com/complytime/studio-ui), Preact + Nginx) serves the browser SPA and reverse-proxies to gateway and workbench. The gateway reads and writes **PostgreSQL**, publishes and subscribes on **NATS**, and optionally uses **S3-compatible blob storage**. **ClickHouse** is an optional analytical tier reached from PostgreSQL via `pg_clickhouse` FDW when enabled—the gateway does **not** query ClickHouse directly.
+ComplyTime Studio spans three deployable surfaces: the **gateway** (this repo, Go) is a **data platform API** only; the **Studio Workbench** ([complytime-studio](https://github.com/complytime-labs/complytime-studio), Python / Starlette) owns A2A, agent directory, chat, Gemara validate/migrate, and OCI publish/browse; the **Studio UI** ([studio-ui](https://github.com/complytime/studio-ui), Preact + Nginx) serves the browser SPA and reverse-proxies to gateway and workbench. The gateway reads and writes **PostgreSQL**, publishes and subscribes on **NATS**, and optionally uses **S3-compatible blob storage**. **ClickHouse** is an optional analytical tier reached from PostgreSQL via `pg_clickhouse` FDW when enabled—the gateway does **not** query ClickHouse directly.
 
 ---
 
@@ -31,12 +31,12 @@ flowchart TB
   Blob[("S3-compatible blob — optional")]
   CH[("ClickHouse — optional via FDW")]
 
-  subgraph Workbench["complytime-agents — workbench"]
+  subgraph Workbench["complytime-studio — workbench"]
     WB["Starlette — A2A, agents, chat, validate/migrate, OCI"]
   end
 
   GemaraMCP["gemara-mcp"]
-  StudioMCP["studio-mcp"]
+  StudioMCP["complytime-mcp"]
   OrasMCP["oras-mcp"]
 
   Assistant["Studio Assistant — LangGraph"]
@@ -71,7 +71,7 @@ flowchart TB
 | Data | `internal/store` + `internal/postgres`—single pool; `EnsureSchema` at startup |
 | Events | `internal/events`—NATS; debounced certification pipeline on evidence subjects |
 | Blobs | `internal/blob`—MinIO-compatible client when `BLOB_*` set |
-| Catalog seed | Goroutine retries `PopulateCatalogsFromRegistry` (HTTP OCI layer fetch into `catalogs` when `REGISTRY_INSECURE`/registry env permits); structured backfills; OCI **bundle** unpack for imports uses `go-gemara/bundle` in store handlers—not MCP |
+| Catalog seed | Unified ingest: a seed job posts artifacts to `POST /api/ingest` (no startup registry seed in the gateway binary). OCI **bundle** unpack for imports uses `go-gemara/bundle` in store handlers—not MCP; `REGISTRY_INSECURE` and registry credentials apply when OCI import/pull is configured—not for seed |
 | Auth | `internal/auth`—OAuth2 Proxy `X-Forwarded-*` headers; `auth.RequireWrite` with narrow bypasses (below) |
 
 **Startup hard requirements:** missing **`POSTGRES_URL`** or **`NATS_URL`**, or failed connect/schema init, **exits the process**.
@@ -95,8 +95,8 @@ Non-GET `/api/*` passes through `writeProtect` → `auth.RequireWrite`, with **o
 
 | Subject pattern | Use |
 |:--|:--|
-| `studio.evidence.<policy_id>` | After ingest—debounced **certification pipeline** |
-| `studio.draft-audit-log.<policy_id>` | Published on draft creation (no active subscribers) |
+| `core.evidence.<policy_id>` | After ingest—debounced **certification pipeline** |
+| `core.draft.<policy_id>` | Published on draft creation (no active subscribers) |
 
 ### ClickHouse (optional)
 
@@ -108,9 +108,9 @@ S3-compatible **MinIO API** for evidence attachments when `BLOB_ENDPOINT`, `BLOB
 
 ### Studio Workbench and Assistant
 
-**Workbench** ([complytime-agents](https://github.com/complytime/complytime-agents)): Starlette app for **A2A routing**, **agent directory**, **chat state**, **`validate_gemara_artifact` / `migrate_gemara_artifact`** (via **gemara-mcp**), **OCI publish/browse** (via **oras-mcp**), and data access via **studio-mcp** (`studio://*` resources/tools). MCP servers are **not** invoked by the gateway.
+**Workbench** ([complytime-studio](https://github.com/complytime-labs/complytime-studio)): Starlette app for **A2A routing**, **agent directory**, **chat state**, **`validate_gemara_artifact` / `migrate_gemara_artifact`** (via **gemara-mcp**), **OCI publish/browse** (via **oras-mcp**), and data access via **complytime-mcp** (`complytime://*` resources/tools). MCP servers are **not** invoked by the gateway.
 
-**Studio Assistant** is a **LangGraph** agent in **complytime-agents** (not Google ADK). It uses the same MCP surface as other agents the workbench schedules.
+**Studio Assistant** is a **LangGraph** agent in **complytime-studio** (not Google ADK). It uses the same MCP surface as other agents the workbench schedules.
 
 ### Studio UI
 
@@ -127,9 +127,9 @@ sequenceDiagram
   participant PG as PostgreSQL
   participant N as NATS
 
-  C->>G: POST /api/evidence/ingest
+  C->>G: POST /api/ingest
   G->>PG: insert evidence
-  G->>N: publish studio.evidence.policy_id
+  G->>N: publish core.evidence.policy_id
   N->>G: subscriber — certification pipeline
   G->>PG: certifications, evidence.certified flag
 ```
@@ -157,7 +157,8 @@ Registration: `internal/store/handlers.go`, `internal/auth/user_handlers.go`, `i
 | GET | `/api/catalogs` | List catalogs |
 | GET | `/api/inventory` | Inventory |
 | GET | `/api/evidence` | Query |
-| POST | `/api/evidence/ingest` | Gemara-native ingest (+ NATS publish) |
+| POST | `/api/ingest` | Unified Gemara ingest (async job; NATS-backed worker + downstream publish) |
+| GET | `/api/ingest/jobs/{job_id}` | Ingest job status |
 | GET | `/api/audit-logs`, `/api/audit-logs/{id}` | Audit logs |
 | POST | `/api/audit-logs` | Create |
 | GET | `/api/draft-audit-logs`, `/api/draft-audit-logs/{id}` | Drafts |
@@ -182,7 +183,7 @@ Registration: `internal/store/handlers.go`, `internal/auth/user_handlers.go`, `i
 | `BLOB_*` | No | Object storage |
 | `CORS_ORIGINS` | No | Comma-separated allowed origins |
 | `PROXY_SECRET` | Prod recommended | Shared secret with OAuth2 Proxy for `X-Forwarded-*` trust |
-| `REGISTRY_INSECURE` / registry credential env | No | Catalog seed + policy import registry access (see `internal/store/registry_config.go`) |
+| `REGISTRY_INSECURE` / registry credential env | No | OCI/registry pull when import is configured (not needed for unified seed via `/api/ingest`). See `internal/store/registry_config.go` |
 
 `GEMARA_MCP_URL` and `ORAS_MCP_URL` are **workbench** concerns, not gateway env vars.
 
@@ -213,10 +214,10 @@ Chart source: **`studio-deploy`** (`charts/complytime/`).
 | Deployment | studio-nats | When `nats.enabled` |
 | StatefulSet | studio-clickhouse | Only when `clickhouse.enabled` |
 | Deployment | studio-ui | Nginx SPA; port **80** |
-| Deployment | workbench | complytime-agents Starlette (separate from gateway) |
+| Deployment | workbench | complytime-studio Starlette (separate from gateway) |
 | Deployment | studio-assistant | LangGraph agent pod (chart names may vary) |
 
-MCP servers (gemara, oras, studio) run as workloads the **workbench** uses, not as gateway dependencies.
+MCP servers (gemara, oras, complytime-mcp) run as workloads the **workbench** uses, not as gateway dependencies.
 
 ---
 

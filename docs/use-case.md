@@ -7,7 +7,7 @@ Studio is the aggregation point in the ComplyTime ecosystem. Policies and eviden
 | Function | How |
 |:--|:--|
 | Import policies | Pull Gemara Policy artifacts from OCI registries into PostgreSQL (ClickHouse is optional FDW only, never the primary store) |
-| Ingest evidence | Accept Gemara EvaluationLog/EnforcementLog YAML via `POST /api/evidence/ingest` |
+| Ingest evidence | Accept Gemara EvaluationLog/EnforcementLog YAML via `POST /api/ingest` (async job; poll `/api/ingest/jobs/{job_id}`) |
 | Map frameworks | Load MappingDocuments that crosswalk internal criteria to external frameworks |
 | Prepare audits | Agentic assistant queries evidence, validates cadence, classifies results, produces AuditLog artifacts |
 | Publish artifacts | Push validated artifacts back to OCI registries |
@@ -70,7 +70,7 @@ Evidence enters through the REST API:
 
 | Path | Source | Trigger |
 |:--|:--|:--|
-| REST API | `POST /api/evidence/ingest` — Gemara EvaluationLog/EnforcementLog YAML | CI pipeline, automation, `make seed` |
+| REST API | `POST /api/ingest` — Gemara EvaluationLog/EnforcementLog YAML (async); `GET /api/ingest/jobs/{job_id}` | CI pipeline, automation, `make seed` |
 
 Inserts into PostgreSQL and publishes a NATS event per policy.
 

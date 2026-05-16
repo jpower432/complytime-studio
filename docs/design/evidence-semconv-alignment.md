@@ -1,6 +1,6 @@
 # Evidence Semantic Convention Alignment
 
-**Interface contract** between `complytime-collector-components` (exporter config), `complyctl`/ProofWatch (attribute emission), and `complytime-studio` (table DDL and query APIs).
+**Interface contract** between `complytime-collector-components` (exporter config), `complyctl`/ProofWatch (attribute emission), and `complytime-core` (table DDL and query APIs).
 
 Mapping between the `beacon.evidence` OTel semantic convention ([complytime-collector-components/model](https://github.com/complytime/complytime-collector-components/tree/main/model)) and the Studio `evidence` table. PostgreSQL is the primary store; ClickHouse is optional via `pg_clickhouse` FDW (see `docs/decisions/postgres-with-extensions.md`). See [OTel-Native Ingestion](../decisions/otel-native-ingestion.md).
 

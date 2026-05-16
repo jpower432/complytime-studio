@@ -46,7 +46,7 @@ Studio reads via clickhouse-mcp + REST APIs
 |:--|:--|
 | `complytime-collector-components` | Collector config, ClickHouse exporter attribute→column mapping |
 | `complyctl` / ProofWatch | Instrumentation, semconv attribute emission |
-| `complytime-studio` | `evidence` table DDL, query APIs, assistant |
+| `complytime-core` | `evidence` table DDL, query APIs, assistant |
 
 The interface contract is `docs/design/evidence-semconv-alignment.md`. The exporter **MUST** map `compliance.source.registry` to the `source_registry` column (and every other attribute listed there to the named column) so OTel rows match REST-shaped queries.
 
@@ -56,6 +56,6 @@ Environment-specific collector YAML lives in operator or platform repos; keep at
 
 - `Dockerfile.ingest` and `cmd/ingest` are removed.
 - Studio has no OTLP parsing code. The gateway stays a REST/A2A server.
-- `POST /api/evidence` and `POST /api/evidence/upload` remain for seeding, manual import, and non-OTel producers.
+- `POST /api/evidence` and `POST /api/ingest` remain for seeding, manual import, non-OTel producers, and unified Gemara jobs.
 - Schema changes to the `evidence` table require coordinated updates to the semconv alignment doc and collector exporter config.
 - The OTel Collector remains operator infrastructure per the existing [OTel Collector Out of Chart](otel-collector-out-of-chart.md) decision.

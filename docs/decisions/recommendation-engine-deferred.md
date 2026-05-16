@@ -11,12 +11,12 @@ Recommendations are a derived intelligence layer: "given your posture, policies,
 
 ## Decision
 
-Defer the recommendation engine. When implemented, it belongs in the **Studio Workbench** (complytime-agents), not the data platform.
+Defer the recommendation engine. When implemented, it belongs in the **Studio Workbench** (complytime-studio), not the data platform.
 
 ## Rationale
 
-- Recommendations require inference over evidence, posture, control mappings, and threat/risk catalogs. The workbench already has agent infrastructure and MCP access to all of these via `studio://` resources.
-- A recommendation agent reading `studio://posture` + `studio://policies` + `studio://risks` and producing actionable suggestions fits the existing agent pattern.
+- Recommendations require inference over evidence, posture, control mappings, and threat/risk catalogs. The workbench already has agent infrastructure and MCP access to all of these via `complytime://` resources.
+- A recommendation agent reading `complytime://posture` + `complytime://policies` + `complytime://risks` and producing actionable suggestions fits the existing agent pattern.
 - The gateway should not contain recommendation logic -- it would couple policy interpretation to the data layer.
 
 ## When to Revisit

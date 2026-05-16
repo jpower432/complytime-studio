@@ -21,10 +21,10 @@
 | 0015 | [Evidence Filter Bar](evidence-filter-bar.md) | Accepted | 2026-04-26 |
 | 0016 | [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
 | 0022 | [Studio SPA Extraction](studio-spa-extraction.md) | Accepted | 2026-05-12 |
-| 0023 | [studio-mcp Server](studio-mcp-server.md) | Accepted | 2026-05-12 |
-| 0024 | [Agent MCP Surface — studio-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
+| 0023 | [complytime-mcp Server](complytime-mcp-server.md) | Accepted | 2026-05-12 |
+| 0024 | [Agent MCP Surface — complytime-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
 | 0025 | [Data Platform + Workbench Split](data-platform-workbench-split.md) | Accepted | 2026-05-13 |
-| 0026 | [ConnectRPC Internal API for studio-mcp](connectrpc-internal-api.md) | Superseded | 2026-05-13 |
+| 0026 | [ConnectRPC Internal API for complytime-mcp](connectrpc-internal-api.md) | Superseded | 2026-05-13 |
 | 0027 | [JWT Bearer Authentication for Headless API Access](jwt-bearer-headless-auth.md) | Accepted | 2026-05-13 |
 | 0028 | [Async Evidence Ingest: Accept-the-Loss Durability](async-ingest-durability.md) | Accepted | 2026-05-13 |
 | 0029 | [Notifications Belong Outside the Gateway](notifications-outside-gateway.md) | Accepted | 2026-05-14 |

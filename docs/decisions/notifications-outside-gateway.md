@@ -21,7 +21,7 @@ Notifications are a **presentation concern**, not a data platform concern. The g
 
 | Option | Fit | Trade-off |
 |:--|:--|:--|
-| **Studio Workbench** (complytime-agents) | Already owns agent UX; can subscribe to NATS and push to UI via SSE/WebSocket | Couples notification delivery to agent infrastructure |
+| **Studio Workbench** (complytime-studio) | Already owns agent UX; can subscribe to NATS and push to UI via SSE/WebSocket | Couples notification delivery to agent infrastructure |
 | **Dedicated notification service** | Clean separation; multi-channel (email, Slack, webhook) | New service to deploy and maintain |
 | **Studio UI server-side** | Nginx SSE sidecar subscribing to NATS directly | Minimal, but limited to in-app only |
 
@@ -29,7 +29,7 @@ The workbench is the preferred first candidate. It already has a WebSocket/SSE p
 
 ## Consequences
 
-- Gateway publishes NATS events (`studio.evidence.*`, `studio.draft-audit-log.*`) -- no change needed.
+- Gateway publishes NATS events (`core.evidence.*`, `core.draft.*`) — no change needed.
 - UI notification components remain in `studio-ui` but are inert until a notification source is wired.
 - Migration `013_drop_notifications.sql` removed the table. A new table in the workbench's own storage (or a lightweight in-memory store) would replace it.
 - No timeline commitment. This is a "when needed" decision.

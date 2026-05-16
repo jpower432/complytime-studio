@@ -1,33 +1,36 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# ADR 0026: ConnectRPC Internal API for studio-mcp
+# ADR 0026: ConnectRPC Internal API for complytime-mcp
 
-**Status:** Superseded — studio-mcp migrated to REST; ConnectRPC and internal port removed.
+**Status:** Superseded — `complytime-mcp` (gateway MCP facade) migrated to REST; ConnectRPC and internal port removed.
+
+**Historical note:** (names reflect pre-extraction terminology in some narrative below.)
+
 **Date:** 2026-05-13
 
 ## Context
 
-studio-mcp and the gateway both import `internal/postgres/` and hold
+complytime-mcp and the gateway both import `internal/postgres/` and hold
 independent database connections to the same PostgreSQL instance. This
 creates two problems:
 
-1. **No API boundary.** studio-mcp bypasses all gateway middleware —
+1. **No API boundary.** complytime-mcp bypasses all gateway middleware —
    auth, write-protect, audit logging, rate limiting. A bug in
-   studio-mcp can write directly to production tables with no gate.
+   complytime-mcp can write directly to production tables with no gate.
 
 2. **Tight binary coupling.** Both binaries must be built and deployed
    from the same Go module at the same version. A schema migration
-   change can silently break studio-mcp at runtime if images drift
+   change can silently break complytime-mcp at runtime if images drift
    during a rolling deploy.
 
-studio-mcp is the **only** non-gateway component that needs direct
-data access. The UI uses REST; the workbench uses MCP via studio-mcp.
+complytime-mcp is the **only** non-gateway component that needs direct
+data access. The UI uses REST; the workbench uses MCP via complytime-mcp.
 The scope is one client, one server.
 
 ## Decision
 
 Introduce a ConnectRPC internal API on the gateway's internal port
-(:8081) and migrate studio-mcp from direct SQL to a generated
+(:8081) and migrate complytime-mcp from direct SQL to a generated
 ConnectRPC client.
 
 ### Why ConnectRPC over alternatives
@@ -49,10 +52,10 @@ Single Go dependency: `connectrpc.com/connect`.
 ### Architecture
 
 ```
-Agent ──MCP──► studio-mcp ──ConnectRPC──► Gateway :8081 ──SQL──► PostgreSQL
+Agent ──MCP──► complytime-mcp ──ConnectRPC──► Gateway :8081 ──SQL──► PostgreSQL
 ```
 
-studio-mcp no longer holds a `*sql.DB` connection. PostgreSQL has one
+complytime-mcp no longer holds a `*sql.DB` connection. PostgreSQL has one
 writer (the gateway). The gateway enforces validation, audit logging,
 and write-protect on every path — public and internal.
 
@@ -64,21 +67,21 @@ A single `.proto` file defines the internal contract:
 proto/studio/v1/studio.proto
 ```
 
-Covers the resources and tools studio-mcp currently exposes:
+Covers the resources and tools complytime-mcp currently exposes:
 
-| Proto service method | Current studio-mcp path |
+| Proto service method | Current complytime-mcp path |
 |:--|:--|
-| `ListPolicies` | `studio://policies` |
-| `GetPolicy` | `studio://policies/{id}` |
-| `QueryEvidence` | `studio://evidence?policy_id=...` |
+| `ListPolicies` | `complytime://policies` |
+| `GetPolicy` | `complytime://policies/{id}` |
+| `QueryEvidence` | `complytime://evidence?policy_id=...` |
 | `IngestEvidence` | `ingest_evidence` tool |
-| `ListPosture` | `studio://posture?policy_id=...` |
-| `ListCatalogs` | `studio://catalogs` |
-| `ListMappings` | `studio://mappings?source_catalog=...` |
-| `ListAuditLogs` | `studio://audit-logs` |
+| `ListPosture` | `complytime://posture?policy_id=...` |
+| `ListCatalogs` | `complytime://catalogs` |
+| `ListMappings` | `complytime://mappings?source_catalog=...` |
+| `ListAuditLogs` | `complytime://audit-logs` |
 | `CreateDraftAuditLog` | `save_draft_audit_log` tool |
-| `ListThreats` | `studio://threats` |
-| `ListRisks` | `studio://risks` |
+| `ListThreats` | `complytime://threats` |
+| `ListRisks` | `complytime://risks` |
 
 ### Service layer refactor
 
@@ -101,11 +104,11 @@ Network-enforced (Kubernetes NetworkPolicy restricts access to :8081).
 No token or mTLS. Same model currently used for agent-to-gateway
 traffic per `internal-endpoint-isolation.md` (ADR 0006).
 
-### Where studio-mcp lives
+### Where complytime-mcp lives
 
-Stays in `complytime-studio`. The `.proto` file, generated client, and
-studio-mcp binary are all in the same Go module. A schema migration,
-internal API handler update, and studio-mcp client update land in one
+Stays in `complytime-core`. The `.proto` file, generated client, and
+complytime-mcp binary are all in the same Go module. A schema migration,
+internal API handler update, and complytime-mcp client update land in one
 PR. Compile-time breakage if any side drifts.
 
 ## Consequences
@@ -113,10 +116,10 @@ PR. Compile-time breakage if any side drifts.
 **Positive:**
 - `.proto` file **is** the data contract — field rename breaks both
   sides at compile time
-- studio-mcp drops `internal/postgres/` import and `*sql.DB` — no
+- complytime-mcp drops `internal/postgres/` import and `*sql.DB` — no
   more direct database access from a second binary
 - Gateway enforces middleware on all write paths (internal and public)
-- If studio-mcp ever moves to Python (`complytime-agents`), `protoc`
+- If complytime-mcp ever moves to Python (`complytime-studio`), `protoc`
   generates a Python client from the same `.proto`
 - Additive proto field evolution (field numbers) gives free forward
   compatibility
@@ -130,7 +133,7 @@ PR. Compile-time breakage if any side drifts.
 
 **Neutral:**
 - Internal API is not exposed publicly; Nginx only routes to :8080
-- No impact on studio-ui, complytime-agents, or studio-deploy
+- No impact on studio-ui, complytime-studio, or studio-deploy
 
 ## References
 

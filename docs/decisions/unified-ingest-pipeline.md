@@ -6,22 +6,14 @@
 
 ## Context
 
-The gateway has five content entry points that accept Gemara artifacts:
-
-| # | Path | Types | Mode |
-|---|------|-------|------|
-| 1 | `PopulateCatalogsFromRegistry` (startup) | ControlCatalog, ThreatCatalog | Sync, auto |
-| 2 | `POST /api/import` (OCI ref body) | Policy, Mapping, all Catalogs | Sync |
-| 3 | `POST /api/import` (raw YAML body) | Policy, Mapping, all Catalogs | Sync |
-| 4 | `POST /api/evidence/ingest` | EvaluationLog, EnforcementLog | Sync |
-| 5 | `POST /api/evidence/ingest/async` | EvaluationLog, EnforcementLog | Async (NATS) |
+The gateway historically had multiple overlapping content paths for Gemara artifacts: registry-backed startup pulls, synchronous import handlers, separate evidence ingest routes with optional async duplication, and type detection logic split across import and ingest handlers.
 
 Problems:
 
-1. **Parallel paths:** Catalogs/policies import synchronously in the request handler. Evidence has both sync and async paths. Type detection and storage logic is duplicated across `handlers_import.go` and `ingest_handler.go`.
-2. **Hardcoded seed:** `PopulateCatalogsFromRegistry` has a hardcoded repo list and only handles two catalog types. It duplicates what `/api/import` already does.
-3. **Inconsistent async:** Evidence uses NATS for async processing; policies and catalogs do not. The async infrastructure exists but only covers half the artifact types.
-4. **Deployment complexity:** Docker Compose requires separate `registry-seed` and `gateway-seed` containers feeding different code paths to populate the same database.
+1. **Parallel paths:** Catalogs/policies import synchronously in the request handler. Evidence had overlapping sync/async paths before unification. Type detection and storage logic was duplicated across `handlers_import.go` and `ingest_handler.go`.
+2. **Hardcoded seed:** Startup-only catalog population used a fixed repo list and handled only two catalog types, duplicating `/api/import`.
+3. **Inconsistent async:** Evidence used NATS for async processing earlier; policies and catalogs did not. Async infrastructure existed but only partially covered artifact types.
+4. **Deployment complexity:** Docker Compose could require separate containers feeding different code paths to populate the same database.
 
 ## Decision
 
@@ -35,7 +27,7 @@ The worker:
 1. Detects artifact type via `metadata.type`
 2. Routes to the appropriate storage function (evidence flatten, policy insert, catalog parse, mapping parse)
 3. Updates job status tracker
-4. Publishes downstream events (e.g., `studio.evidence.<policy_id>` for certifier)
+4. Publishes downstream events (e.g., `core.evidence.<policy_id>` for certifier)
 
 ### Single Endpoint Contract
 
@@ -67,17 +59,17 @@ This keeps OCI resolution (network I/O, authentication) at the API boundary whil
 
 ### NATS Subject Consolidation
 
-| Current | New |
+| Prior subject (legacy namespace) | New |
 |---|---|
-| `studio.ingest.raw` (evidence only) | `core.ingest` (all artifact types) |
-| `studio.evidence.<policy_id>` (post-insert) | `core.evidence.<policy_id>` (unchanged role) |
-| `studio.draft-audit-log.<policy_id>` | `core.draft.<policy_id>` (unchanged role) |
+| Raw ingest lane (formerly evidence-only) | `core.ingest` (all artifact types) |
+| Post-insert certifier fan-out | `core.evidence.<policy_id>` |
+| Draft audit-log fan-out | `core.draft.<policy_id>` |
 
-The `core.ingest` subject carries all artifact types. The worker determines the type and routes internally.
+The unified ingest lane carries all artifact types. The worker determines the type and routes internally.
 
 ### Startup Seed
 
-`PopulateCatalogsFromRegistry` is removed. Seeding is handled by a single seed job (container or init script) that posts artifacts to `POST /api/ingest` like any other client. The gateway has no hardcoded knowledge of seed repos.
+The gateway no longer pulls catalogs implicitly at startup. Seeding runs as one or more explicit jobs (container or init script) that post artifacts to `POST /api/ingest`, same as any other client. Operators no longer rely on startup registry seed helpers in the gateway binary.
 
 ## Consequences
 
@@ -85,7 +77,7 @@ The `core.ingest` subject carries all artifact types. The worker determines the 
 - One ingestion path for all Gemara content — policies, catalogs, evidence, mappings
 - Async by default; consistent job tracking for all artifact types
 - Seed is just another API client — no special startup logic
-- Docker Compose collapses from two seed containers to one
+- Docker Compose collapses from two seed containers to one pattern
 - Worker is the single place to add new artifact type support
 
 **Negative:**
@@ -97,9 +89,9 @@ The `core.ingest` subject carries all artifact types. The worker determines the 
 | File | Change |
 |------|--------|
 | `internal/store/handlers_import.go` | Remove `rawBodyImport`, `importPolicyFromArtifactBody`, `importCatalogFromArtifactBody`. Keep OCI import as wrapper. |
-| `internal/store/ingest_handler.go` | Remove `IngestGemaraHandler` (sync). Rename `IngestAsyncHandler` to `IngestHandler`. Expand to accept all artifact types. |
+| `internal/store/ingest_handler.go` | Remove legacy sync ingest handler; single handler accepts all artifact types and returns job IDs as needed. |
 | `internal/store/ingest_worker.go` | Expand `IngestWorker` to handle Policy, Catalog, Mapping in addition to EvaluationLog/EnforcementLog. |
-| `internal/store/populate.go` | Remove `PopulateCatalogsFromRegistry` and `defaultSeedCatalogs`. |
-| `internal/store/handlers.go` | Remove `/evidence/ingest` sync route. Promote `/evidence/ingest/async` to `/ingest`. |
-| `internal/events/nats.go` | Rename subjects to `core.*` namespace. Remove `SubjectEvidence` alias. |
-| `deploy/compose/docker-compose.yaml` | Single `seed` container replaces `registry-seed` + `gateway-seed`. |
+| `internal/store/populate.go` | Remove startup catalog populate helpers tied to deprecated seed flows. |
+| `internal/store/handlers.go` | Remove legacy evidence-only ingest route; expose `/api/ingest` and `/api/ingest/jobs/{job_id}`. |
+| `internal/events/nats.go` | Rename subjects to `core.*` namespace. Remove `SubjectEvidence` alias where obsolete. |
+| `deploy/compose/docker-compose.yaml` | Single `seed` container replaces split seed patterns where applicable. |

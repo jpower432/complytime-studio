@@ -67,13 +67,13 @@ The Preact SPA lives in [studio-ui](https://github.com/complytime/studio-ui). Fr
 
 **Modifying the assistant:**
 
-Agent source (agent.yaml, prompt.md, skills, Python code) lives in the [complytime-agents](https://github.com/complytime/complytime-agents) repo.
+Agent source (agent.yaml, prompt.md, skills, Python code) lives in the [complytime-studio](https://github.com/complytime-labs/complytime-studio) repo.
 
 | Artifact | Location |
 |:--|:--|
-| Agent spec | `complytime-agents` repo: `agents/assistant/agent.yaml` |
-| Prompt | `complytime-agents` repo: `agents/assistant/prompt.md` |
-| Skills | `complytime-agents` repo: `skills/*/SKILL.md` |
+| Agent spec | `complytime-studio` repo: `agents/assistant/agent.yaml` |
+| Prompt | `complytime-studio` repo: `agents/assistant/prompt.md` |
+| Skills | `complytime-studio` repo: `skills/*/SKILL.md` |
 | Helm chart | `studio-deploy` repo: `charts/complytime/` |
 | Helm prompt values | `studio-deploy` repo: `charts/complytime/values.yaml` → `agentPrompts.assistant` |
 

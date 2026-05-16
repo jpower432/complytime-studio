@@ -21,9 +21,9 @@ ComplyTime spans four repositories:
 
 | Repository | Role | Language |
 |:--|:--|:--|
-| **complytime-studio** (this repo) | Data Platform — evidence CRUD, posture, certifier pipeline, auth | Go |
+| **complytime-core** (this repo) | Data Platform — evidence CRUD, posture, certifier pipeline, auth | Go |
 | [studio-ui](https://github.com/complytime/studio-ui) | Batteries-included SPA + Nginx reverse-proxy | TypeScript |
-| [complytime-agents](https://github.com/complytime/complytime-agents) | Studio Workbench + AI agents — A2A routing, chat, Gemara tools | Python |
+| [complytime-studio](https://github.com/complytime-labs/complytime-studio) | Studio Workbench + AI agents — A2A routing, chat, Gemara tools | Python |
 | [studio-deploy](https://github.com/complytime/studio-deploy) | Helm chart + Docker Compose for local/cluster deployment | YAML |
 
 ## Quick Start
@@ -70,7 +70,7 @@ Browser → Nginx (studio-ui)
 
 **Data Platform** (this repo) is a headless data API: evidence CRUD, posture computation, certifier pipeline (NATS), content ingestion, auth. PostgreSQL stores all application data.
 
-**Studio Workbench** ([complytime-agents](https://github.com/complytime/complytime-agents)) serves agent-support endpoints: A2A routing, agent directory, chat state, Gemara validate/migrate, OCI publish/browse. Agents consume platform state through `studio-mcp` MCP resources.
+**Studio Workbench** ([complytime-studio](https://github.com/complytime-labs/complytime-studio)) serves agent-support endpoints: A2A routing, agent directory, chat state, Gemara validate/migrate, OCI publish/browse. Agents consume platform state through `complytime-mcp` MCP resources (`complytime://*`).
 
 **Studio UI** ([studio-ui](https://github.com/complytime/studio-ui)) is a batteries-included Preact SPA. Nginx routes requests to the correct backend by path prefix.
 
@@ -82,8 +82,8 @@ For full architecture detail, see [`docs/architecture.md`](docs/architecture.md)
 |:--|:--|
 | `make gateway-build` | Compile gateway to `bin/studio-gateway` |
 | `make gateway-image` | Build gateway container image |
-| `make studio-mcp-build` | Compile `studio-mcp` to `bin/studio-mcp` |
-| `make studio-mcp-image` | Build `studio-mcp` container image |
+| `make complytime-mcp-build` | Compile `complytime-mcp` to `bin/complytime-mcp` |
+| `make complytime-mcp-image` | Build `complytime-mcp` container image |
 | `make test` | Run Go tests |
 | `make lint` | Run golangci-lint |
 | `make seed` | Seed demo data |
@@ -98,7 +98,7 @@ Deployment targets (`cluster-up`, `deploy`, `helm-*`) moved to [studio-deploy](h
 | [Service Level Requirements](docs/requirements/service-level-requirements.md) | SLRs, ownership, gap analysis |
 | [Agent Data Flows](docs/design/agent-data-flows.md) | Workbench-to-agent communication |
 | [Evidence Semconv](docs/design/evidence-semconv-alignment.md) | Evidence column mapping to OTel semantic conventions |
-| studio-mcp | MCP resources and tools for agents (see `cmd/studio-mcp/`) |
+| complytime-mcp | MCP resources and tools for agents (see `cmd/complytime-mcp/`) |
 | [Decisions](docs/decisions/) | Architecture Decision Records |
 
 ## License
