@@ -1,90 +1,155 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Architecture
+# ComplyTime Core Architecture
 
-ComplyTime ships as four repositories: **Data Platform** (API), **Studio Workbench** (agent support), **Studio UI** (SPA), and **Studio Deploy** (Helm chart + Docker Compose). Each boundary deploys independently; container images are the contract, REST and MCP are the integration seams.
+The data platform API for the ComplyTime ecosystem. Stores and serves compliance evidence, policies, catalogs, and audit artifacts. Other services consume it via REST, MCP, or read-only SQL.
 
-## Components
+## System Overview
 
-| Boundary | Role | Primary tech | Repository |
+ComplyTime ships as four repositories. This repo owns the gateway and data layer.
+
+| Boundary | Role | Tech | Repository |
 |:--|:--|:--|:--|
-| **Data Platform** | Headless data API: evidence CRUD, certifier pipeline (in-process), posture reads, content ingestion, auth | Go gateway (`cmd/gateway`), PostgreSQL, NATS | [complytime-core](https://github.com/complytime-labs/complytime-core) |
-| **Studio Workbench** | Agent support: A2A routing, agent directory, chat state, Gemara validation, OCI publish/browse | Python (Starlette), LangGraph, MCP clients | [complytime-studio](https://github.com/complytime-labs/complytime-studio) |
-| **Studio UI** | Batteries-included analyst UI: posture, evidence, audit views, agent chat shell | Preact SPA, Nginx reverse-proxy | [studio-ui](https://github.com/complytime/studio-ui) |
-| **Studio Deploy** | Helm chart and Docker Compose for local/cluster deployment | Helm, Docker Compose | [studio-deploy](https://github.com/complytime/studio-deploy) |
-
-## Communication
+| **Data Platform** | Headless API: evidence CRUD, certifier pipeline, ingest, auth | Go (Echo), PostgreSQL, NATS | [complytime-core](https://github.com/complytime-labs/complytime-core) |
+| **Studio Workbench** | Agent support: A2A routing, chat, Gemara validation, OCI ops | Python (Starlette), LangGraph | [complytime-studio](https://github.com/complytime-labs/complytime-studio) |
+| **Studio UI** | Analyst dashboard: posture, evidence, audit views, agent chat | Preact SPA, Nginx | [studio-ui](https://github.com/complytime-labs/studio-ui) |
+| **Studio Deploy** | Helm chart for Kind/Kubernetes deployment | Helm | [studio-deploy](https://github.com/complytime-labs/studio-deploy) |
 
 ```mermaid
-flowchart LR
-  subgraph Browser
-    B[Browser]
-  end
-  subgraph StudioUI["Studio UI (Nginx)"]
-    S[Nginx]
-  end
-  subgraph DataPlatform["Data Platform"]
-    G[Go gateway]
-    PG[(PostgreSQL)]
-    N[NATS]
-    G --- PG
-    G --- N
-  end
-  subgraph Workbench["Studio Workbench"]
-    W[Starlette server]
-    A[LangGraph agents]
-    GM[gemara-mcp]
-    OM[oras-mcp]
-    W --- A
-    W --- GM
-    W --- OM
+flowchart TB
+  subgraph Clients
+    Browser["Browser"]
   end
 
-  B -->|"all requests"| S
-  S -->|"/api /auth /oauth2"| G
-  S -->|"/workbench"| W
-  A -->|"evidence, posture, policies"| G
+  subgraph Nginx["studio-ui — Nginx"]
+    Routes["/api /auth /oauth2 → gateway · /workbench → workbench · /* → SPA"]
+  end
+
+  subgraph Gateway["Gateway — :8080 — Echo"]
+    Echo["Echo — auth, /api/*, /auth/*, /healthz"]
+  end
+
+  PG[("PostgreSQL")]
+  NATS[("NATS")]
+  Blob[("S3-compatible blob — optional")]
+
+  subgraph Workbench["complytime-studio"]
+    WB["Starlette — A2A, agents, chat, validate, OCI"]
+  end
+
+  GemaraMCP["gemara-mcp"]
+  ComplyMCP["complytime-mcp"]
+  OrasMCP["oras-mcp"]
+
+  Browser --> Nginx
+  Nginx --> Echo
+  Nginx --> WB
+  Echo --> PG
+  Echo --> NATS
+  Echo -->|"BLOB_*"| Blob
+  WB --> GemaraMCP
+  WB --> ComplyMCP
+  WB --> OrasMCP
+  NATS -->|"certification pipeline"| Echo
 ```
 
-| Client | Target | Protocol | Path | Notes |
-|:--|:--|:--|:--|:--|
-| Browser | Studio UI (Nginx) | HTTP | `/*` | Single entry point |
-| Nginx | Data Platform | REST | `/api/*`, `/auth/*`, `/oauth2/*` | Data CRUD, auth |
-| Nginx | Workbench | REST, SSE | `/workbench/*` | Agent interactions, tool calls |
-| Agents | Data Platform | REST | `/api/evidence`, `/api/posture`, etc. | Read/write compliance data |
-| Agents | gemara-mcp | MCP | stdio/http | Artifact validation, schema queries |
-| Agents | oras-mcp | MCP | stdio/http | Registry operations |
+## Gateway (`cmd/gateway`)
 
-## Data Platform API Surface
+Echo serves `/api/*`, `/auth/*`, and `/healthz` on a single port (default 8080). No embedded SPA, no A2A proxy, no agent directory.
 
-The data platform serves only data CRUD and background pipelines:
+| Concern | Implementation |
+|:--|:--|
+| HTTP | Echo — single listener, middleware stack |
+| Data | `internal/store` + `internal/postgres` — single pool, `EnsureSchema` at startup |
+| Events | `internal/events` — NATS; debounced certification pipeline on evidence subjects |
+| Blobs | `internal/blob` — MinIO-compatible when `BLOB_*` set |
+| Auth | `internal/auth` — OAuth2 Proxy `X-Forwarded-*` headers; optional `PROXY_SECRET` |
 
-- Evidence ingestion and query
-- Certifications query
-- Posture reads
-- Policies, catalogs, mappings CRUD
-- Requirements matrix
-- Audit logs and drafts
-- Threats, risks (catalog-derived)
-- Users, roles, auth
-- Content ingestion from OCI registries
-- Certifier pipeline (in-process goroutine, NATS-triggered)
+**Hard requirements:** `POSTGRES_URL` and `NATS_URL` must be set and reachable. Failure exits the process.
 
-## Workbench API Surface
+## Authentication
 
-The workbench serves agent-support concerns:
+| Mode | Condition |
+|:--|:--|
+| **OAuth2 Proxy** | Sidecar handles OIDC, session cookies. Gateway reads `X-Forwarded-Email/User/Groups`. `PROXY_SECRET` + `X-Proxy-Secret` strips spoofed headers. |
+| **No proxy** | `/api/*` (except `/api/config`) returns 401 without `X-Forwarded-Email`. `POST /api/bootstrap` is the only write bypass. |
 
-- A2A protocol routing to agents (`/workbench/a2a/*`)
-- Agent directory (`/workbench/agents`)
-- Chat conversation state (`/workbench/chat/*`)
-- Gemara validate/migrate (`/workbench/validate`, `/workbench/migrate`)
-- OCI publish (`/workbench/publish`)
-- Registry browse (`/workbench/registry/*`)
+## NATS Subjects
+
+| Subject | Use |
+|:--|:--|
+| `core.evidence.<policy_id>` | After ingest — debounced certification pipeline |
+| `core.ingest` | Unified async ingest worker |
+| `core.draft.<policy_id>` | Draft creation (no active subscribers) |
+
+## Data Flow
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway
+  participant PG as PostgreSQL
+  participant N as NATS
+
+  C->>G: POST /api/ingest (YAML)
+  G->>N: publish core.ingest
+  N->>G: worker picks up job
+  G->>PG: classify + insert artifact
+  G->>N: publish core.evidence.policy_id
+  N->>G: certification pipeline (debounced)
+  G->>PG: update certifications
+```
+
+## Key Routes
+
+| Method(s) | Path | Notes |
+|:--|:--|:--|
+| GET | `/healthz` | Postgres ping |
+| GET | `/api/config` | Non-secret config (public) |
+| POST | `/api/bootstrap` | Create admin user (no auth required) |
+| POST | `/api/ingest` | Unified Gemara ingest (async, 202) |
+| GET | `/api/ingest/jobs/{job_id}` | Poll ingest job status |
+| POST | `/api/import` | OCI bundle/artifact import |
+| GET | `/api/policies`, `/api/policies/{id}` | Policy CRUD |
+| GET | `/api/catalogs` | List catalogs |
+| GET | `/api/evidence` | Query evidence |
+| GET | `/api/requirements` | Requirements matrix |
+| GET | `/api/posture` | Posture aggregates |
+| GET, POST | `/api/audit-logs` | Audit log CRUD |
+| GET, POST | `/api/draft-audit-logs` | Draft audit logs |
+| POST | `/api/audit-logs/promote` | Promote draft to official |
+| GET | `/auth/me` | Current user identity |
+
+Full route registration: `internal/store/handlers.go`, `internal/auth/user_handlers.go`, `cmd/gateway/main.go`.
+
+## Configuration
+
+| Variable | Required | Purpose |
+|:--|:--|:--|
+| `POSTGRES_URL` | Yes | Application database |
+| `NATS_URL` | Yes | Event bus |
+| `PORT` | No | 8080 default |
+| `BLOB_*` | No | Object storage |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins |
+| `PROXY_SECRET` | Prod | Shared secret with OAuth2 Proxy |
+
+`GEMARA_MCP_URL` and `ORAS_MCP_URL` are workbench concerns, not gateway env vars.
+
+## PostgreSQL
+
+Single application database for all platform data: policies, evidence, catalogs, controls, mappings, certifications, posture, users, audit logs, jobs. ClickHouse is an optional analytical tier via `pg_clickhouse` FDW — the gateway never queries it directly.
+
+## Testing
+
+Integration tests in `internal/store/` and `internal/postgres/` require a live PostgreSQL instance. Set `POSTGRES_TEST_URL` to enable them. Without it, tests skip. CI does not currently provision PostgreSQL — run `make test-integration` locally.
 
 ## Related Docs
 
 | Doc | Topic |
 |:--|:--|
-| [ADR: Data Platform + Workbench Split](decisions/data-platform-workbench-split.md) | Why we split |
-| [Service Level Requirements](requirements/service-level-requirements.md) | SLRs and gap analysis |
-| complytime-mcp | MCP resources and tools for agents (platform data via `complytime://*` URIs) |
+| [ADRs](decisions/) | Architecture decisions for the data platform |
+| [API spec](api/openapi.yaml) | OpenAPI 3.1 definition |
+| [Use case](use-case.md) | End-to-end audit workflow |
+| [Agent data flows](design/agent-data-flows.md) | How agents interact with platform data |
+| [Evidence semconv](design/evidence-semconv-alignment.md) | OTel semantic convention alignment |
+| [SLRs](requirements/service-level-requirements.md) | Service level requirements |
