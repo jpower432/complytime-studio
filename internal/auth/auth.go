@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/complytime/complytime-studio/internal/consts"
-	"github.com/complytime/complytime-studio/internal/httputil"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/httputil"
 	"github.com/labstack/echo/v4"
 )
 

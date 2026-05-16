@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/store"
+	"github.com/complytime-labs/complytime-core/internal/store"
 	"github.com/labstack/echo/v4"
 )
 

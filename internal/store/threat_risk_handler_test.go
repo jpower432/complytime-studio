@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
 	"github.com/labstack/echo/v4"
 )
 

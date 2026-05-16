@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/consts"
 )
 
 const degradedHeader = "X-Studio-Degraded"

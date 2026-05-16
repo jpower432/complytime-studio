@@ -9,8 +9,8 @@ import (
 
 	gemara "github.com/gemaraproj/go-gemara"
 
-	"github.com/complytime/complytime-studio/internal/events"
-	"github.com/complytime/complytime-studio/internal/ingest"
+	"github.com/complytime-labs/complytime-core/internal/events"
+	"github.com/complytime-labs/complytime-core/internal/ingest"
 )
 
 func IngestWorker(

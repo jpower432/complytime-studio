@@ -400,67 +400,24 @@ paths:
         '500':
           description: Query failed
 
-  /api/evidence/ingest:
+  /api/ingest:
     post:
-      tags: [Evidence]
-      operationId: ingestEvidence
-      summary: Ingest evidence records (JSON or multipart)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/EvidenceRecord'
-          multipart/form-data:
-            schema:
-              type: object
-              required: [data]
-              properties:
-                data:
-                  type: string
-                  description: JSON array of EvidenceRecord
-                file:
-                  type: string
-                  format: binary
-                  description: Optional blob attachment (`file` or `attachment`)
-                attachment:
-                  type: string
-                  format: binary
-      responses:
-        '201':
-          description: Evidence rows inserted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  inserted:
-                    type: integer
-        '400':
-          description: Validation errors
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorsListResponse'
-        '502':
-          description: Blob upload failed
-
-  /api/evidence/ingest/async:
-    post:
-      tags: [Evidence]
-      operationId: ingestEvidenceAsync
-      summary: Async ingest — returns 202 with job_id for polling
+      tags: [Ingest]
+      operationId: ingestArtifact
+      summary: Async ingest any Gemara artifact
       description: >-
-        Accepts the same Gemara YAML as the sync endpoint but returns
-        immediately with a job_id. The artifact is processed asynchronously
-        via NATS. Poll GET /api/evidence/ingest/jobs/{job_id} for status.
-        In-memory tracking only — job state is lost on gateway restart.
+        Accepts raw Gemara YAML (any artifact type — EvaluationLog,
+        EnforcementLog, Policy, ControlCatalog, ThreatCatalog,
+        RiskCatalog, GuidanceCatalog, MappingDocument). Returns 202
+        with a job_id. Poll GET /api/ingest/jobs/{job_id} for status.
+        See ADR #0034.
       requestBody:
         required: true
         content:
           application/x-yaml:
+            schema:
+              type: string
+          application/json:
             schema:
               type: string
       responses:
@@ -483,9 +440,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorsListResponse'
 
-  /api/evidence/ingest/jobs/{job_id}:
+  /api/ingest/jobs/{job_id}:
     get:
-      tags: [Evidence]
+      tags: [Ingest]
       operationId: getIngestJobStatus
       summary: Poll async ingest job status
       parameters:
@@ -1575,8 +1532,16 @@ components:
         inserted:
           type: integer
           minimum: 0
+          description: Evidence row count (EvaluationLog/EnforcementLog only)
         policy_id:
           type: string
+          description: Derived policy ID (evidence only)
+        artifact_id:
+          type: string
+          description: Stored artifact ID (Policy, Catalog, Mapping)
+        artifact_type:
+          type: string
+          description: Detected Gemara artifact type
         error:
           type: string
         created_at:

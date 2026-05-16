@@ -16,7 +16,7 @@ metadata:
       version: "1.0.0"
 result: Failed
 target:
-  id: github.com/complytime/complytime-studio
+  id: github.com/complytime-labs/complytime-core
   name: complytime/complytime-studio
   type: Software
   environment: production

@@ -17,11 +17,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
-	"github.com/complytime/complytime-studio/internal/blob"
-	"github.com/complytime/complytime-studio/internal/consts"
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
-	"github.com/complytime/complytime-studio/internal/httputil"
-	"github.com/complytime/complytime-studio/internal/identity"
+	"github.com/complytime-labs/complytime-core/internal/blob"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
+	"github.com/complytime-labs/complytime-core/internal/httputil"
+	"github.com/complytime-labs/complytime-core/internal/identity"
 )
 
 func jsonError(c echo.Context, code int, msg string) error {

@@ -10,7 +10,7 @@ import (
 	sdk "github.com/gemaraproj/go-gemara"
 	goyaml "github.com/goccy/go-yaml"
 
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
 )
 
 // PopulateMappingEntries backfills the mapping_entries table from existing

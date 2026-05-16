@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/complytime/complytime-studio/internal/blob"
+	"github.com/complytime-labs/complytime-core/internal/blob"
 )
 
 func TestValidateEvidenceRecordEnums_TableDriven(t *testing.T) {

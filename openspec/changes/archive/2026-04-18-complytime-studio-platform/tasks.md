@@ -1,7 +1,7 @@
 ## 1. Rebrand: GIDE → ComplyTime Studio
 
 - [x] 1.1 Copy GIDE source into complytime-studio repo (Go code, prompts, templates, workbench, charts, deploy, scripts, Dockerfiles)
-- [x] 1.2 Update `go.mod` module path to `github.com/complytime/complytime-studio` and fix all import paths
+- [x] 1.2 Update `go.mod` module path to `github.com/complytime-labs/complytime-core` and fix all import paths
 - [x] 1.3 Rename agent names in Go code: `gide-orchestrator` → `studio-orchestrator`, `gide-threat-modeler` → `studio-threat-modeler`, `gide-policy` → `studio-policy-composer`
 - [x] 1.4 Replace "GIDE" with "ComplyTime Studio" in all prompt `.md` files
 - [x] 1.5 Rename Helm chart directory `charts/gide/` → `charts/complytime-studio/` and update `Chart.yaml` name, description, home, sources

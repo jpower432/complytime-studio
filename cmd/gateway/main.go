@@ -17,15 +17,15 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"github.com/complytime/complytime-studio/internal/auth"
-	"github.com/complytime/complytime-studio/internal/blob"
-	"github.com/complytime/complytime-studio/internal/certifier"
-	"github.com/complytime/complytime-studio/internal/config"
-	"github.com/complytime/complytime-studio/internal/consts"
-	"github.com/complytime/complytime-studio/internal/events"
-	"github.com/complytime/complytime-studio/internal/httputil"
-	pgstore "github.com/complytime/complytime-studio/internal/postgres"
-	"github.com/complytime/complytime-studio/internal/store"
+	"github.com/complytime-labs/complytime-core/internal/auth"
+	"github.com/complytime-labs/complytime-core/internal/blob"
+	"github.com/complytime-labs/complytime-core/internal/certifier"
+	"github.com/complytime-labs/complytime-core/internal/config"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/events"
+	"github.com/complytime-labs/complytime-core/internal/httputil"
+	pgstore "github.com/complytime-labs/complytime-core/internal/postgres"
+	"github.com/complytime-labs/complytime-core/internal/store"
 )
 
 func main() {

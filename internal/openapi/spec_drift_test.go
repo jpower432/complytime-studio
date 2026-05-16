@@ -17,10 +17,10 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/labstack/echo/v4"
 
-	"github.com/complytime/complytime-studio/internal/auth"
-	"github.com/complytime/complytime-studio/internal/config"
-	"github.com/complytime/complytime-studio/internal/gemara"
-	"github.com/complytime/complytime-studio/internal/store"
+	"github.com/complytime-labs/complytime-core/internal/auth"
+	"github.com/complytime-labs/complytime-core/internal/config"
+	"github.com/complytime-labs/complytime-core/internal/gemara"
+	"github.com/complytime-labs/complytime-core/internal/store"
 )
 
 // specPath resolves the OpenAPI spec relative to this test file.

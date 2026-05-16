@@ -26,7 +26,7 @@ The compliance workflow this enables: specialist agents author criteria-phase ar
 
 ## Impact
 
-- **Go module**: `github.com/jpower432/gide` → `github.com/complytime/complytime-studio`
+- **Go module**: `github.com/jpower432/gide` → `github.com/complytime-labs/complytime-core`
 - **Dependencies added**: `oras-go` (OCI push), `notation-go` or `cosign-go` (signing)
 - **Dependencies removed**: Mapper agent code, mapper prompt, SCF/NIST embedded reference data (Gap Analyst doesn't need them — MappingDocument is input)
 - **Agent topology**: 4 agents → 4 agents (Orchestrator, Threat Modeler, Gap Analyst, Policy Composer). Mapper dropped.

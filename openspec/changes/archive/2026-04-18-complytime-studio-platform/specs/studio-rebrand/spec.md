@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Go module path is complytime/complytime-studio
-The Go module SHALL use `github.com/complytime/complytime-studio` as its module path.
+The Go module SHALL use `github.com/complytime-labs/complytime-core` as its module path.
 
 #### Scenario: Module declaration
 - **WHEN** the `go.mod` file is read
-- **THEN** the module line SHALL be `module github.com/complytime/complytime-studio`
+- **THEN** the module line SHALL be `module github.com/complytime-labs/complytime-core`
 
 ### Requirement: Agent names use studio prefix
 All agent names SHALL use the `studio-` prefix instead of `gide-`.

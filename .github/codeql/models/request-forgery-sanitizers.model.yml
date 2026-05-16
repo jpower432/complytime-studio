@@ -23,4 +23,4 @@ extensions:
       pack: codeql/go-all
       extensible: barrierModel
     data:
-      - ["github.com/complytime/complytime-studio/internal/registry", "", false, "BuildAllowedRegistryURL", "", "", "ReturnValue", "request-forgery", "manual"]
+      - ["github.com/complytime-labs/complytime-core/internal/registry", "", false, "BuildAllowedRegistryURL", "", "", "ReturnValue", "request-forgery", "manual"]

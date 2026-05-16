@@ -1,4 +1,4 @@
-module github.com/complytime/complytime-studio
+module github.com/complytime-labs/complytime-core
 
 go 1.25.8
 

@@ -100,7 +100,7 @@ All artifacts live in `openspec/changes/<change-name>/`. Templates are in `opens
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/complytime/complytime-studio/issues). For security vulnerabilities, follow [SECURITY.md](SECURITY.md).
+Use [GitHub Issues](https://github.com/complytime-labs/complytime-core/issues). For security vulnerabilities, follow [SECURITY.md](SECURITY.md).
 
 ## License
 

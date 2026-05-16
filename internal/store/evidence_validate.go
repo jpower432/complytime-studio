@@ -5,7 +5,7 @@ package store
 import (
 	"fmt"
 
-	"github.com/complytime/complytime-studio/internal/blob"
+	"github.com/complytime-labs/complytime-core/internal/blob"
 )
 
 // Allowed values for evidence columns (aligned with Gemara enum definitions).

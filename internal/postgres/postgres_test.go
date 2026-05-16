@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/identity"
+	"github.com/complytime-labs/complytime-core/internal/identity"
 )
 
 // testClient connects to the test database and runs migrations.

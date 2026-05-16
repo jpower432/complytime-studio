@@ -113,5 +113,5 @@ Nine kagent declarative agent limitations block end-to-end artifact authoring fl
 2. [Executor wiring]
 3. [Test coverage]
 
-**Reference implementation**: https://github.com/complytime/complytime-studio/tree/main/agents/gap-analyst
+**Reference implementation**: https://github.com/complytime-labs/complytime-core/tree/main/agents/gap-analyst
 ```

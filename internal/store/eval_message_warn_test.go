@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/consts"
 )
 
 func TestWarnEvalMessageIfLarge_EmitsWhenOverThreshold(t *testing.T) {

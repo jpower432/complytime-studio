@@ -12,7 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
 )
 
 func registerCatalogRoutes(g *echo.Group, s Stores) {

@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/complytime/complytime-studio/internal/consts"
-	"github.com/complytime/complytime-studio/internal/httputil"
-	"github.com/complytime/complytime-studio/internal/ingest"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/httputil"
+	"github.com/complytime-labs/complytime-core/internal/ingest"
 )
 
 // toEvidenceRecords converts ingest EvidenceRows to store EvidenceRecords.

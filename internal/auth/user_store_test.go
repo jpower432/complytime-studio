@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/consts"
 	"github.com/labstack/echo/v4"
 )
 

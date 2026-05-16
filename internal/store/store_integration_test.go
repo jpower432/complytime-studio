@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	pgstore "github.com/complytime/complytime-studio/internal/postgres"
+	pgstore "github.com/complytime-labs/complytime-core/internal/postgres"
 )
 
 func testStore(t *testing.T) *Store {

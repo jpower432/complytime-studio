@@ -13,7 +13,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/complytime/complytime-studio/internal/events"
+	"github.com/complytime-labs/complytime-core/internal/events"
 )
 
 const minimalEvalLog = `metadata:
