@@ -18,8 +18,6 @@ Data platform decisions. Other repos maintain their own ADRs:
 | 0010 | [OTel Collector Is Environment Infrastructure](otel-collector-out-of-chart.md) | Accepted | 2026-04-18 |
 | 0014 | [Evidence Staleness Model](evidence-staleness-model.md) | Accepted | 2026-04-26 |
 | 0016 | [PII in Structured Logs](pii-in-logs.md) | Accepted (revisit at RACI Phase 3) | 2026-04-27 |
-| 0023 | [complytime-mcp Server](complytime-mcp-server.md) | Accepted | 2026-05-12 |
-| 0024 | [Agent MCP Surface — complytime-mcp vs postgres-mcp](agent-mcp-surface.md) | Accepted | 2026-05-12 |
 | 0025 | [Data Platform + Workbench Split](data-platform-workbench-split.md) | Accepted | 2026-05-13 |
 | 0027 | [JWT Bearer Authentication for Headless API Access](jwt-bearer-headless-auth.md) | Accepted | 2026-05-13 |
 | 0028 | [Async Evidence Ingest: Accept-the-Loss Durability](async-ingest-durability.md) | Accepted | 2026-05-13 |
