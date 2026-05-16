@@ -33,6 +33,7 @@
 | 0032 | [Architecture Extraction — Core + Studio](architecture-extraction.md) | Accepted | 2026-05-15 |
 | 0033 | [Evidence Quality Boundary](evidence-quality-boundary.md) | Accepted | 2026-05-15 |
 | 0034 | [Unified Ingest Pipeline](unified-ingest-pipeline.md) | Accepted | 2026-05-16 |
+| 0035 | [Kind + Helm as Sole Deployment Path](kind-only-deployment.md) | Accepted | 2026-05-16 |
 
 ## Active Workarounds
 
