@@ -407,25 +407,3 @@ func ExtractPolicyCriteria(ctx context.Context, policyID, content string, ctrlS 
 	slog.Info("policy criteria extracted", "policy_id", policyID, "controls", len(controls), "requirements", len(reqs))
 	return len(controls), nil
 }
-
-func detectMetadataID(content string) string {
-	var meta struct {
-		Metadata struct {
-			ID string `yaml:"id"`
-		} `yaml:"metadata"`
-	}
-	if err := goyaml.Unmarshal([]byte(content), &meta); err != nil {
-		return ""
-	}
-	return meta.Metadata.ID
-}
-
-func detectTitle(content string) string {
-	var meta struct {
-		Title string `yaml:"title"`
-	}
-	if err := goyaml.Unmarshal([]byte(content), &meta); err != nil {
-		return ""
-	}
-	return meta.Title
-}

@@ -25,8 +25,8 @@ jobs:
         run: go test -tags dev -v -race -cover ./...
       - name: Build gateway
         run: go build -o /dev/null ./cmd/gateway/
-      - name: Build studio-mcp
-        run: go build -o /dev/null ./cmd/studio-mcp/
+      - name: Build complytime-mcp
+        run: go build -o /dev/null ./cmd/complytime-mcp/
 
   lint:
     name: Lint
