@@ -13,7 +13,6 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/complytime-labs/complytime-core/internal/consts"
 	"github.com/complytime-labs/complytime-core/internal/gemara"
-	"github.com/complytime-labs/complytime-core/internal/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -126,27 +125,6 @@ type DraftAuditLogStore interface {
 	PromoteDraftAuditLog(ctx context.Context, draftID string, reviewedBy string) error
 }
 
-// Program is a persisted compliance program (see internal/postgres/programs.go).
-type Program = postgres.Program
-
-// Job is an agent job run under a program.
-type Job = postgres.Job
-
-// ProgramStore defines CRUD for programs.
-type ProgramStore interface {
-	ListPrograms(ctx context.Context) ([]Program, error)
-	GetProgram(ctx context.Context, id string) (*Program, error)
-	CreateProgram(ctx context.Context, p Program) (*Program, error)
-	UpdateProgram(ctx context.Context, p Program) error
-	DeleteProgram(ctx context.Context, id string) error
-}
-
-// JobStore defines operations for jobs scoped to a program.
-type JobStore interface {
-	ListJobs(ctx context.Context, programID string) ([]Job, error)
-	CreateJob(ctx context.Context, j Job) (*Job, error)
-	UpdateJobStatus(ctx context.Context, id, status string) error
-}
 
 // Store provides typed access to PostgreSQL tables for policies,
 // mapping documents, evidence, and audit logs. Implements all
@@ -172,8 +150,6 @@ var (
 
 	_ CertificationStore      = (*Store)(nil)
 	_ GuidanceStore           = (*Store)(nil)
-	_ ProgramStore            = (*postgres.ProgramPG)(nil)
-	_ JobStore                = (*postgres.ProgramPG)(nil)
 )
 
 // New wraps a PostgreSQL connection pool.
@@ -1912,10 +1888,3 @@ func (s *Store) ListRequirementEvidence(ctx context.Context, requirementID strin
 	}
 	return out, rows.Err()
 }
-
-// Program and job store errors (re-exported from postgres).
-var (
-	ErrProgramNotFound        = postgres.ErrProgramNotFound
-	ErrProgramVersionConflict = postgres.ErrProgramVersionConflict
-	ErrJobNotFound            = postgres.ErrJobNotFound
-)

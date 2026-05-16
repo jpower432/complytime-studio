@@ -34,8 +34,8 @@ func testStore(t *testing.T) *Store {
 		bg := context.Background()
 		pool := client.Pool()
 		_, _ = pool.Exec(bg, "DELETE FROM evidence_assessments")
-		_, _ = pool.Exec(bg, "DELETE FROM jobs")
-		_, _ = pool.Exec(bg, "DELETE FROM programs")
+		_, _ = pool.Exec(bg, "DELETE FROM workbench.jobs")
+		_, _ = pool.Exec(bg, "DELETE FROM workbench.programs")
 		_, _ = pool.Exec(bg, "DELETE FROM evidence")
 		_, _ = pool.Exec(bg, "DELETE FROM policies")
 		client.Close()
@@ -323,7 +323,7 @@ func TestIntegration_ListInventory(t *testing.T) {
 
 	progID := uuid.New()
 	_, err = pool.Exec(ctx,
-		`INSERT INTO programs (id, name, framework, policy_ids) VALUES ($1, 'inv-prog', 'soc2', $2)`,
+		`INSERT INTO workbench.programs (id, name, framework, policy_ids) VALUES ($1, 'inv-prog', 'soc2', $2)`,
 		progID, []string{"pol-inv-a", "pol-inv-b"})
 	if err != nil {
 		t.Fatalf("insert program: %v", err)

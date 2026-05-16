@@ -31,9 +31,11 @@ The gateway REST API (`/api/*`) remains the authoritative contract. OpenAPI-docu
 
 `complytime-mcp` is a gateway facade — it proxies to REST via HTTP, it does not connect to Postgres directly. This preserves a single auth/validation layer.
 
-**Resources (13 static + 5 templates):**
-- Static: policies, catalogs, posture, audit-logs, draft-audit-logs, threats, risks, certifications, requirements, control-threats, risk-threats, inventory, programs
-- Templates: `policies/{id}`, `audit-logs/{id}`, `draft-audit-logs/{id}`, `programs/{id}`, `requirements/{id}/evidence`
+**Resources (12 static + 4 templates):**
+- Static: policies, catalogs, posture, audit-logs, draft-audit-logs, threats, risks, certifications, requirements, control-threats, risk-threats, inventory
+- Templates: `policies/{id}`, `audit-logs/{id}`, `draft-audit-logs/{id}`, `requirements/{id}/evidence`
+
+Programs are workbench-owned (see ADR #0036) and served via `studio-mcp`.
 
 **Tools (2):**
 - `query_evidence` — full filter set (policy, control, target, time range, pagination)

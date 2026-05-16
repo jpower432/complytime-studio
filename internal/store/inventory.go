@@ -50,7 +50,7 @@ func (s *Store) ListInventory(ctx context.Context, f InventoryFilter) ([]Invento
 	}
 	if f.ProgramID != "" {
 		where = append(where, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM programs pr
+			SELECT 1 FROM workbench.programs pr
 			WHERE pr.id = $%d::uuid AND pr.deleted_at IS NULL
 				AND e.policy_id = ANY(pr.policy_ids)
 		)`, n))

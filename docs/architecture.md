@@ -63,7 +63,7 @@ Echo serves `/api/*`, `/auth/*`, and `/healthz` on a single port (default 8080).
 | Data | `internal/store` + `internal/postgres` — single pool, `EnsureSchema` at startup |
 | Events | `internal/events` — NATS; debounced certification pipeline on evidence subjects |
 | Blobs | `internal/blob` — MinIO-compatible when `BLOB_*` set |
-| Auth | `internal/auth` — OAuth2 Proxy `X-Forwarded-*` headers; optional `PROXY_SECRET` |
+| Auth | `internal/auth` — OAuth2 Proxy `X-Forwarded-*` headers; sidecar localhost binding (ADR #0037) |
 
 **Hard requirements:** `POSTGRES_URL` and `NATS_URL` must be set and reachable. Failure exits the process.
 
@@ -71,7 +71,7 @@ Echo serves `/api/*`, `/auth/*`, and `/healthz` on a single port (default 8080).
 
 | Mode | Condition |
 |:--|:--|
-| **OAuth2 Proxy** | Sidecar handles OIDC, session cookies. Gateway reads `X-Forwarded-Email/User/Groups`. `PROXY_SECRET` + `X-Proxy-Secret` strips spoofed headers. |
+| **OAuth2 Proxy** | Sidecar handles OIDC, session cookies. Gateway binds to `127.0.0.1` (sidecar-only access). Reads `X-Forwarded-Email/User/Groups`. JWT validation for headless clients (ADR #0037). |
 | **No proxy** | `/api/*` (except `/api/config`) returns 401 without `X-Forwarded-Email`. `POST /api/bootstrap` is the only write bypass. |
 
 ## NATS Subjects
@@ -131,7 +131,6 @@ Full route registration: `internal/store/handlers.go`, `internal/auth/user_handl
 | `PORT` | No | 8080 default |
 | `BLOB_*` | No | Object storage |
 | `CORS_ORIGINS` | No | Comma-separated allowed origins |
-| `PROXY_SECRET` | Prod | Shared secret with OAuth2 Proxy |
 
 `GEMARA_MCP_URL` and `ORAS_MCP_URL` are workbench concerns, not gateway env vars.
 

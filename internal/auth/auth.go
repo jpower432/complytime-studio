@@ -55,35 +55,6 @@ func NewHandler() *Handler {
 	return &Handler{}
 }
 
-// StripUntrustedProxyHeaders returns middleware that removes X-Forwarded-*
-// identity headers from requests not originating from the trusted OAuth2
-// Proxy sidecar. This prevents header spoofing when the gateway is
-// accidentally exposed without the proxy in front.
-//
-// When proxySecret is non-empty, requests must carry a matching
-// X-Proxy-Secret header or have their identity headers stripped.
-// When proxySecret is empty, this middleware is a no-op (dev mode).
-func StripUntrustedProxyHeaders(proxySecret string) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			if proxySecret == "" {
-				return next(c)
-			}
-			r := c.Request()
-			if r.Header.Get("X-Proxy-Secret") != proxySecret {
-				r.Header.Del("X-Forwarded-Email")
-				r.Header.Del("X-Forwarded-User")
-				r.Header.Del("X-Forwarded-Preferred-Username")
-				r.Header.Del("X-Forwarded-Groups")
-				r.Header.Del("X-Forwarded-Access-Token")
-				r.Header.Del("X-Proxy-Secret")
-			} else {
-				r.Header.Del("X-Proxy-Secret")
-			}
-			return next(c)
-		}
-	}
-}
 
 // SetUserStore configures the persistent user/role store.
 func (h *Handler) SetUserStore(us UserStore) {

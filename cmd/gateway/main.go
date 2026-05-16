@@ -127,8 +127,6 @@ func main() {
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,
-		Programs:            nil,
-		Jobs:                nil,
 		Inventory:           st,
 		Users:               pgClient,
 		Registry:            registryConfig,
@@ -211,15 +209,6 @@ func main() {
 		"postgres": pgClient,
 	}
 	e.Use(echo.WrapMiddleware(pgstore.DegradedMiddleware(subsystems)))
-
-	proxySecret := os.Getenv("PROXY_SECRET")
-	if proxySecret != "" {
-		slog.Info("proxy secret configured — X-Forwarded-* headers will be stripped from untrusted requests")
-	} else {
-		slog.Warn("PROXY_SECRET is not set — X-Forwarded-* headers are trusted from any source",
-			"hint", "set PROXY_SECRET to a shared secret between OAuth2 Proxy and the gateway for production")
-	}
-	e.Use(auth.StripUntrustedProxyHeaders(proxySecret))
 
 	authHandler.Register(e)
 	e.Use(authHandler.Middleware())

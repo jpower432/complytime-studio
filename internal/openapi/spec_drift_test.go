@@ -112,8 +112,6 @@ func buildRouter(t *testing.T) *echo.Echo {
 		Certifications:      &nopCertificationStore{},
 		EventPublisher:      &nopEventPublisher{},
 		HealthChecker:       &nopHealthChecker{},
-		Programs:            &nopProgramStore{},
-		Jobs:                &nopJobStore{},
 		Inventory:           &nopInventoryStore{},
 		Users:               &nopUserStore{},
 		IngestTracker:       store.NewIngestTracker(),
@@ -393,24 +391,6 @@ type nopGuidanceStore struct{}
 func (*nopGuidanceStore) InsertGuidanceEntries(context.Context, []gemara.GuidanceEntryRow) error {
 	panic("nop")
 }
-
-type nopProgramStore struct{}
-
-func (*nopProgramStore) ListPrograms(context.Context) ([]store.Program, error) { panic("nop") }
-func (*nopProgramStore) GetProgram(context.Context, string) (*store.Program, error) {
-	panic("nop")
-}
-func (*nopProgramStore) CreateProgram(context.Context, store.Program) (*store.Program, error) {
-	panic("nop")
-}
-func (*nopProgramStore) UpdateProgram(context.Context, store.Program) error  { panic("nop") }
-func (*nopProgramStore) DeleteProgram(context.Context, string) error         { panic("nop") }
-
-type nopJobStore struct{}
-
-func (*nopJobStore) ListJobs(context.Context, string) ([]store.Job, error)  { panic("nop") }
-func (*nopJobStore) CreateJob(context.Context, store.Job) (*store.Job, error) { panic("nop") }
-func (*nopJobStore) UpdateJobStatus(context.Context, string, string) error    { panic("nop") }
 
 type nopInventoryStore struct{}
 
