@@ -190,10 +190,19 @@ func TestSpecDrift(t *testing.T) {
 		}
 	}
 
+	// Internal-only routes consumed by the workbench, not advertised in
+	// OpenAPI (ADR 0039 Phase A — temporary proxy targets).
+	internalOnly := map[routeKey]bool{
+		{Method: http.MethodGet, Path: "/api/posture"}:        true,
+		{Method: http.MethodGet, Path: "/api/risks/severity"}: true,
+	}
+
 	for k := range expandedCode {
-		// Skip Echo-internal methods (OPTIONS, HEAD, CONNECT, TRACE)
 		switch k.Method {
 		case http.MethodOptions, http.MethodHead, http.MethodConnect, http.MethodTrace:
+			continue
+		}
+		if internalOnly[k] {
 			continue
 		}
 		if !spec[k] {

@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS policies (
     oci_reference TEXT NOT NULL DEFAULT '',
     content       TEXT NOT NULL DEFAULT '',
     imported_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    imported_by   TEXT
+    imported_by   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_policies_imported_at ON policies(imported_at DESC);
 

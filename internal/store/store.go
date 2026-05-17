@@ -191,7 +191,7 @@ func (s *Store) InsertPolicy(ctx context.Context, p Policy) error {
 // ListPolicies returns all stored policies ordered by import date.
 func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT policy_id, title, version, oci_reference, imported_at, imported_by FROM policies ORDER BY imported_at DESC`)
+		`SELECT policy_id, title, version, oci_reference, imported_at, COALESCE(imported_by, '') FROM policies ORDER BY imported_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
@@ -211,7 +211,7 @@ func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 // GetPolicy returns a single policy with full content.
 func (s *Store) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT policy_id, title, version, oci_reference, content, imported_at, imported_by FROM policies WHERE policy_id = $1`, policyID)
+		`SELECT policy_id, title, version, oci_reference, content, imported_at, COALESCE(imported_by, '') FROM policies WHERE policy_id = $1`, policyID)
 	var p Policy
 	if err := row.Scan(&p.PolicyID, &p.Title, &p.Version, &p.OCIReference, &p.Content, &p.ImportedAt, &p.ImportedBy); err != nil {
 		return nil, fmt.Errorf("get policy: %w", err)

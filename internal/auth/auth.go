@@ -92,7 +92,8 @@ func (h *Handler) Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			r := c.Request()
-			if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/config" {
+			requiresAuth := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/workbench/")
+			if !requiresAuth || r.URL.Path == "/api/config" {
 				return next(c)
 			}
 
