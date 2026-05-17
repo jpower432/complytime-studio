@@ -125,7 +125,6 @@ func main() {
 		Risks:               st,
 		Catalogs:            st,
 		EvidenceAssessments: st,
-		Posture:             st,
 		Certifications:      st,
 		EventPublisher:      pub,
 		HealthChecker:       pgClient,

@@ -16,12 +16,6 @@ import (
 )
 
 func registerPostureAndRequirementRoutes(g *echo.Group, s Stores) {
-	// Posture is a cross-record aggregation that belongs in the workbench
-	// (ADR 0039). Kept here temporarily as an internal-only endpoint until
-	// the workbench implements its own aggregation logic.
-	if s.Posture != nil {
-		g.GET("/posture", listPostureHandler(s.Posture))
-	}
 	if s.Requirements != nil {
 		g.GET("/requirements", listRequirementMatrixHandler(s.Requirements))
 		g.GET("/requirements/:id/evidence", listRequirementEvidenceHandler(s.Requirements))
@@ -35,29 +29,7 @@ func registerThreatAndRiskRoutes(g *echo.Group, s Stores) {
 	}
 	if s.Risks != nil {
 		g.GET("/risks", listRisksHandler(s.Risks))
-		// Risk severity is a cross-record derivation that belongs in the
-		// workbench (ADR 0039). Kept here temporarily until the workbench
-		// implements its own aggregation logic.
-		g.GET("/risks/severity", riskSeverityHandler(s.Risks))
 		g.GET("/risk-threats", listRiskThreatsHandler(s.Risks))
-	}
-}
-
-func listPostureHandler(s PostureStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		start, end, err := parseOptionalTimeRange(c)
-		if err != nil {
-			return jsonError(c, http.StatusBadRequest, err.Error())
-		}
-		rows, err := s.ListPosture(c.Request().Context(), start, end)
-		if err != nil {
-			slog.Error("list posture failed", "error", err)
-			return jsonError(c, http.StatusInternalServerError, "query failed")
-		}
-		if rows == nil {
-			rows = []PostureRow{}
-		}
-		return c.JSON(http.StatusOK, rows)
 	}
 }
 
@@ -71,47 +43,6 @@ func parseQueryLimit(c echo.Context) int {
 	}
 	return consts.ClampLimit(0)
 }
-
-// parseOptionalTimeRange extracts optional start/end query parameters.
-// Accepts date-only (2006-01-02) or RFC 3339 formats.
-func parseOptionalTimeRange(c echo.Context) (start, end time.Time, err error) {
-	if v := c.QueryParam("start"); v != "" {
-		start, err = parseFlexibleTime(v, false)
-		if err != nil {
-			return time.Time{}, time.Time{}, errInvalidStart
-		}
-	}
-	if v := c.QueryParam("end"); v != "" {
-		end, err = parseFlexibleTime(v, true)
-		if err != nil {
-			return time.Time{}, time.Time{}, errInvalidEnd
-		}
-	}
-	return start, end, nil
-}
-
-var (
-	errInvalidStart = errors.New("invalid start parameter")
-	errInvalidEnd   = errors.New("invalid end parameter")
-)
-
-// parseFlexibleTime parses RFC 3339 or date-only (YYYY-MM-DD) strings.
-// Date-only values are treated as end-of-day (next day at 00:00 minus 1ns)
-// when used as an upper bound so that the full calendar day is included.
-func parseFlexibleTime(s string, endOfDay bool) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		if endOfDay {
-			t = t.AddDate(0, 0, 1).Add(-time.Nanosecond)
-		}
-		return t, nil
-	}
-	return time.Time{}, errInvalidDateFormat
-}
-
-var errInvalidDateFormat = errors.New("expected YYYY-MM-DD or RFC 3339 format")
 
 func listRequirementMatrixHandler(s RequirementStore) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -298,20 +229,3 @@ func listRiskThreatsHandler(s RiskStore) echo.HandlerFunc {
 	}
 }
 
-func riskSeverityHandler(s RiskStore) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		policyID := c.QueryParam("policy_id")
-		if policyID == "" {
-			return jsonError(c, http.StatusBadRequest, "policy_id required")
-		}
-		rows, err := s.GetPolicyRiskSeverity(c.Request().Context(), policyID)
-		if err != nil {
-			slog.Error("risk severity query failed", "error", err)
-			return jsonError(c, http.StatusInternalServerError, "query failed")
-		}
-		if rows == nil {
-			rows = []RiskSeverityRow{}
-		}
-		return c.JSON(http.StatusOK, rows)
-	}
-}

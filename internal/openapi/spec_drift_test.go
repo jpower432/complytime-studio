@@ -107,8 +107,6 @@ func buildRouter(t *testing.T) *echo.Echo {
 		Risks:               &nopRiskStore{},
 		Catalogs:            &nopCatalogStore{},
 		EvidenceAssessments: &nopEvidenceAssessmentStore{},
-		Posture:             &nopPostureStore{},
-
 		Certifications:      &nopCertificationStore{},
 		EventPublisher:      &nopEventPublisher{},
 		HealthChecker:       &nopHealthChecker{},
@@ -192,17 +190,9 @@ func TestSpecDrift(t *testing.T) {
 
 	// Internal-only routes consumed by the workbench, not advertised in
 	// OpenAPI (ADR 0039 Phase A — temporary proxy targets).
-	internalOnly := map[routeKey]bool{
-		{Method: http.MethodGet, Path: "/api/posture"}:        true,
-		{Method: http.MethodGet, Path: "/api/risks/severity"}: true,
-	}
-
 	for k := range expandedCode {
 		switch k.Method {
 		case http.MethodOptions, http.MethodHead, http.MethodConnect, http.MethodTrace:
-			continue
-		}
-		if internalOnly[k] {
 			continue
 		}
 		if !spec[k] {
@@ -336,9 +326,6 @@ type nopRiskStore struct{}
 func (*nopRiskStore) InsertRisks(context.Context, []gemara.RiskRow) error        { panic("nop") }
 func (*nopRiskStore) InsertRiskThreats(context.Context, []gemara.RiskThreatRow) error { panic("nop") }
 func (*nopRiskStore) CountRisks(context.Context, string) (int, error)            { panic("nop") }
-func (*nopRiskStore) GetPolicyRiskSeverity(context.Context, string) ([]store.RiskSeverityRow, error) {
-	panic("nop")
-}
 func (*nopRiskStore) QueryRisks(context.Context, string, string, int) ([]gemara.RiskRow, error) {
 	panic("nop")
 }
@@ -355,15 +342,6 @@ func (*nopCatalogStore) GetCatalog(context.Context, string) (*store.Catalog, err
 type nopEvidenceAssessmentStore struct{}
 
 func (*nopEvidenceAssessmentStore) InsertEvidenceAssessments(context.Context, []store.EvidenceAssessment) error {
-	panic("nop")
-}
-
-type nopPostureStore struct{}
-
-func (*nopPostureStore) ListPosture(context.Context, time.Time, time.Time) ([]store.PostureRow, error) {
-	panic("nop")
-}
-func (*nopPostureStore) QueryPolicyPosture(context.Context, string) (uint64, uint64, uint64, error) {
 	panic("nop")
 }
 

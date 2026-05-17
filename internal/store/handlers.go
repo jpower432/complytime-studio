@@ -42,7 +42,6 @@ type Stores struct {
 	Risks               RiskStore
 	Catalogs            CatalogStore
 	EvidenceAssessments EvidenceAssessmentStore
-	Posture             PostureStore
 	Certifications      CertificationStore
 	EventPublisher      EventPublisher
 	HealthChecker       HealthChecker
