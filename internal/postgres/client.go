@@ -115,6 +115,27 @@ func envString(key, fallback string) string {
 	return fallback
 }
 
+// ensureSchemaWith runs migrations using a separate connection URL.
+func (c *Client) ensureSchemaWith(ctx context.Context, url string) error {
+	migCfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return fmt.Errorf("parse migration url: %w", err)
+	}
+	migCfg.MaxConns = 1
+	migPool, err := pgxpool.NewWithConfig(ctx, migCfg)
+	if err != nil {
+		return fmt.Errorf("migration connect: %w", err)
+	}
+	defer migPool.Close()
+
+	conn, err := migPool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn for migration: %w", err)
+	}
+	defer conn.Release()
+	return runMigrations(ctx, conn)
+}
+
 // Pool returns the underlying connection pool for direct use by store implementations.
 func (c *Client) Pool() *pgxpool.Pool {
 	return c.pool
@@ -133,14 +154,25 @@ func (c *Client) Close() {
 // EnsureSchema applies all embedded SQL migrations in order.
 // Uses an advisory lock to prevent concurrent migration runs and a
 // schema_migrations table to track applied versions.
+//
+// When POSTGRES_MIGRATION_URL is set, migrations run against that URL
+// (typically a superuser) instead of the runtime pool. This supports
+// least-privilege runtime roles (e.g. gateway_rw) that lack CREATE/ALTER.
 func (c *Client) EnsureSchema(ctx context.Context) error {
+	migrationURL := os.Getenv("POSTGRES_MIGRATION_URL")
+	if migrationURL != "" {
+		return c.ensureSchemaWith(ctx, migrationURL)
+	}
 	conn, err := c.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire conn for migration: %w", err)
 	}
 	defer conn.Release()
+	return runMigrations(ctx, conn)
+}
 
-	// Advisory lock prevents concurrent migration runs across gateway replicas.
+// runMigrations applies embedded SQL migrations using the given connection.
+func runMigrations(ctx context.Context, conn *pgxpool.Conn) error {
 	const lockID int64 = 0x5354554449_4F5047 // "STUDIO_PG"
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID); err != nil {
 		return fmt.Errorf("advisory lock: %w", err)
