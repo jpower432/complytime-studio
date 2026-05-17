@@ -25,7 +25,6 @@ import (
 	"github.com/complytime-labs/complytime-core/internal/config"
 	"github.com/complytime-labs/complytime-core/internal/consts"
 	"github.com/complytime-labs/complytime-core/internal/events"
-	"github.com/complytime-labs/complytime-core/internal/grpcapi"
 	"github.com/complytime-labs/complytime-core/internal/httputil"
 	pgstore "github.com/complytime-labs/complytime-core/internal/postgres"
 	"github.com/complytime-labs/complytime-core/internal/store"
@@ -271,20 +270,10 @@ func main() {
 	e.Any("/workbench/*", echo.WrapHandler(wbProxy))
 	slog.Info("workbench proxy registered", "upstream", workbenchURL)
 
-	// gRPC server (optional — enabled via GRPC_PORT env var)
-	grpcPort := os.Getenv("GRPC_PORT")
-	var grpcSrv *grpcapi.GRPCServer
-	if grpcPort != "" {
-		grpcSrv = startGRPC(grpcPort, stores)
-	}
-
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if grpcSrv != nil {
-			grpcSrv.GracefulStop()
-		}
 		_ = e.Shutdown(shutdownCtx)
 	}()
 
@@ -301,22 +290,6 @@ func main() {
 		slog.Error("http server failed", "error", err)
 		os.Exit(1)
 	}
-}
-
-func startGRPC(port string, s store.Stores) *grpcapi.GRPCServer {
-	lis, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		slog.Error("grpc listen failed", "port", port, "error", err)
-		os.Exit(1)
-	}
-	srv := grpcapi.NewServer(s)
-	go func() {
-		slog.Info("grpc server starting", "port", port)
-		if err := srv.Serve(lis); err != nil {
-			slog.Error("grpc server failed", "error", err)
-		}
-	}()
-	return srv
 }
 
 func splitComma(raw string) []string {
