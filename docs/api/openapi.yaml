@@ -28,7 +28,6 @@ tags:
   - name: AuditLogs
   - name: DraftAuditLogs
   - name: Catalogs
-  - name: Posture
   - name: Requirements
   - name: ThreatsRisks
   - name: Users
@@ -606,31 +605,6 @@ paths:
         '400':
           description: Undetectable type or missing content
 
-  /api/posture:
-    get:
-      tags: [Posture]
-      operationId: listPosture
-      parameters:
-        - name: start
-          in: query
-          description: RFC3339 or date-only (YYYY-MM-DD)
-          schema:
-            type: string
-        - name: end
-          in: query
-          schema:
-            type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PostureRow'
-        '400':
-          description: Invalid time range
-
   /api/requirements:
     get:
       tags: [Requirements]
@@ -798,25 +772,6 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RiskRow'
-
-  /api/risks/severity:
-    get:
-      tags: [ThreatsRisks]
-      operationId: listRiskSeverityByPolicy
-      parameters:
-        - name: policy_id
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RiskSeverityRow'
 
   /api/risk-threats:
     get:
@@ -1329,40 +1284,6 @@ components:
         content:
           type: string
 
-    PostureRow:
-      type: object
-      properties:
-        policy_id:
-          type: string
-        title:
-          type: string
-        version:
-          type: string
-        total_rows:
-          type: integer
-          minimum: 0
-        passed_rows:
-          type: integer
-          minimum: 0
-        failed_rows:
-          type: integer
-          minimum: 0
-        other_rows:
-          type: integer
-          minimum: 0
-        latest_at:
-          type: string
-        target_count:
-          type: integer
-          minimum: 0
-        control_count:
-          type: integer
-          minimum: 0
-        latest_evidence_at:
-          type: string
-        owner:
-          type: string
-
     RequirementRow:
       type: object
       properties:
@@ -1512,17 +1433,6 @@ components:
           type: string
         threat_entry_id:
           type: string
-
-    RiskSeverityRow:
-      type: object
-      properties:
-        control_id:
-          type: string
-        max_severity:
-          type: string
-        risk_count:
-          type: integer
-          minimum: 0
 
     UserInfo:
       type: object

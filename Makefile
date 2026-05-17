@@ -3,14 +3,11 @@
 NAMESPACE ?= kagent
 GATEWAY_IMAGE ?= studio-gateway
 GATEWAY_TAG ?= local
-COMPLYTIME_MCP_IMAGE ?= complytime-mcp
-COMPLYTIME_MCP_TAG ?= local
 CONTAINER_RUNTIME ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 KIND_CLUSTER ?= complytime-studio
 
 .PHONY: test lint clean \
 	gateway-build gateway-image \
-	complytime-mcp-build complytime-mcp-image \
 
 	compose-up seed \
 	cluster-up cluster-down \
@@ -35,12 +32,6 @@ clean:
 
 gateway-build:
 	go build -o bin/studio-gateway ./cmd/gateway/
-
-complytime-mcp-build:
-	go build -o bin/complytime-mcp ./cmd/complytime-mcp/
-
-complytime-mcp-image:
-	docker build -f Dockerfile.complytime-mcp -t $(COMPLYTIME_MCP_IMAGE):$(COMPLYTIME_MCP_TAG) .
 
 gateway-image:
 	docker build --no-cache -f Dockerfile.gateway -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) .

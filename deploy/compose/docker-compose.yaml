@@ -21,15 +21,6 @@ services:
       nats:
         condition: service_started
 
-  complytime-mcp:
-    build:
-      context: ../../
-      dockerfile: Dockerfile.complytime-mcp
-    environment:
-      GATEWAY_URL: http://gateway:8080
-    depends_on:
-      - gateway
-
   postgres:
     image: postgres:17-alpine
     environment:

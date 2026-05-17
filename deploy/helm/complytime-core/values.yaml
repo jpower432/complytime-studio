@@ -42,16 +42,3 @@ nats:
     limits:
       memory: "128Mi"
       cpu: "100m"
-
-mcpServer:
-  enabled: true
-  image:
-    repository: complytime-mcp
-    tag: latest
-  resources:
-    requests:
-      memory: "32Mi"
-      cpu: "25m"
-    limits:
-      memory: "128Mi"
-      cpu: "100m"
