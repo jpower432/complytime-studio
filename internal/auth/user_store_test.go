@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/consts"
 	"github.com/labstack/echo/v4"
 )
 
@@ -139,7 +139,7 @@ func (m *memoryUserStore) BootstrapAdmin(_ context.Context, email string) (strin
 func testHandlerWithStore(t *testing.T) (*Handler, *memoryUserStore) {
 	t.Helper()
 	us := newMemoryUserStore()
-	h := NewHandler("")
+	h := NewHandler()
 	h.SetUserStore(us)
 	return h, us
 }
@@ -231,31 +231,24 @@ func TestMiddleware_SkipsAPIConfig(t *testing.T) {
 	}
 }
 
-func TestMiddleware_APIToken(t *testing.T) {
-	h := NewHandler("test-api-token-123")
+func TestMiddleware_NoStaticToken(t *testing.T) {
+	h := NewHandler()
 	us := newMemoryUserStore()
 	h.SetUserStore(us)
 
 	e := echo.New()
 	e.Use(h.Middleware())
 	e.GET("/api/test", func(c echo.Context) error {
-		sess, ok := SessionFrom(c.Request().Context())
-		if !ok {
-			return c.String(http.StatusUnauthorized, "no session")
-		}
-		if !sess.ServiceAccount {
-			return c.String(http.StatusForbidden, "not service account")
-		}
 		return c.NoContent(http.StatusOK)
 	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-	req.Header.Set("Authorization", "Bearer test-api-token-123")
+	req.Header.Set("Authorization", "Bearer some-token")
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (bearer tokens no longer accepted by gateway)", rec.Code)
 	}
 }
 
@@ -344,7 +337,7 @@ func TestMiddleware_RoleSeedSkipsIfAdminExists(t *testing.T) {
 }
 
 func TestTokenFromRequest_XForwardedAccessToken(t *testing.T) {
-	h := NewHandler("")
+	h := NewHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
 	req.Header.Set("X-Forwarded-Access-Token", "ya29.access-token-123")
 
@@ -355,7 +348,7 @@ func TestTokenFromRequest_XForwardedAccessToken(t *testing.T) {
 }
 
 func TestTokenFromRequest_NoHeader(t *testing.T) {
-	h := NewHandler("")
+	h := NewHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/a2a/agent", nil)
 
 	_, ok := h.TokenFromRequest(req)
@@ -364,13 +357,15 @@ func TestTokenFromRequest_NoHeader(t *testing.T) {
 	}
 }
 
-func TestRequireAdmin_WithUserStore(t *testing.T) {
+func TestRequireWrite_WithUserStore(t *testing.T) {
 	h, us := testHandlerWithStore(t)
 	_ = us.UpsertUser(context.TODO(), "sub-admin", "oauth2-proxy", "admin@co.com", "Admin", "")
 	_, _ = us.SetRole(context.TODO(), "admin@co.com", consts.RoleAdmin)
 	_ = us.UpsertUser(context.TODO(), "sub-viewer", "oauth2-proxy", "viewer@co.com", "Viewer", "")
+	_ = us.UpsertUser(context.TODO(), "sub-writer", "oauth2-proxy", "writer@co.com", "Writer", "")
+	_, _ = us.SetRole(context.TODO(), "writer@co.com", consts.RoleWriter)
 
-	guard := RequireAdmin(us)
+	guard := RequireWrite(us)
 
 	t.Run("admin passes", func(t *testing.T) {
 		e := echo.New()
@@ -380,7 +375,7 @@ func TestRequireAdmin_WithUserStore(t *testing.T) {
 			return c.NoContent(http.StatusOK)
 		})
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
 		req.Header.Set("X-Forwarded-Email", "admin@co.com")
 		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -396,8 +391,40 @@ func TestRequireAdmin_WithUserStore(t *testing.T) {
 			return c.NoContent(http.StatusOK)
 		})
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
 		req.Header.Set("X-Forwarded-Email", "viewer@co.com")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("writer passes import", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/policies/import", nil)
+		req.Header.Set("X-Forwarded-Email", "writer@co.com")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("writer blocked on users", func(t *testing.T) {
+		e := echo.New()
+		e.Use(h.Middleware())
+		e.Use(guard)
+		e.Any("/*", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPatch, "/api/users/someone@co.com/role", nil)
+		req.Header.Set("X-Forwarded-Email", "writer@co.com")
 		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", rec.Code)
@@ -554,119 +581,6 @@ func TestSplitGroups(t *testing.T) {
 			t.Errorf("splitGroups(%q) = %d groups, want %d", tt.input, len(got), tt.want)
 		}
 	}
-}
-
-func TestAPIToken_WritePathScoped(t *testing.T) {
-	const token = "test-scoped-token"
-	h := NewHandler(token)
-	us := newMemoryUserStore()
-	h.SetUserStore(us)
-
-	guard := RequireAdmin(us)
-
-	t.Run("token allowed on ingest path", func(t *testing.T) {
-		e := echo.New()
-		e.Use(h.Middleware())
-		e.Use(guard)
-		e.POST("/api/evidence/ingest", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/evidence/ingest", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (token should be allowed on ingest)", rec.Code)
-		}
-	})
-
-	t.Run("token blocked on admin-only path", func(t *testing.T) {
-		e := echo.New()
-		e.Use(h.Middleware())
-		e.Use(guard)
-		e.DELETE("/api/programs/123", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/api/programs/123", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403 (token should be blocked on admin paths)", rec.Code)
-		}
-	})
-}
-
-func TestStripUntrustedProxyHeaders(t *testing.T) {
-	t.Run("strips headers without matching secret", func(t *testing.T) {
-		strip := StripUntrustedProxyHeaders("shared-secret-123")
-		h := NewHandler("")
-		us := newMemoryUserStore()
-		h.SetUserStore(us)
-
-		e := echo.New()
-		e.Use(strip)
-		e.Use(h.Middleware())
-		e.GET("/api/test", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-		req.Header.Set("X-Forwarded-Email", "spoofed@evil.com")
-		e.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401 (headers should be stripped)", rec.Code)
-		}
-	})
-
-	t.Run("passes headers with matching secret", func(t *testing.T) {
-		strip := StripUntrustedProxyHeaders("shared-secret-123")
-		h := NewHandler("")
-		us := newMemoryUserStore()
-		h.SetUserStore(us)
-
-		e := echo.New()
-		e.Use(strip)
-		e.Use(h.Middleware())
-		e.GET("/api/test", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-		req.Header.Set("X-Forwarded-Email", "legit@example.com")
-		req.Header.Set("X-Proxy-Secret", "shared-secret-123")
-		e.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (trusted proxy)", rec.Code)
-		}
-	})
-
-	t.Run("no-op when secret is empty (dev mode)", func(t *testing.T) {
-		strip := StripUntrustedProxyHeaders("")
-		h := NewHandler("")
-		us := newMemoryUserStore()
-		h.SetUserStore(us)
-
-		e := echo.New()
-		e.Use(strip)
-		e.Use(h.Middleware())
-		e.GET("/api/test", func(c echo.Context) error {
-			return c.NoContent(http.StatusOK)
-		})
-
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-		req.Header.Set("X-Forwarded-Email", "dev@local.com")
-		e.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (dev mode, no strip)", rec.Code)
-		}
-	})
 }
 
 func TestBootstrapAdmin_RaceProtection(t *testing.T) {

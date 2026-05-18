@@ -5,7 +5,7 @@
 
 ## Context
 
-When a control fails (e.g., BP-4 on `complytime-studio`), the immediate question is: "What certifications or ATOs are potentially affected?" The data to answer this already exists across Studio's ClickHouse tables:
+When a control fails (e.g., BP-4 on `complytime-core`), the immediate question is: "What certifications or ATOs are potentially affected?" The data to answer this already exists across Studio's ClickHouse tables:
 
 | Table | Provides |
 |:--|:--|

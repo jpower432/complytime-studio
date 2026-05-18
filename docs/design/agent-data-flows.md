@@ -1,28 +1,32 @@
 # Agent Data Flows
 
-Data flow diagrams for ComplyTime Studio, traced from the workbench UI through the gateway to the studio assistant and its backend services.
+Data flow from the browser through Nginx and the Python Workbench to the co-located LangGraph assistant and MCP servers. The Go gateway serves only headless REST data APIs (no A2A, no SSE proxy, no artifact interception).
 
 ## End-to-End Request Flow
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant G as Gateway
-    participant A as Studio Assistant
-    participant CH as clickhouse-mcp
+    participant N as Nginx (studio-ui)
+    participant W as Workbench (Starlette :8090)
+    participant A as Studio Assistant (LangGraph)
+    participant SM as complytime-mcp
     participant GM as gemara-mcp
+    participant OM as oras-mcp
 
-    B->>G: POST /api/a2a/studio-assistant
-    Note over G: Auth middleware decodes cookie,<br/>injects Bearer header
-    G->>A: A2A proxy forward
-    A->>CH: run_select_query (evidence, policies)
-    CH-->>A: query results
-    A->>GM: validate_gemara_artifact
+    B->>N: POST /workbench/a2a/studio-assistant
+    N->>W: route /workbench/*
+    W->>A: A2A routing (co-located)
+    A->>SM: complytime:// resources (evidence, policies, …)
+    SM-->>A: JSON results
+    A->>GM: validate_gemara_artifact / migrate_gemara_artifact
     GM-->>A: validation result
-    A-->>G: SSE event stream
-    G-->>B: SSE passthrough
-    Note over G: Artifact interceptor<br/>auto-persists AuditLog YAML
-    Note over B: ChatAssistant renders<br/>markdown + YAML blocks
+    A->>OM: registry / OCI publish (when publishing)
+    OM-->>A: push result
+    A-->>W: SSE events
+    W-->>B: SSE (direct; not via gateway)
+    Note over A,SM: Writes: ingest_evidence, save_draft_audit_log
+    Note over B: Chat UI renders markdown + YAML blocks
 ```
 
 ## Authentication Flow
@@ -30,64 +34,79 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant G as Gateway
-    participant A as Agent Pod
-    participant M as MCP Server
+    participant N as Nginx (studio-ui)
+    participant O as OAuth2 Proxy
+    participant G as Gateway (Go)
+    participant W as Workbench
 
-    B->>G: cookie (studio_session)
-    Note over G: Decode session,<br/>extract access token
-    G->>A: Authorization: Bearer {token}
-    Note over A: allowedHeaders propagates
-    A->>M: Authorization: Bearer {token}
+    B->>N: user navigates (UI + API)
+    N->>O: data/API paths to gateway stack
+    O->>G: X-Forwarded-* headers, session
+    Note over G: Headless REST only
+
+    B->>N: /workbench/*
+    N->>W: no OAuth2 Proxy on this hop
+
+    W->>G: internal network (cluster)
+    Note over W,G: Platform reads for agent/tooling;<br/>not cookie-forwarded A2A
 ```
 
-When OAuth is disabled, no token propagation occurs. MCP servers use static credentials from Secrets.
+| Path | Flow | Notes |
+|:--|:--|:--|
+| Browser → data API | Nginx → OAuth2 Proxy (gateway sidecar) → Gateway | Session-bound user context |
+| Browser → workbench | Nginx → Workbench :8090 | Chat, A2A, SSE served here |
+| Workbench / agent → platform | Internal → Gateway (REST APIs); parallel → complytime-mcp | In-cluster; no OAuth2 Proxy on agent→gateway calls |
+
+When OAuth is disabled, external API auth behavior follows deployment config; MCP servers use static credentials from Secrets where applicable.
 
 ## Job Lifecycle
 
-1. User opens ChatAssistant overlay, types prompt
-2. Workbench `POST /api/a2a/studio-assistant` (JSON-RPC: `message/send`)
-3. Gateway proxies to studio-assistant pod
-4. Assistant queries ClickHouse via clickhouse-mcp (evidence, policies)
-5. Assistant produces AuditLog YAML, validates via gemara-mcp
-6. SSE events stream back through gateway to browser
-7. ChatAssistant renders response as markdown with YAML/mermaid blocks
-8. Gateway auto-persists valid AuditLog artifacts to ClickHouse
-9. User sees "Auto-saved" indicator; can manually re-save via button
+1. User opens chat in Workbench UI, sends prompt
+2. Workbench handles `POST /workbench/a2a/studio-assistant` (e.g. JSON-RPC `message/send`)
+3. Co-located LangGraph assistant runs in-process to Workbench (not a separate Agent pod via gateway)
+4. Assistant reads platform data via complytime-mcp typed resources
+5. Assistant validates / migrates YAML via gemara-mcp; publishes bundles via oras-mcp when needed
+6. SSE streams from Workbench to browser
+7. Chat UI renders markdown with YAML / mermaid blocks
+8. Assistant persists drafts and evidence via complytime-mcp tools (`save_draft_audit_log`, `ingest_evidence`)
+9. User sees save / sync affordances per Workbench UX (no gateway artifact interceptor)
 
 ## Agent Response Rendering
 
-Agent responses stream as SSE events containing markdown text. The ChatAssistant component renders this via `renderMarkdown()`. YAML code blocks in the response are displayed as formatted code within the chat conversation.
+Responses stream as SSE with markdown payloads. The chat UI renders via `renderMarkdown()`. YAML code blocks appear as formatted code in the thread.
 
-**Artifact persistence:** The gateway SSE interceptor detects `TaskArtifactUpdateEvent` payloads with `mimeType: application/yaml`, parses them via `ParseAuditLog`, and auto-persists valid AuditLog artifacts to ClickHouse. The frontend displays an "Auto-saved" indicator on artifact cards. Manual re-save via "Save to Audit History" is idempotent (content-addressed `audit_id` deduplicates via `ReplacingMergeTree`).
+**Artifact persistence:** The assistant persists AuditLog (and related) YAML through complytime-mcp (`save_draft_audit_log`), not through the gateway. Validation uses gemara-mcp before or after persistence per agent workflow. OCI publish uses oras-mcp. Manual “save” actions in the UI remain idempotent where content-addressed keys apply.
 
 ## Assistant Capabilities
 
-The studio assistant is a single BYO ADK agent focused on audit preparation. It replaces three previously planned specialist agents (threat-modeler, policy-composer, gap-analyst) that were cut in the [audit dashboard pivot](../decisions/audit-dashboard-pivot.md).
+The studio assistant is a single **LangGraph** agent (not ADK) focused on audit preparation, co-located with the Workbench service. It replaces three previously planned specialist agents (threat-modeler, policy-composer, gap-analyst) cut in the [audit dashboard pivot](../decisions/audit-dashboard-pivot.md).
 
 **Inputs:** Policy (YAML or policy_id), audit timeline, MappingDocuments (optional).
 
-**Outputs:** AuditLog artifacts grounded in ClickHouse evidence data.
+**Outputs:** AuditLog artifacts grounded in PostgreSQL evidence data.
 
-**Skills:** gemara-mcp, evidence-schema, audit-methodology, coverage-mapping.
+**Skills:** studio-audit, posture-check, research, gemara.
 
 **Tools:**
 
-| MCP Server | Tools Used | Purpose |
+| MCP Server | Tools / Resources | Purpose |
 |:--|:--|:--|
-| clickhouse-mcp | `run_select_query`, `list_tables` | Query evidence, policies, mappings |
+| complytime-mcp | `complytime://policies`, `complytime://evidence`, `complytime://posture`, `complytime://audit-logs`, `complytime://mappings`, `complytime://catalogs`, `complytime://threats`, `complytime://risks` | Read platform data via typed resources |
+| complytime-mcp | `ingest_evidence`, `save_draft_audit_log` | Write evidence rows, persist draft AuditLog YAML |
 | gemara-mcp | `validate_gemara_artifact`, `migrate_gemara_artifact` | Validate output, access schema/lexicon resources |
+| oras-mcp | registry tools (publish, list, fetch, …) | OCI publish / browse |
 
-## Evidence Query Patterns
+## Evidence Access Patterns
 
-The assistant uses these ClickHouse queries via clickhouse-mcp:
+The assistant reads platform data via complytime-mcp typed resources (not raw SQL):
 
-| Query | Purpose |
+| Resource URI | Purpose |
 |:--|:--|
-| `SELECT DISTINCT target_id, target_name, count(*) FROM evidence WHERE policy_id = ? AND collected_at BETWEEN ? AND ?` | Derive target inventory for audit scope |
-| `SELECT * FROM evidence WHERE policy_id = ? AND target_id = ? AND collected_at BETWEEN ? AND ?` | Per-target evidence for assessment |
-| `SELECT * FROM policies WHERE policy_id = ?` | Load policy content |
-| `SELECT * FROM mapping_documents WHERE policy_id = ?` | Load cross-framework crosswalks |
+| `complytime://evidence?policy_id={id}&limit=100` | Evidence records for a policy (paginated) |
+| `complytime://policies/{id}` | Load policy content |
+| `complytime://mappings?source_catalog={catalog}` | Load cross-framework crosswalks |
+| `complytime://posture?policy_id={id}` | Posture aggregates for audit scope |
+| `complytime://catalogs` | Catalog index for control lookups |
 
 ## Cross-Framework Coverage
 

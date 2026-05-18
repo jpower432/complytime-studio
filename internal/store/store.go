@@ -11,8 +11,8 @@ import (
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/complytime/complytime-studio/internal/consts"
-	"github.com/complytime/complytime-studio/internal/gemara"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/gemara"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,6 +37,11 @@ type MappingStore interface {
 	CountMappingEntries(ctx context.Context, mappingID string) (int, error)
 }
 
+// GuidanceStore defines write operations for parsed guidance catalog entries.
+type GuidanceStore interface {
+	InsertGuidanceEntries(ctx context.Context, rows []gemara.GuidanceEntryRow) error
+}
+
 // ControlStore defines read/write operations for parsed control catalog entries.
 type ControlStore interface {
 	InsertControls(ctx context.Context, rows []gemara.ControlRow) error
@@ -58,7 +63,6 @@ type RiskStore interface {
 	InsertRisks(ctx context.Context, rows []gemara.RiskRow) error
 	InsertRiskThreats(ctx context.Context, rows []gemara.RiskThreatRow) error
 	CountRisks(ctx context.Context, catalogID string) (int, error)
-	GetPolicyRiskSeverity(ctx context.Context, policyID string) ([]RiskSeverityRow, error)
 	QueryRisks(ctx context.Context, catalogID, policyID string, limit int) ([]gemara.RiskRow, error)
 	QueryRiskThreats(ctx context.Context, catalogID, riskID string, limit int) ([]gemara.RiskThreatRow, error)
 }
@@ -98,12 +102,6 @@ type CertificationStore interface {
 	) ([]EvidenceRowLite, error)
 }
 
-// PostureStore defines read operations for compliance posture aggregates.
-type PostureStore interface {
-	ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error)
-	QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error)
-}
-
 // RequirementStore defines read operations for the requirement matrix.
 type RequirementStore interface {
 	ListRequirementMatrix(ctx context.Context, f RequirementFilter) ([]RequirementRow, error)
@@ -120,13 +118,6 @@ type DraftAuditLogStore interface {
 	PromoteDraftAuditLog(ctx context.Context, draftID string, reviewedBy string) error
 }
 
-// NotificationStore defines operations for inbox notifications.
-type NotificationStore interface {
-	InsertNotification(ctx context.Context, n Notification) error
-	ListNotifications(ctx context.Context, limit int) ([]Notification, error)
-	MarkRead(ctx context.Context, notificationID string) error
-	UnreadCount(ctx context.Context) (int, error)
-}
 
 // Store provides typed access to PostgreSQL tables for policies,
 // mapping documents, evidence, and audit logs. Implements all
@@ -148,9 +139,8 @@ var (
 	_ EvidenceAssessmentStore = (*Store)(nil)
 	_ DraftAuditLogStore      = (*Store)(nil)
 	_ RequirementStore        = (*Store)(nil)
-	_ PostureStore            = (*Store)(nil)
-	_ NotificationStore       = (*Store)(nil)
 	_ CertificationStore      = (*Store)(nil)
+	_ GuidanceStore           = (*Store)(nil)
 )
 
 // New wraps a PostgreSQL connection pool.
@@ -169,13 +159,21 @@ type Policy struct {
 	ImportedBy   string    `json:"imported_by,omitempty"`
 }
 
-// InsertPolicy stores a policy artifact.
+// InsertPolicy stores a policy artifact (upsert on policy_id).
 func (s *Store) InsertPolicy(ctx context.Context, p Policy) error {
 	if p.PolicyID == "" {
 		p.PolicyID = uuid.New().String()
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by) VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO policies (policy_id, title, version, oci_reference, content, imported_by)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (policy_id) DO UPDATE SET
+		   title         = EXCLUDED.title,
+		   version       = EXCLUDED.version,
+		   oci_reference = EXCLUDED.oci_reference,
+		   content       = EXCLUDED.content,
+		   imported_by   = EXCLUDED.imported_by,
+		   imported_at   = now()`,
 		p.PolicyID, p.Title, p.Version, p.OCIReference, p.Content, p.ImportedBy,
 	)
 	return err
@@ -184,7 +182,7 @@ func (s *Store) InsertPolicy(ctx context.Context, p Policy) error {
 // ListPolicies returns all stored policies ordered by import date.
 func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT policy_id, title, version, oci_reference, imported_at, imported_by FROM policies ORDER BY imported_at DESC`)
+		`SELECT policy_id, title, version, oci_reference, imported_at, COALESCE(imported_by, '') FROM policies ORDER BY imported_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
@@ -204,7 +202,7 @@ func (s *Store) ListPolicies(ctx context.Context) ([]Policy, error) {
 // GetPolicy returns a single policy with full content.
 func (s *Store) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT policy_id, title, version, oci_reference, content, imported_at, imported_by FROM policies WHERE policy_id = $1`, policyID)
+		`SELECT policy_id, title, version, oci_reference, content, imported_at, COALESCE(imported_by, '') FROM policies WHERE policy_id = $1`, policyID)
 	var p Policy
 	if err := row.Scan(&p.PolicyID, &p.Title, &p.Version, &p.OCIReference, &p.Content, &p.ImportedAt, &p.ImportedBy); err != nil {
 		return nil, fmt.Errorf("get policy: %w", err)
@@ -471,6 +469,42 @@ func (s *Store) InsertControlThreats(ctx context.Context, rows []gemara.ControlT
 	return nil
 }
 
+func (s *Store) InsertGuidanceEntries(ctx context.Context, rows []gemara.GuidanceEntryRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin guidance entries tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const q = `INSERT INTO guidance_entries (catalog_id, guideline_id, title, objective, group_id, state, applicability)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (catalog_id, guideline_id) DO UPDATE SET
+		  title = EXCLUDED.title,
+		  objective = EXCLUDED.objective,
+		  group_id = EXCLUDED.group_id,
+		  state = EXCLUDED.state,
+		  applicability = EXCLUDED.applicability,
+		  imported_at = now()`
+	for _, r := range rows {
+		app := r.Applicability
+		if app == nil {
+			app = []string{}
+		}
+		if _, err := tx.Exec(ctx, q,
+			r.CatalogID, r.GuidelineID, r.Title, r.Objective, r.GroupID, r.State, app,
+		); err != nil {
+			return fmt.Errorf("insert guidance entry: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit guidance entries: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) CountControls(ctx context.Context, catalogID string) (int, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM controls WHERE catalog_id = $1`, catalogID)
@@ -705,55 +739,6 @@ func (s *Store) QueryRiskThreats(ctx context.Context, catalogID, riskID string, 
 	return out, rows.Err()
 }
 
-
-// RiskSeverityRow maps a control to its highest-severity risk for a given policy.
-type RiskSeverityRow struct {
-	ControlID   string `json:"control_id"`
-	MaxSeverity string `json:"max_severity"`
-	RiskCount   uint64 `json:"risk_count"`
-}
-
-// GetPolicyRiskSeverity returns per-control max risk severity by joining
-// risks -> risk_threats -> control_threats -> controls filtered by policy.
-func (s *Store) GetPolicyRiskSeverity(ctx context.Context, policyID string) ([]RiskSeverityRow, error) {
-	query := `
-		SELECT control_id, max_severity, risk_count
-		FROM (
-			SELECT
-				ct.control_id,
-				MAX(CASE WHEN r.severity <> '' THEN r.severity END) AS max_severity,
-				COUNT(DISTINCT r.risk_id) AS risk_count
-			FROM control_threats ct
-			INNER JOIN risk_threats rt
-				ON rt.threat_reference_id = ct.threat_reference_id
-				AND rt.threat_entry_id = ct.threat_entry_id
-			INNER JOIN risks r
-				ON r.risk_id = rt.risk_id
-				AND r.catalog_id = rt.catalog_id
-			WHERE r.policy_id = $1 OR ct.catalog_id IN (
-				SELECT catalog_id FROM controls WHERE policy_id = $2
-			)
-			GROUP BY ct.control_id
-		) AS t
-		WHERE COALESCE(max_severity, '') <> ''
-		ORDER BY control_id`
-
-	rows, err := s.pool.Query(ctx, query, policyID, policyID)
-	if err != nil {
-		return nil, fmt.Errorf("risk severity query: %w", err)
-	}
-	defer rows.Close()
-
-	var out []RiskSeverityRow
-	for rows.Next() {
-		var r RiskSeverityRow
-		if err := rows.Scan(&r.ControlID, &r.MaxSeverity, &r.RiskCount); err != nil {
-			return nil, fmt.Errorf("scan risk severity: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
 
 // EvidenceRecord represents a single evidence row for the REST API.
 // Fields align with evidence-semconv-alignment.md; new fields use omitempty
@@ -1087,7 +1072,13 @@ func (s *Store) InsertCertifications(ctx context.Context, rows []CertificationRo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const q = `INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason) VALUES ($1, $2, $3, $4, $5)`
+	const q = `INSERT INTO certifications (evidence_id, certifier, certifier_version, result, reason, certified_at)
+VALUES ($1, $2, $3, $4, $5, now())
+ON CONFLICT (evidence_id, certifier)
+DO UPDATE SET certifier_version = EXCLUDED.certifier_version,
+             result = EXCLUDED.result,
+             reason = EXCLUDED.reason,
+             certified_at = EXCLUDED.certified_at`
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, q,
 			r.EvidenceID, r.Certifier, r.CertifierVersion,
@@ -1255,9 +1246,6 @@ type EvidenceAssessment struct {
 	AssessedAt     time.Time `json:"assessed_at"`
 	AssessedBy     string    `json:"assessed_by"`
 }
-
-// ErrNotFound is returned by MarkRead when the notification ID does not exist.
-var ErrNotFound = errors.New("not found")
 
 // ErrRequirementNotFound is returned by ListRequirementEvidence when the
 // requirement ID is not known for the policy (no matching catalog row and no
@@ -1506,186 +1494,6 @@ func (s *Store) PromoteDraftAuditLog(ctx context.Context, draftID string, review
 		return fmt.Errorf("commit promote draft: %w", err)
 	}
 	return nil
-}
-
-// PostureRow is a per-policy compliance posture aggregate with inventory context.
-type PostureRow struct {
-	PolicyID       string `json:"policy_id"`
-	Title          string `json:"title"`
-	Version        string `json:"version,omitempty"`
-	TotalRows      uint64 `json:"total_rows"`
-	PassedRows     uint64 `json:"passed_rows"`
-	FailedRows     uint64 `json:"failed_rows"`
-	OtherRows      uint64 `json:"other_rows"`
-	LatestAt       string `json:"latest_at,omitempty"`
-	TargetCount    uint64 `json:"target_count"`
-	ControlCount   uint64 `json:"control_count"`
-	LatestEvidence string `json:"latest_evidence_at,omitempty"`
-	Owner          string `json:"owner"`
-}
-
-// ListPosture returns per-policy evidence posture aggregates with inventory context.
-// When start or end are non-zero the evidence window is restricted to that range.
-func (s *Store) ListPosture(ctx context.Context, start, end time.Time) ([]PostureRow, error) {
-	var (
-		evidenceFilter string
-		args           []any
-	)
-	if !start.IsZero() || !end.IsZero() {
-		evidenceFilter = " WHERE 1=1"
-		n := 1
-		if !start.IsZero() {
-			evidenceFilter += " AND collected_at >= $" + strconv.Itoa(n)
-			args = append(args, start)
-			n++
-		}
-		if !end.IsZero() {
-			evidenceFilter += " AND collected_at <= $" + strconv.Itoa(n)
-			args = append(args, end)
-		}
-	}
-
-	query := `
-		SELECT
-			p.policy_id,
-			p.title,
-			COALESCE(p.version, '') AS policy_version,
-			COUNT(e.evidence_id) AS total_rows,
-			COUNT(*) FILTER (WHERE e.eval_result = 'Passed') AS passed_rows,
-			COUNT(*) FILTER (WHERE e.eval_result = 'Failed') AS failed_rows,
-			COUNT(*) FILTER (WHERE e.eval_result NOT IN ('Passed', 'Failed')) AS other_rows,
-			COALESCE(MAX(e.collected_at)::TEXT, '') AS latest_at,
-			COUNT(DISTINCT e.target_id) FILTER (WHERE e.target_id <> '') AS target_count,
-			COUNT(DISTINCT e.control_id) FILTER (WHERE e.control_id <> '') AS control_count,
-			COALESCE(MAX(e.collected_at)::TEXT, '') AS latest_evidence_at
-		FROM policies p
-		LEFT JOIN (SELECT * FROM evidence` + evidenceFilter + `) e ON e.policy_id = p.policy_id
-		GROUP BY p.policy_id, p.title, COALESCE(p.version, '')
-		ORDER BY p.title`
-
-	rows, err := s.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list posture: %w", err)
-	}
-	defer rows.Close()
-
-	var out []PostureRow
-	for rows.Next() {
-		var r PostureRow
-		if err := rows.Scan(
-			&r.PolicyID, &r.Title, &r.Version,
-			&r.TotalRows, &r.PassedRows, &r.FailedRows, &r.OtherRows,
-			&r.LatestAt,
-			&r.TargetCount, &r.ControlCount, &r.LatestEvidence,
-		); err != nil {
-			return nil, fmt.Errorf("scan posture row: %w", err)
-		}
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	s.enrichPostureOwners(ctx, out)
-	return out, nil
-}
-
-// enrichPostureOwners extracts the accountable contact from each policy's YAML content.
-func (s *Store) enrichPostureOwners(ctx context.Context, posture []PostureRow) {
-	for i, r := range posture {
-		row := s.pool.QueryRow(ctx,
-			`SELECT content FROM policies WHERE policy_id = $1 LIMIT 1`, r.PolicyID)
-		var content string
-		if err := row.Scan(&content); err != nil {
-			continue
-		}
-		posture[i].Owner = gemara.ExtractAccountableContact(content)
-	}
-}
-
-// QueryPolicyPosture returns aggregate evidence counts for a single policy.
-func (s *Store) QueryPolicyPosture(ctx context.Context, policyID string) (total, passed, failed uint64, err error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE eval_result = 'Passed') AS passed,
-			COUNT(*) FILTER (WHERE eval_result = 'Failed') AS failed
-		FROM evidence
-		WHERE policy_id = $1`, policyID)
-	if err := row.Scan(&total, &passed, &failed); err != nil {
-		return 0, 0, 0, fmt.Errorf("query policy posture: %w", err)
-	}
-	return total, passed, failed, nil
-}
-
-// Notification represents an inbox notification stored in PostgreSQL.
-type Notification struct {
-	NotificationID string    `json:"notification_id"`
-	Type           string    `json:"type"`
-	PolicyID       string    `json:"policy_id"`
-	Payload        string    `json:"payload"`
-	Read           bool      `json:"read"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-// InsertNotification persists a new notification.
-func (s *Store) InsertNotification(ctx context.Context, n Notification) error {
-	if n.NotificationID == "" {
-		n.NotificationID = uuid.New().String()
-	}
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO notifications (notification_id, type, policy_id, payload) VALUES ($1, $2, $3, $4)`,
-		n.NotificationID, n.Type, n.PolicyID, n.Payload,
-	)
-	return err
-}
-
-// ListNotifications returns recent notifications ordered newest-first.
-func (s *Store) ListNotifications(ctx context.Context, limit int) ([]Notification, error) {
-	limit = consts.ClampLimit(limit)
-	rows, err := s.pool.Query(ctx,
-		`SELECT notification_id, type, policy_id, payload::TEXT, read, created_at
-			FROM notifications
-			ORDER BY created_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list notifications: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Notification
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.NotificationID, &n.Type, &n.PolicyID, &n.Payload, &n.Read, &n.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan notification: %w", err)
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
-}
-
-// MarkRead marks a notification as read. Returns ErrNotFound when the
-// notification ID does not exist.
-func (s *Store) MarkRead(ctx context.Context, notificationID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE notifications SET read = true WHERE notification_id = $1`, notificationID)
-	if err != nil {
-		return fmt.Errorf("mark read: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// UnreadCount returns the number of unread notifications.
-func (s *Store) UnreadCount(ctx context.Context) (int, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM notifications WHERE NOT read`)
-	var count int64
-	if err := row.Scan(&count); err != nil {
-		return 0, fmt.Errorf("unread count: %w", err)
-	}
-	return int(count), nil
 }
 
 // RequirementFilter holds query parameters for requirement matrix and evidence APIs.

@@ -27,17 +27,6 @@ func TestNilBus_SubscribeEvidence_NoPanic(t *testing.T) {
 	}
 }
 
-func TestNilBus_SubscribeDraftAuditLog_NoPanic(t *testing.T) {
-	var b *Bus
-	sub, err := b.SubscribeDraftAuditLog(func(_ DraftAuditLogEvent) {})
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if sub != nil {
-		t.Fatalf("expected nil subscription, got %v", sub)
-	}
-}
-
 func TestNilBus_Close_NoPanic(t *testing.T) {
 	var b *Bus
 	b.Close()
@@ -49,7 +38,7 @@ func TestZeroValueBus_Close_NoPanic(t *testing.T) {
 }
 
 func TestEvidenceSubjectNaming(t *testing.T) {
-	want := "studio.evidence"
+	want := "core.evidence"
 	if SubjectEvidence != want {
 		t.Fatalf("SubjectEvidence = %q, want %q", SubjectEvidence, want)
 	}
@@ -59,7 +48,7 @@ func TestEvidenceSubjectNaming(t *testing.T) {
 }
 
 func TestDraftSubjectNaming(t *testing.T) {
-	want := "studio.draft-audit-log"
+	want := "core.draft"
 	if SubjectDraft != want {
 		t.Fatalf("SubjectDraft = %q, want %q", SubjectDraft, want)
 	}

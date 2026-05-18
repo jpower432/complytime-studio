@@ -15,22 +15,14 @@ jobs:
     name: Go
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: workbench/package.json
-          cache: npm
-          cache-dependency-path: workbench/package-lock.json
       - name: Vet
         run: go vet -tags dev ./...
       - name: Test
         run: go test -tags dev -v -race -cover ./...
-      - name: Build workbench
-        run: npm ci && npm run build
-        working-directory: workbench
       - name: Build gateway
         run: go build -o /dev/null ./cmd/gateway/
 
@@ -38,43 +30,11 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
           version: v2.11.4
           args: --build-tags dev
-
-  workbench:
-    name: Workbench
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workbench
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: workbench/package.json
-          cache: npm
-          cache-dependency-path: workbench/package-lock.json
-      - run: npm ci
-      - name: Type check
-        run: npx tsc --noEmit
-      - name: Build
-        run: npm run build
-
-  helm:
-    name: Helm Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
-      - name: Lint
-        run: helm lint charts/complytime-studio/
-      - name: Template (default)
-        run: helm template studio charts/complytime-studio/
-      - name: Template (ClickHouse enabled)
-        run: helm template studio charts/complytime-studio/ --set clickhouse.enabled=true

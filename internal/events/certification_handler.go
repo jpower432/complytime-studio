@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/certifier"
+	"github.com/complytime-labs/complytime-core/internal/certifier"
 )
 
 // CertificationQuerier fetches recently ingested evidence rows for a policy.

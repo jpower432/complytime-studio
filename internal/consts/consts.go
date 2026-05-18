@@ -8,11 +8,6 @@ const (
 	// MaxRequestBody is the maximum allowed HTTP request body size (8 MiB).
 	MaxRequestBody int64 = 8 << 20
 
-	// MaxInternalRequestBody is the body limit for the internal (agent-only)
-	// listener. AuditLog drafts include full YAML with evidence and can
-	// exceed the public API limit.
-	MaxInternalRequestBody int64 = 64 << 20
-
 	// HTTPClientTimeout is the default timeout for outbound HTTP clients.
 	HTTPClientTimeout = 15 * time.Second
 
@@ -46,27 +41,11 @@ const (
 	// Requests exceeding this are silently clamped.
 	MaxQueryLimit = 1000
 
-	// DefaultInternalPort is the default port for the internal (agent-only)
-	// HTTP listener. Override via INTERNAL_PORT env var.
-	DefaultInternalPort = "8081"
-
-	// DefaultDevAPIToken is the well-known dev seed token used by docker-compose
-	// for local development. In Kubernetes, the token is auto-generated into a Secret.
-	DefaultDevAPIToken = "studio-dev-token"
-
-	// DegradedCacheTTL is how long health-check results are cached by the
-	// degraded middleware before re-pinging subsystems.
-	DegradedCacheTTL = 5 * time.Second
-
-	// EventDebounceDuration is the default debounce window for event handlers
-	// (posture checks, certification) to coalesce rapid evidence arrivals.
-	EventDebounceDuration = 30 * time.Second
-
-	// CORSMaxAgeSecs is the preflight cache duration (seconds) for CORS.
-	CORSMaxAgeSecs = 86400
-
 	// RoleAdmin is the admin role value stored in the users table.
 	RoleAdmin = "admin"
+
+	// RoleWriter is the writer role value stored in the users table.
+	RoleWriter = "writer"
 
 	// RoleReviewer is the default role for new users.
 	RoleReviewer = "reviewer"
@@ -84,6 +63,16 @@ func ClampLimit(n int) int {
 	}
 	return n
 }
+
+// DegradedCacheTTL controls how long the degraded middleware caches
+// subsystem check results before re-probing.
+const DegradedCacheTTL = 6 * time.Second
+
+// EventDebounceDuration is the debounce window for NATS event handlers.
+const EventDebounceDuration = 30 * time.Second
+
+// CORSMaxAgeSecs is the Access-Control-Max-Age value for preflight caching.
+const CORSMaxAgeSecs = 86400
 
 // Blob / manual evidence enrichment
 const (

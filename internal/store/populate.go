@@ -4,17 +4,13 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"time"
 
 	sdk "github.com/gemaraproj/go-gemara"
 	goyaml "github.com/goccy/go-yaml"
 
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
 )
 
 // PopulateMappingEntries backfills the mapping_entries table from existing
@@ -221,75 +217,9 @@ func PopulateRisks(ctx context.Context, cs CatalogStore, riskS RiskStore) error 
 	return nil
 }
 
-// registryCatalog pairs a well-known OCI reference with the expected catalog type.
-type registryCatalog struct {
-	Repo string
-	Tag  string
-	Type string
-}
-
-var defaultSeedCatalogs = []registryCatalog{
-	{Repo: "complytime-studio/samples/control-catalog", Tag: "v1.0.0", Type: "ControlCatalog"},
-	{Repo: "complytime-studio/samples/threat-catalog", Tag: "v1.0.0", Type: "ThreatCatalog"},
-}
-
-// PopulateCatalogsFromRegistry fetches well-known seed catalogs from an
-// in-cluster OCI registry and inserts them into the catalogs table if
-// they don't already exist. Safe to call on every startup.
-func PopulateCatalogsFromRegistry(ctx context.Context, cs CatalogStore, ctrlS ControlStore, threatS ThreatStore, riskS RiskStore, registryAddr string) error {
-	if registryAddr == "" {
-		return nil
-	}
-	existing, err := cs.ListCatalogs(ctx)
-	if err != nil {
-		return fmt.Errorf("list catalogs: %w", err)
-	}
-	if len(existing) > 0 {
-		return nil
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	var imported int
-
-	for _, sc := range defaultSeedCatalogs {
-		content, err := fetchOCILayer(ctx, client, registryAddr, sc.Repo, sc.Tag)
-		if err != nil {
-			slog.Warn("seed catalog fetch failed", "repo", sc.Repo, "error", err)
-			continue
-		}
-
-		catalogID := detectMetadataID(content)
-		if catalogID == "" {
-			slog.Warn("seed catalog has no metadata.id, skipping", "repo", sc.Repo)
-			continue
-		}
-
-		title := detectTitle(content)
-		if err := cs.InsertCatalog(ctx, Catalog{
-			CatalogID:   catalogID,
-			CatalogType: sc.Type,
-			Title:       title,
-			Content:     content,
-		}); err != nil {
-			slog.Warn("seed catalog insert failed", "catalog_id", catalogID, "error", err)
-			continue
-		}
-
-		parseCatalogStructuredRows(ctx, sc.Type, content, catalogID, "", ctrlS, threatS, riskS)
-		imported++
-		slog.Info("seed catalog imported from registry", "catalog_id", catalogID, "type", sc.Type)
-	}
-
-	if imported > 0 {
-		slog.Info("seed catalogs imported", "count", imported)
-	}
-	return nil
-}
-
 // PopulateEffectiveControls resolves each stored policy's catalog imports
 // against the catalogs table, applies policy-level overlays (exclusions,
-// AR modifications), and inserts the effective controls. Runs after
-// PopulateCatalogsFromRegistry. Safe on every startup.
+// AR modifications), and inserts the effective controls. Safe on every startup.
 func PopulateEffectiveControls(ctx context.Context, ps PolicyStore, cs CatalogStore, ctrlS ControlStore) error {
 	policies, err := ps.ListPolicies(ctx)
 	if err != nil {
@@ -476,81 +406,4 @@ func ExtractPolicyCriteria(ctx context.Context, policyID, content string, ctrlS 
 	}
 	slog.Info("policy criteria extracted", "policy_id", policyID, "controls", len(controls), "requirements", len(reqs))
 	return len(controls), nil
-}
-
-// fetchOCILayer retrieves the first layer blob from an OCI manifest
-// at the given registry/repo:tag. Suitable for single-layer artifacts.
-func fetchOCILayer(ctx context.Context, client *http.Client, registryAddr, repo, tag string) (string, error) {
-	manifestURL := fmt.Sprintf("http://%s/v2/%s/manifests/%s", registryAddr, repo, tag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch manifest: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("manifest %s: %s", manifestURL, resp.Status)
-	}
-
-	var manifest struct {
-		Layers []struct {
-			Digest    string `json:"digest"`
-			MediaType string `json:"mediaType"`
-		} `json:"layers"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&manifest); err != nil {
-		return "", fmt.Errorf("decode manifest: %w", err)
-	}
-	if len(manifest.Layers) == 0 {
-		return "", fmt.Errorf("no layers in manifest for %s/%s:%s", registryAddr, repo, tag)
-	}
-
-	digest := manifest.Layers[0].Digest
-	blobURL := fmt.Sprintf("http://%s/v2/%s/blobs/%s", registryAddr, repo, digest)
-	blobReq, err := http.NewRequestWithContext(ctx, http.MethodGet, blobURL, nil)
-	if err != nil {
-		return "", err
-	}
-
-	blobResp, err := client.Do(blobReq)
-	if err != nil {
-		return "", fmt.Errorf("fetch blob: %w", err)
-	}
-	defer func() { _ = blobResp.Body.Close() }()
-	if blobResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("blob %s: %s", blobURL, blobResp.Status)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(blobResp.Body, 8<<20))
-	if err != nil {
-		return "", fmt.Errorf("read blob: %w", err)
-	}
-	return string(data), nil
-}
-
-func detectMetadataID(content string) string {
-	var meta struct {
-		Metadata struct {
-			ID string `yaml:"id"`
-		} `yaml:"metadata"`
-	}
-	if err := goyaml.Unmarshal([]byte(content), &meta); err != nil {
-		return ""
-	}
-	return meta.Metadata.ID
-}
-
-func detectTitle(content string) string {
-	var meta struct {
-		Title string `yaml:"title"`
-	}
-	if err := goyaml.Unmarshal([]byte(content), &meta); err != nil {
-		return ""
-	}
-	return meta.Title
 }

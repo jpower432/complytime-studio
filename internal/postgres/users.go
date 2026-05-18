@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/complytime/complytime-studio/internal/consts"
-	"github.com/complytime/complytime-studio/internal/identity"
+	"github.com/complytime-labs/complytime-core/internal/consts"
+	"github.com/complytime-labs/complytime-core/internal/identity"
 )
 
 var _ identity.UserStore = (*Client)(nil)

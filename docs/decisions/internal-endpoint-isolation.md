@@ -1,6 +1,9 @@
 # Internal Endpoint Isolation: Dual-Port Gateway
 
-**Status:** Accepted
+**Status:** Superseded — internal port removed; draft audit log endpoint moved to public API; `complytime-mcp` uses REST on `:8080`.
+
+**(names reflect pre-extraction terminology where the narrative cites older Helm or layout names)**
+
 **Date:** 2026-04-25
 
 ## Context

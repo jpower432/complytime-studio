@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Standalone complytime-core stack — evidence data platform only.
+# No workbench, no UI, no programs.
+
+services:
+  gateway:
+    build:
+      context: ../../
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      POSTGRES_URL: postgres://core:complytime-dev@postgres:5432/core?sslmode=disable
+      NATS_URL: nats://nats:4222
+      CORS_ORIGINS: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: core
+      POSTGRES_USER: core
+      POSTGRES_PASSWORD: complytime-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+
+volumes:
+  pgdata:

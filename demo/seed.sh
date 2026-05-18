@@ -5,29 +5,30 @@
 # Not derived from real assessments. Do not use in production.
 #
 # Seed demo data into a running ComplyTime Studio instance.
-# Usage: GATEWAY_URL=http://localhost:9090 STUDIO_API_TOKEN=studio-dev-token ./demo/seed.sh
+#
+# When OAuth is enabled, port-forward directly to the gateway container
+# (bypassing the OAuth2 Proxy sidecar) for unauthenticated seeding:
+#   kubectl port-forward -n complytime deployment/studio-gateway 9090:8080
+#   GATEWAY_URL=http://localhost:9090 ./demo/seed.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:9090}"
-STUDIO_API_TOKEN="${STUDIO_API_TOKEN:-}"
+SEED_IDENTITY="${SEED_IDENTITY:-seed@complytime.dev}"
 
-AUTH_HEADER=()
-if [[ -n "${STUDIO_API_TOKEN}" ]]; then
-  AUTH_HEADER=(-H "Authorization: Bearer ${STUDIO_API_TOKEN}")
-fi
+AUTH_HEADER=(-H "X-Forwarded-Email: ${SEED_IDENTITY}")
 
 info()  { echo "==> $*"; }
 check() { echo "  ✓ $*"; }
 warn()  { echo "  ! $*"; }
 
-post_file() {
-  local endpoint="$1" file="$2" label="$3"
+ingest_file() {
+  local file="$1" label="$2" ct="${3:-application/x-yaml}"
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "${GATEWAY_URL}${endpoint}" \
-    -H "Content-Type: application/json" \
+    -X POST "${GATEWAY_URL}/api/ingest" \
+    -H "Content-Type: ${ct}" \
     "${AUTH_HEADER[@]}" \
-    -d @"${file}")
+    --data-binary @"${file}")
   if [[ "$HTTP_CODE" =~ ^2 ]]; then
     check "${label} (${HTTP_CODE})"
   else
@@ -38,27 +39,34 @@ post_file() {
 info "Seeding demo data into ${GATEWAY_URL}"
 
 # ── Policies ──
+# Seed files store policies as JSON wrappers; the `content` field holds the
+# Gemara Policy YAML that POST /api/ingest expects.
 info "Importing policies..."
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy.json" "ampel-branch-protection"
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy-kube-security.json" "kube-security-baseline"
-post_file "/api/policies/import" "${SCRIPT_DIR}/policy-supply-chain.json" "supply-chain-attestation"
+ingest_policy() {
+  local file="$1" label="$2"
+  local yaml_content
+  yaml_content=$(python3 -c "import sys,json; print(json.load(open(sys.argv[1]))['content'])" "${file}")
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "${GATEWAY_URL}/api/ingest" \
+    -H "Content-Type: application/x-yaml" \
+    "${AUTH_HEADER[@]}" \
+    --data-binary "${yaml_content}")
+  if [[ "$HTTP_CODE" =~ ^2 ]]; then
+    check "${label} (${HTTP_CODE})"
+  else
+    warn "${label} returned ${HTTP_CODE} (may already exist)"
+  fi
+}
+ingest_policy "${SCRIPT_DIR}/policy.json" "ampel-branch-protection"
+ingest_policy "${SCRIPT_DIR}/policy-kube-security.json" "kube-security-baseline"
+ingest_policy "${SCRIPT_DIR}/policy-supply-chain.json" "supply-chain-attestation"
 
 # ── Evidence (Gemara EvaluationLog artifacts) ──
 info "Ingesting evidence..."
 for artifact in "${SCRIPT_DIR}"/eval-*.yaml; do
   [ -f "${artifact}" ] || continue
   name="$(basename "${artifact}")"
-  HTTP_CODE=$(curl -s -o /tmp/seed_ingest_resp -w "%{http_code}" \
-    -X POST "${GATEWAY_URL}/api/evidence/ingest" \
-    -H "Content-Type: application/x-yaml" \
-    "${AUTH_HEADER[@]}" \
-    --data-binary @"${artifact}")
-  if [[ "$HTTP_CODE" =~ ^2 ]]; then
-    inserted=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('inserted','?'))" < /tmp/seed_ingest_resp 2>/dev/null || echo "?")
-    check "${name}: ${inserted} rows (${HTTP_CODE})"
-  else
-    warn "${name} returned ${HTTP_CODE}"
-  fi
+  ingest_file "${artifact}" "${name}"
 done
 
 # ── Verification ──

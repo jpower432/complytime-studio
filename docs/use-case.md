@@ -6,8 +6,8 @@ Studio is the aggregation point in the ComplyTime ecosystem. Policies and eviden
 
 | Function | How |
 |:--|:--|
-| Import policies | Pull Gemara Policy artifacts from OCI registries into ClickHouse |
-| Ingest evidence | Accept assessment results via API, file upload, or OTel collector |
+| Import policies | Pull Gemara Policy artifacts from OCI registries into PostgreSQL (ClickHouse is optional FDW only, never the primary store) |
+| Ingest evidence | Accept Gemara EvaluationLog/EnforcementLog YAML via `POST /api/ingest` (async job; poll `/api/ingest/jobs/{job_id}`) |
 | Map frameworks | Load MappingDocuments that crosswalk internal criteria to external frameworks |
 | Prepare audits | Agentic assistant queries evidence, validates cadence, classifies results, produces AuditLog artifacts |
 | Publish artifacts | Push validated artifacts back to OCI registries |
@@ -43,7 +43,7 @@ The [Gemara schema](https://gemara.openssf.org/) is the shared contract across a
 | Distribution | OCI registries |
 | Policy evaluation | OPA, Kyverno, policy engines |
 | Evidence collection | OTel collector, `complyctl` ProofWatch |
-| Evidence storage | ClickHouse (deployed by Studio or external) |
+| Evidence storage | PostgreSQL (ClickHouse optional via FDW, not primary) |
 | Audit preparation | **Studio** — assistant queries evidence, produces AuditLogs |
 | Audit review | Studio workbench — editor, validation, publish |
 
@@ -52,45 +52,41 @@ The [Gemara schema](https://gemara.openssf.org/) is the shared contract across a
 The workflow below traces a single audit cycle from evidence arrival to auditor deliverable.
 
 ```
-Evidence arrives → Posture check → Notification → Review → Audit → Export
+Evidence arrives → Certification → Review → Audit → Export
 ```
 
 ### 1. Setup (one-time)
 
 A compliance engineer authors two artifacts outside Studio and imports them:
 
-- **Policy** — defines your controls, assessment plans, and cadence requirements. Imported via `POST /api/policies/import` or OCI registry pull.
-- **MappingDocument** — crosswalks your controls to an external framework (e.g., BP-1 supports SOC 2 CC8.1 with strength 9/10). Imported via `POST /api/mappings/import`.
+- **Policy** — defines your controls, assessment plans, and cadence requirements. Imported via `POST /api/import` or OCI registry pull.
+- **MappingDocument** — crosswalks your controls to an external framework (e.g., BP-1 supports SOC 2 CC8.1 with strength 9/10). Imported via the same unified `POST /api/import`.
 
 The MappingDocument is the bridge that lets Studio speak the auditor's language.
 
 ### 2. Evidence Ingestion (continuous)
 
-Evidence flows in through two paths:
+Evidence enters through the REST API:
 
 | Path | Source | Trigger |
 |:--|:--|:--|
-| REST API | `POST /api/evidence` — JSON, CSV, or multipart with file attachment | CI pipeline, manual upload, `make seed` |
-| CLI job | `cmd/ingest` — reads Gemara EvaluationLog/EnforcementLog YAML | CronJob, `complyctl` pipeline |
+| REST API | `POST /api/ingest` — Gemara EvaluationLog/EnforcementLog YAML (async); `GET /api/ingest/jobs/{job_id}` | CI pipeline, automation, `make seed` |
 
-Both paths insert into ClickHouse and publish a NATS event per policy.
+Inserts into PostgreSQL and publishes a NATS event per policy.
 
 ### 3. Posture Check (automatic)
 
 NATS event → Debouncer (30s window, coalesces per policy) → PostureCheckHandler:
 
-1. Query current pass rate for the policy
-2. Compare to last-known rate
-3. If delta detected → insert a `posture_change` notification
-4. Notification appears in the audit liaison's Inbox with the delta (e.g., "95% → 82%")
+1. Query current pass rate for the policy via `GET /api/posture`
+2. Review posture trends to identify changes
 
 ### 4. Triage (audit liaison)
 
 The liaison opens Studio and sees:
 
 - **Posture** — cards per policy with a stacked pass/fail/other bar, freshness indicator, time presets (7d / 30d / 90d / All) for evidence collection range, optional summary strip, target/control count, RACI owner, risk severity
-- **Inbox badge** — red dot when unread notifications exist
-- **Inbox** — combined feed of posture change notifications and draft audit logs
+- **Draft Audit Logs** — view and review agent-produced drafts
 
 **View Details** on a card opens the policy drill-down with tabs for Requirements, Evidence, and History (the card is not a full click target).
 
@@ -116,13 +112,11 @@ The draft appears in the Inbox with an unread indicator. The liaison clicks it a
 
 When satisfied, the liaison clicks **Save to History** to promote the draft to the official audit record.
 
-### 7. Export and Delivery
+### 7. Export
 
 From the History tab inside the policy drill-down:
 
 - **Download YAML** — raw Gemara AuditLog for machine consumption
-- **Export Excel** — spreadsheet with findings, evidence references, and framework mappings
-- **Export PDF** — formatted report for the auditor interview
 
 The auditor receives a deliverable that maps your controls to their framework, backed by timestamped evidence, with reviewer notes explaining any overrides.
 

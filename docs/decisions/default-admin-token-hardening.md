@@ -5,7 +5,7 @@
 
 ## Context
 
-`charts/complytime-studio/values.yaml` ships two dev-friendly defaults that become production liabilities:
+`studio-deploy/charts/complytime/values.yaml` ships two dev-friendly defaults that become production liabilities:
 
 1. `auth.admins: []` — empty list means **all authenticated users are admins**.
 2. `auth.apiToken: "studio-dev-token"` — predictable token grants full API write as `api-token@internal`.

@@ -3,7 +3,7 @@
 package auth
 
 import (
-	"github.com/complytime/complytime-studio/internal/identity"
+	"github.com/complytime-labs/complytime-core/internal/identity"
 )
 
 // Re-export identity types so existing callers within auth (and callers

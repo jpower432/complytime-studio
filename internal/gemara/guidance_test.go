@@ -50,6 +50,9 @@ guidelines:
 	if r.GroupID != "CC6" {
 		t.Errorf("expected group CC6, got %q", r.GroupID)
 	}
+	if len(r.Applicability) != 0 {
+		t.Errorf("expected empty applicability, got %v", r.Applicability)
+	}
 	if r.State != "Active" {
 		t.Errorf("expected state Active, got %q", r.State)
 	}
@@ -74,6 +77,37 @@ guidelines:
 	}
 	if rows[0].CatalogID != "override-id" {
 		t.Errorf("expected override-id, got %q", rows[0].CatalogID)
+	}
+}
+
+func TestParseGuidanceCatalog_ApplicabilityAndState(t *testing.T) {
+	content := `
+title: With applicability
+metadata:
+  type: GuidanceCatalog
+  id: gc-1
+  gemara-version: 1.0.0
+guidelines:
+  - id: G1
+    title: T1
+    group: grp
+    applicability:
+      - baseline_a
+      - baseline_b
+    state: Deprecated
+`
+	rows, err := ParseGuidanceCatalog(context.Background(), content, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if len(rows[0].Applicability) != 2 || rows[0].Applicability[0] != "baseline_a" {
+		t.Fatalf("applicability: %+v", rows[0].Applicability)
+	}
+	if rows[0].State != "Deprecated" {
+		t.Errorf("expected state Deprecated, got %q", rows[0].State)
 	}
 }
 

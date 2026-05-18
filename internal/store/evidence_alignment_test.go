@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/complytime/complytime-studio/internal/ingest"
+	"github.com/complytime-labs/complytime-core/internal/ingest"
 )
 
 func sp(s string) *string {

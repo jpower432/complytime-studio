@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	gemarapkg "github.com/complytime/complytime-studio/internal/gemara"
+	gemarapkg "github.com/complytime-labs/complytime-core/internal/gemara"
 	"github.com/labstack/echo/v4"
 )
 
@@ -46,10 +46,6 @@ func (f *fakeRiskStore) InsertRiskThreats(_ context.Context, _ []gemarapkg.RiskT
 	return nil
 }
 func (f *fakeRiskStore) CountRisks(_ context.Context, _ string) (int, error) { return 0, nil }
-func (f *fakeRiskStore) GetPolicyRiskSeverity(_ context.Context, _ string) ([]RiskSeverityRow, error) {
-	return nil, nil
-}
-
 func (f *fakeRiskStore) QueryRisks(_ context.Context, _, _ string, limit int) ([]gemarapkg.RiskRow, error) {
 	f.lastLimit = limit
 	return f.risks, nil

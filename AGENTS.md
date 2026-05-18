@@ -21,6 +21,8 @@ Each agent answers four questions:
 
 ### 1. Create the agent directory
 
+Agent source lives in the [complytime-agents](https://github.com/complytime/complytime-agents) repo:
+
 ```
 agents/<agent-name>/
 ├── agent.yaml    # Canonical spec (framework-agnostic)
@@ -38,7 +40,7 @@ description: >-
 prompt: prompt.md
 
 skills:
- # Internal skills (from this repo) — see agents/assistant/agent.yaml
+ # Internal skills (from complytime-agents repo)
  - path: skills/studio-audit
  - path: skills/posture-check
  # External skills (from other repos)
@@ -67,7 +69,7 @@ a2a:
 
 ### 3. Write `prompt.md`
 
-Keep the prompt focused on **workflow only**. Platform identity and constraints are injected automatically from `agents/platform.md`.
+Keep the prompt focused on **workflow only**. Platform identity and constraints are injected automatically from the platform prompt ConfigMap.
 
 ```markdown
 You specialize in <Layer N (Name)>: <what you do>.
@@ -82,48 +84,34 @@ You specialize in <Layer N (Name)>: <what you do>.
 ```
 
 **Rules:**
-- Do NOT repeat platform constraints (they come from `agents/platform.md`)
+- Do NOT repeat platform constraints (they come from the platform prompt ConfigMap)
 - Do NOT embed domain knowledge (put it in a SKILL.md instead)
 - DO define the step-by-step workflow
 - DO specify required/optional inputs
 - DO define interaction style (propose defaults vs. interrogate)
 
-### 4. Register in Helm
+### 4. Register in the Workbench
 
-Create a kagent `Agent` CRD template with `type: BYO` in `charts/complytime-studio/templates/`. The agent container must serve A2A at `/.well-known/agent-card.json`. kagent manages the Deployment + Service lifecycle and exposes the agent in the dashboard.
+Add the agent to the `AGENT_DIRECTORY` JSON in `studio-deploy/charts/complytime/values.yaml` → `workbench.agentDirectory`. The workbench reads this env var to populate `/workbench/agents` and route A2A traffic.
 
-```yaml
-apiVersion: kagent.dev/v1alpha2
-kind: Agent
-metadata:
-  name: studio-<agent-name>
-  namespace: {{ .Release.Namespace }}
-spec:
-  description: One-line description
-  type: BYO
-  byo:
-    deployment:
-      image: "{{ .Values.<agent>.image.repository }}:{{ .Values.<agent>.image.tag }}"
-      env:
-        - name: GEMARA_MCP_URL
-          value: "http://studio-gemara-mcp:3000/mcp"
-        - name: POSTGRES_MCP_URL
-          value: "http://studio-postgres-mcp:3000/mcp"
-      resources:
-        requests:
-          memory: "256Mi"
-          cpu: "100m"
+```json
+[
+  {
+    "name": "studio-<agent-name>",
+    "description": "One-line description",
+    "url": "http://localhost:8080/",
+    "skills": [{"id": "<skill-id>", "name": "<Skill Name>"}]
+  }
+]
 ```
 
-Add an entry to `agentDirectory` in `values.yaml` so the gateway allowlists the agent and serves it in `GET /api/agents`.
+The agent must serve A2A on the URL specified. For co-located agents (running in the same container as the workbench), use `http://localhost:<port>/`.
 
-**Framework-agnostic:** The container can use any agent framework (Google ADK, LangGraph, CrewAI, custom) as long as it speaks A2A. kagent does not inspect the agent internals.
+**Framework-agnostic:** The agent can use any framework (LangGraph, Google ADK, CrewAI, custom) as long as it speaks A2A.
 
-### 5. Sync prompts
+### 5. Set agent prompt
 
-```bash
-make sync-prompts
-```
+Add the agent's system prompt to `studio-deploy/charts/complytime/values.yaml` under `agentPrompts.<name>`, or override via `--set` at deploy time. The prompt ConfigMap is rendered by Helm from these values.
 
 ---
 
@@ -139,11 +127,11 @@ Authentication and data persistence changed significantly in 2026-05.
 
 **Key references:**
 - Auth design: `openspec/changes/generic-oidc-auth/design.md`
-- Helm auth values: `charts/complytime-studio/values.yaml` → `auth.oauth2Proxy.*`
+- Helm auth values: `studio-deploy/charts/complytime/values.yaml` → `auth.oauth2Proxy.*`
 - Architecture: `docs/design/architecture.md`
 - ADR: `docs/decisions/postgres-with-extensions.md`
 
-**Agent implications:** Agents communicate with the gateway via the internal port (8081). They do not pass through OAuth2 Proxy. Agent-to-gateway auth is network-enforced via NetworkPolicy, not token-based.
+**Agent implications:** Agents communicate with the gateway via studio-mcp, which uses the REST API on port 8080. In production, agent traffic flows through OAuth2 Proxy like all other clients.
 
 ---
 
@@ -151,7 +139,7 @@ Authentication and data persistence changed significantly in 2026-05.
 
 Skills are reusable knowledge packs. Any agent can reference them.
 
-### Internal skills (this repo)
+### Internal skills (complytime-agents repo)
 
 ```
 skills/<skill-name>/
@@ -188,70 +176,77 @@ skills:
     path: skills/skill-name
 ```
 
-kagent clones the repo and mounts the skill under `/skills/<skill-name>/` in the agent container.
+The workbench container clones the repo at build time and mounts the skill under `/skills/<skill-name>/`.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│ agents/platform.md  (shared identity)       │
-│  ↓ injected via promptTemplate ConfigMap    │
-├─────────────────────────────────────────────┤
-│ agents/<name>/prompt.md  (workflow)         │
-│  ↓ embedded in Helm systemMessage           │
-├─────────────────────────────────────────────┤
-│ skills/  (knowledge packs)                  │
-│  ↓ mounted via kagent gitRefs               │
-├─────────────────────────────────────────────┤
-│ MCP servers  (tools)                        │
-│  ↓ declared in agent.yaml mcp block         │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Browser → Nginx (studio-ui)                         │
+│              ├── /api/*        → Data Platform (Go)  │
+│              ├── /auth/*       → Data Platform       │
+│              ├── /workbench/*  → Studio Workbench    │
+│              └── /*            → static SPA          │
+├──────────────────────────────────────────────────────┤
+│  Studio Workbench (complytime-agents)                │
+│    ├── /workbench/agents       → agent directory     │
+│    ├── /workbench/a2a/{name}   → reverse-proxy A2A   │
+│    ├── /workbench/validate     → gemara-mcp          │
+│    ├── /workbench/publish      → oras-mcp            │
+│    └── /workbench/chat/history → chat state           │
+│    ↕                                                 │
+│    LangGraph agents (in-process, port 8080)          │
+├──────────────────────────────────────────────────────┤
+│  Data Platform (complytime-studio)                   │
+│    ├── Evidence, Posture, Certs, Policies, AuditLogs │
+│    ├── NATS certifier pipeline                       │
+│    └── OAuth2 Proxy + session management             │
+├──────────────────────────────────────────────────────┤
+│  MCP servers (tools)                                 │
+│    ├── studio-mcp    → platform data access          │
+│    ├── gemara-mcp    → artifact validation           │
+│    └── oras-mcp      → OCI publish/browse            │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Prompt composition
+### Deployment topology
 
-The final system prompt is assembled by kagent at runtime:
-
-1. **Platform layer** — `agents/platform.md` rendered into a ConfigMap, included via `{{include "platform/platform"}}`
-2. **Agent layer** — `agents/<name>/prompt.md` embedded directly in the Helm template
+The workbench container runs both the Starlette HTTP server (port 8090) and the LangGraph agent (port 8080) in a single pod. The workbench reverse-proxies A2A traffic to the co-located agent. MCP servers are sidecar containers or standalone services accessible over HTTP.
 
 ### MCP server transport
 
 | Server | Transport | Auth Model |
 |:--|:--|:--|
-| studio-gemara-mcp | stdio | Static (no user auth) |
-| studio-postgres-mcp | stdio | PostgreSQL query access (pgEdge — query_database, get_schema_info) |
-| studio-oras-mcp | stdio | Gateway proxy handles auth |
-
-Servers using `http` transport accept per-request `Authorization` headers propagated from A2A requests via kagent's `allowedHeaders` mechanism.
+| studio-gemara-mcp | http | Static (no user auth) |
+| studio-mcp | http | Typed `studio://` resources + tools (platform data access) |
+| studio-oras-mcp | http | Gateway proxy handles auth |
 
 ### On-Behalf-Of (OBO) flow
 
 ```
-Browser → Gateway → A2A Agent Pod → MCP Server
-  │         │            │              │
-  │ cookie  │ inject     │ allowedHeaders
-  │         │ Bearer     │ propagates   │
-  │         │ header     │ Authorization│
+Browser → Nginx → Studio Workbench → Agent → MCP Server
+  │                   │                         │
+  │ cookie/bearer     │ propagates              │
+  │                   │ Authorization header    │
 ```
 
-The gateway extracts the user's access token from the session cookie and injects it as an `Authorization: Bearer` header on A2A requests. kagent propagates this header to MCP tool calls for servers with `allowedHeaders: [Authorization]`.
+The workbench propagates `Authorization` headers from the browser through to agent → MCP calls for user-scoped operations.
 
 ---
 
 ## Existing Agents
 
-| Agent | Layer | Type | Framework | A2A skill `id` (agent card) |
-|:--|:--|:--|:--|:--|
-| studio-assistant | L7 (Audit) | BYO (`kagent.dev/v1alpha2 Agent`) | Google ADK (Python) | `compliance-assistant` |
+| Agent | Framework | Container | A2A skill `id` |
+|:--|:--|:--|:--|
+| studio-assistant | LangGraph (Python) | `studio-workbench` (co-located) | `compliance-assistant` |
 
-Canonical spec: `agents/assistant/agent.yaml` (Helm `agentDirectory` must keep `a2a.skills` in sync).
+Canonical spec: [`agents/assistant/agent.yaml`](https://github.com/complytime/complytime-agents/blob/main/agents/assistant/agent.yaml) in the complytime-agents repo.
 
-All agents are deployed as kagent `Agent` CRDs with `type: BYO`. A2A traffic routes through the kagent controller (`kagent-controller:8083`). The gateway proxies requests via `KAGENT_A2A_URL`.
+All agents run inside the Studio Workbench container. The workbench's `/workbench/a2a/{name}` endpoint reverse-proxies A2A traffic to the agent running on `localhost:8080`. The `AGENT_DIRECTORY` environment variable (JSON) declares available agents and their URLs.
 
-**studio-assistant internal skills** (`skills/*/SKILL.md`, also vendored under `agents/assistant/skills/` for the image):
+**studio-assistant internal skills** (in complytime-agents `skills/*/SKILL.md`):
 
 | Skill | Purpose |
 |:--|:--|
@@ -284,14 +279,14 @@ EOF
 
 ## Checklist
 
-- [ ] `agents/<name>/agent.yaml` with name, description, skills, mcp, a2a
-- [ ] `agents/<name>/prompt.md` with workflow steps only
-- [ ] Skills extracted to `skills/<name>/SKILL.md` if reusable
-- [ ] Agent CRD template (`type: BYO`) added to `charts/complytime-studio/templates/`
-- [ ] Agent entry added to `agentDirectory` in `values.yaml`
-- [ ] `make sync-prompts` copies prompt to chart
-- [ ] Container serves A2A at `/.well-known/agent-card.json`
-- [ ] MCP server URLs passed via `env` in the BYO CRD deployment spec
+- [ ] `agents/<name>/agent.yaml` in complytime-agents with name, description, skills, mcp, a2a
+- [ ] `agents/<name>/prompt.md` in complytime-agents with workflow steps only
+- [ ] Skills extracted to `skills/<name>/SKILL.md` in complytime-agents if reusable
+- [ ] Agent entry added to `workbench.agentDirectory` JSON in `studio-deploy/charts/complytime/values.yaml`
+- [ ] Agent prompt added to `agentPrompts` in `studio-deploy/charts/complytime/values.yaml`
+- [ ] Agent process started in `Dockerfile.workbench` entrypoint
+- [ ] Agent serves A2A on declared URL (co-located: `localhost:<port>`)
+- [ ] MCP server URLs available via workbench container env vars
 
 ---
 
@@ -333,13 +328,12 @@ Test boundary conditions and error handling.
 
 ### Helm Verification
 
-After any agent change, verify the Kubernetes deployment renders correctly.
+The Helm chart lives in [studio-deploy](https://github.com/complytime/studio-deploy). After any agent change, verify the Kubernetes deployment renders correctly from that repo.
 
-| Check | Command | Expected Result |
-|:------|:--------|:----------------|
-| CRD renders | `helm template studio charts/complytime-studio/` | Agent CRD contains updated description, prompt, A2A skills |
-| Prompt content | Inspect rendered `systemMessage` field | Full prompt.md content embedded, no truncation |
-| Values match | Compare `values.yaml` agent directory entry | Description and skills match `agent.yaml` |
+| Check | Command (from studio-deploy/) | Expected Result |
+|:------|:------------------------------|:----------------|
+| Chart renders | `make helm-template` | Workbench deployment contains updated `AGENT_DIRECTORY` env |
+| Values match | Compare `charts/complytime/values.yaml` workbench.agentDirectory | Description and skills match `agent.yaml` |
 | No stale refs | Search chart templates for old descriptions | Zero matches |
 
 ## Convention Packs
@@ -355,3 +349,14 @@ before writing or reviewing code.
 - `.opencode/uf/packs/content-custom.md`
 - `.opencode/uf/packs/go.md`
 - `.opencode/uf/packs/go-custom.md`
+
+## Boundary Rules
+
+- `complytime-studio` (Go) owns data CRUD, auth, and certifier pipeline only
+- `complytime-agents` (Python) owns A2A routing, agent lifecycle, and Gemara/OCI tooling
+- `studio-ui` owns the SPA, Nginx routing, and all client-side code
+- `studio-deploy` owns deployment orchestration (Docker Compose, Helm umbrella)
+- Agents MUST NOT import `internal/store` or `internal/postgres` at runtime
+- Agents access platform data exclusively through `studio-mcp` MCP resources
+- All cross-component communication uses REST API or MCP protocol
+- Workbench endpoints live under `/workbench/*` path prefix (never `/api/*`)

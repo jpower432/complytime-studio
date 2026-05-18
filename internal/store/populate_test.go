@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	gemara "github.com/complytime/complytime-studio/internal/gemara"
+	gemara "github.com/complytime-labs/complytime-core/internal/gemara"
 )
 
 type fakeControlStore struct {
